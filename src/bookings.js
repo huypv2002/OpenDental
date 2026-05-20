@@ -59,6 +59,11 @@ function normalizeUsPhone(phone) {
 }
 
 async function appointmentPattern(connection, appointmentTypeNum, fallbackDurationMinutes) {
+  if (fallbackDurationMinutes > 0) {
+    const blocks = Math.max(1, Math.ceil(fallbackDurationMinutes / 5));
+    return 'X'.repeat(blocks);
+  }
+
   const [rows] = await connection.execute(
     'SELECT Pattern FROM appointmenttype WHERE AppointmentTypeNum = ? LIMIT 1',
     [appointmentTypeNum]
@@ -70,16 +75,35 @@ async function appointmentPattern(connection, appointmentTypeNum, fallbackDurati
   return 'X'.repeat(blocks);
 }
 
+function bookingHoursForDate(date) {
+  const weekday = new Date(`${date}T12:00:00`).getDay();
+  if (weekday === 1) {
+    return { openTime: '14:00', closeTime: '17:00' };
+  }
+  if ([0, 2, 4, 5].includes(weekday)) {
+    return { openTime: '09:00', closeTime: '17:00' };
+  }
+  return null;
+}
+
 async function assertSlotStillAvailable(input) {
+  const hours = bookingHoursForDate(input.date);
+  if (!hours) {
+    const error = new Error('Selected appointment date is outside online booking hours.');
+    error.status = 409;
+    throw error;
+  }
+
   const availability = await getAvailableSlots({
     date: input.date,
     providerNum: input.providerNum,
     operatoryNum: input.operatoryNum,
     appointmentTypeNum: input.appointmentTypeNum,
-    openTime: config.booking.openTime,
-    closeTime: config.booking.closeTime,
+    openTime: hours.openTime,
+    closeTime: hours.closeTime,
     slotIntervalMinutes: config.booking.slotIntervalMinutes,
-    fallbackDurationMinutes: config.booking.fallbackDurationMinutes,
+    fallbackDurationMinutes: input.durationMinutes,
+    durationOverrideMinutes: input.durationMinutes,
     busyAptStatuses: config.booking.busyAptStatuses
   });
   const available = availability.slots.some((slot) => slot.time === input.time);
@@ -107,7 +131,8 @@ export function parseBookingBody(body) {
     note: optionalString(body, 'note'),
     providerNum: Number.parseInt(body.providerNum ?? config.booking.providerNum, 10),
     operatoryNum: Number.parseInt(body.operatoryNum ?? config.booking.operatoryNum, 10),
-    appointmentTypeNum: Number.parseInt(body.appointmentTypeNum ?? config.booking.appointmentTypeNum, 10)
+    appointmentTypeNum: Number.parseInt(body.appointmentTypeNum ?? config.booking.appointmentTypeNum, 10),
+    durationMinutes: Math.max(60, Number.parseInt(body.durationMinutes ?? config.booking.fallbackDurationMinutes, 10) || 60)
   };
 }
 
@@ -140,8 +165,9 @@ export async function createBooking(input) {
     const patNum = patientResult.insertId;
     await connection.execute('UPDATE patient SET Guarantor = ? WHERE PatNum = ?', [patNum, patNum]);
 
-    const pattern = await appointmentPattern(connection, input.appointmentTypeNum, config.booking.fallbackDurationMinutes);
+    const pattern = await appointmentPattern(connection, input.appointmentTypeNum, input.durationMinutes);
     const noteParts = [
+      'ONLINE PT',
       'Created from website booking bridge.',
       `Name: ${input.firstName} ${input.lastName}`,
       input.phone ? `Cell: ${input.phone}` : '',

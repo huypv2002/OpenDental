@@ -47,8 +47,20 @@ function parseCsvIntsParam(raw, fallback) {
     .filter((value) => Number.isInteger(value));
 }
 
+function bookingHoursForDate(date) {
+  const weekday = new Date(`${date}T12:00:00`).getDay();
+  if (weekday === 1) {
+    return { openTime: '14:00', closeTime: '17:00' };
+  }
+  if ([0, 2, 4, 5].includes(weekday)) {
+    return { openTime: '09:00', closeTime: '17:00' };
+  }
+  return null;
+}
+
 export function parseSlotQuery(query) {
   const date = parseDateInput(String(query.date ?? ''));
+  const durationOverrideMinutes = Number.parseInt(query.durationOverride ?? query.durationMinutes ?? '', 10);
   return {
     date,
     providerNum: Number.parseInt(query.providerNum ?? config.booking.providerNum, 10),
@@ -58,6 +70,7 @@ export function parseSlotQuery(query) {
     closeTime: String(query.closeTime ?? config.booking.closeTime),
     slotIntervalMinutes: Number.parseInt(query.interval ?? config.booking.slotIntervalMinutes, 10),
     fallbackDurationMinutes: Number.parseInt(query.duration ?? config.booking.fallbackDurationMinutes, 10),
+    durationOverrideMinutes: Number.isInteger(durationOverrideMinutes) ? durationOverrideMinutes : 0,
     busyAptStatuses: parseCsvIntsParam(query.busyStatuses, config.booking.busyAptStatuses)
   };
 }
@@ -151,7 +164,8 @@ export async function getAvailableSlots(input) {
     operatoryNum: Number.isInteger(input.operatoryNum) ? input.operatoryNum : config.booking.operatoryNum,
     appointmentTypeNum: Number.isInteger(input.appointmentTypeNum) ? input.appointmentTypeNum : config.booking.appointmentTypeNum,
     slotIntervalMinutes: Math.max(5, input.slotIntervalMinutes || config.booking.slotIntervalMinutes),
-    fallbackDurationMinutes: Math.max(5, input.fallbackDurationMinutes || config.booking.fallbackDurationMinutes)
+    fallbackDurationMinutes: Math.max(5, input.fallbackDurationMinutes || config.booking.fallbackDurationMinutes),
+    durationOverrideMinutes: Math.max(0, input.durationOverrideMinutes || 0)
   };
 
   const weekday = new Date(`${params.date}T12:00:00`).getDay();
@@ -164,7 +178,22 @@ export async function getAvailableSlots(input) {
     };
   }
 
-  const duration = await appointmentDurationMinutes(params.appointmentTypeNum, params.fallbackDurationMinutes);
+  const businessHours = bookingHoursForDate(params.date);
+  if (!businessHours) {
+    return {
+      date: params.date,
+      providerNum: params.providerNum,
+      operatoryNum: params.operatoryNum,
+      appointmentTypeNum: params.appointmentTypeNum,
+      durationMinutes: params.durationOverrideMinutes || params.fallbackDurationMinutes,
+      blocked: [],
+      slots: []
+    };
+  }
+  params.openTime = businessHours.openTime;
+  params.closeTime = businessHours.closeTime;
+
+  const duration = params.durationOverrideMinutes || await appointmentDurationMinutes(params.appointmentTypeNum, params.fallbackDurationMinutes);
   const [appointments, blockouts] = await Promise.all([
     busyAppointmentRanges(params),
     blockoutRanges(params)
