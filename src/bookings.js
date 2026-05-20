@@ -126,8 +126,10 @@ export async function createBooking(input) {
     const pattern = await appointmentPattern(connection, input.appointmentTypeNum, config.booking.fallbackDurationMinutes);
     const noteParts = [
       'Created from website booking bridge.',
-      input.phone ? `Phone: ${input.phone}` : '',
+      `Name: ${input.firstName} ${input.lastName}`,
+      input.phone ? `Cell: ${input.phone}` : '',
       input.email ? `Email: ${input.email}` : '',
+      input.birthdate !== '0001-01-01' ? `DOB: ${input.birthdate}` : '',
       input.note ? `Note: ${input.note}` : ''
     ].filter(Boolean);
 
@@ -141,7 +143,7 @@ export async function createBooking(input) {
         input.operatoryNum,
         input.providerNum,
         dateTime(input.date, input.time),
-        'Website Booking',
+        'Website Booking - New Patient',
         noteParts.join('\\n'),
         input.appointmentTypeNum
       ]
