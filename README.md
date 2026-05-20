@@ -8,6 +8,7 @@ Small Node.js API for reading available appointment slots and creating website b
 - `GET /api/reference` returns providers, operatories, and appointment types.
 - `GET /api/slots?date=2026-05-22` returns calculated open slots.
 - `POST /api/bookings` creates a patient and appointment when write mode is enabled.
+- `POST /api/bookings/:aptNum/files` stores booking uploads on the clinic server.
 
 Protected endpoints require:
 
@@ -44,6 +45,10 @@ SLOT_INTERVAL_MINUTES=30
 FALLBACK_DURATION_MINUTES=30
 BUSY_APT_STATUSES=1
 CORS_ORIGINS=https://lukdental.us
+PATIENT_FILE_STORAGE_ENABLED=true
+PATIENT_FILE_STORAGE_DIR=G:\Online Patient Information
+MAX_BOOKING_FILES=5
+MAX_BOOKING_FILE_MB=10
 ```
 
 Optional SMTP email settings:
@@ -80,3 +85,4 @@ curl -H "Authorization: Bearer replace-with-a-long-random-token" "http://127.0.0
 - Use a strong token, not the example token.
 - Start with `opendental_test`; only switch to production DB after the POC is verified.
 - Use the narrowest DB grants possible. Slot lookup needs `SELECT`; booking creation needs `SELECT`, `INSERT`, and `UPDATE`.
+- Keep `PATIENT_FILE_STORAGE_DIR` outside any public web directory. The current production target is `G:\Online Patient Information`.

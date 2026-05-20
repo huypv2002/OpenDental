@@ -1,13 +1,22 @@
 import cors from 'cors';
 import express from 'express';
+import multer from 'multer';
 import { config } from './config.js';
 import { pool, closePool } from './db.js';
 import { requireApiToken } from './auth.js';
 import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
+import { saveBookingFiles } from './files.js';
 import { getAvailableSlots, getReferenceData, parseSlotQuery } from './slots.js';
 
 const app = express();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    files: config.fileStorage.maxFiles,
+    fileSize: config.fileStorage.maxFileBytes
+  }
+});
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '256kb' }));
@@ -64,6 +73,27 @@ app.post('/api/bookings', requireApiToken, async (req, res, next) => {
       };
     }
     data.email = email;
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/bookings/:aptNum/files', requireApiToken, upload.any(), async (req, res, next) => {
+  try {
+    const input = {
+      aptNum: req.params.aptNum,
+      firstName: String(req.body.firstName ?? '').trim(),
+      lastName: String(req.body.lastName ?? '').trim(),
+      birthdate: String(req.body.birthdate ?? '').trim()
+    };
+    if (!input.firstName || !input.lastName) {
+      const error = new Error('firstName and lastName are required.');
+      error.status = 400;
+      throw error;
+    }
+
+    const data = await saveBookingFiles(input, req.files ?? []);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
