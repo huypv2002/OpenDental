@@ -94,6 +94,11 @@ app.post('/api/bookings/:aptNum/files', requireApiToken, upload.any(), async (re
     }
 
     const data = await saveBookingFiles(input, req.files ?? []);
+    if (data.folder) {
+      console.log(`Stored ${data.saved.length} booking file(s) for appointment ${input.aptNum} at ${data.folder}`);
+    } else {
+      console.log(`Received ${req.files?.length ?? 0} booking file(s) for appointment ${input.aptNum}; no files were stored.`);
+    }
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
