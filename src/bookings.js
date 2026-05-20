@@ -154,7 +154,8 @@ export async function createBooking(input) {
       patNum,
       aptNum: appointmentResult.insertId,
       date: input.date,
-      time: input.time
+      time: input.time,
+      endsAt: input.endsAt
     };
   } catch (error) {
     await connection.rollback();

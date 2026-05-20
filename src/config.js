@@ -51,5 +51,20 @@ export const config = {
     busyAptStatuses: csvIntsEnv('BUSY_APT_STATUSES', '1')
   },
   writesEnabled: (process.env.ENABLE_OPEN_DENTAL_WRITES ?? 'false').toLowerCase() === 'true',
-  corsOrigins: csvStringsEnv('CORS_ORIGINS', 'https://lukdental.us')
+  corsOrigins: csvStringsEnv('CORS_ORIGINS', 'https://lukdental.us'),
+  email: {
+    enabled: (process.env.SEND_EMAILS ?? 'false').toLowerCase() === 'true',
+    smtp: {
+      host: process.env.SMTP_HOST ?? '',
+      port: intEnv('SMTP_PORT', 587, 1, 65535),
+      secure: (process.env.SMTP_SECURE ?? '').toLowerCase() === 'true',
+      user: process.env.SMTP_USER ?? '',
+      password: process.env.SMTP_PASSWORD ?? ''
+    },
+    from: process.env.EMAIL_FROM ?? '',
+    adminEmails: csvStringsEnv('ADMIN_EMAILS', process.env.ADMIN_EMAIL ?? ''),
+    sendCustomerEmail: (process.env.SEND_CUSTOMER_EMAIL ?? 'true').toLowerCase() === 'true',
+    clinicName: process.env.CLINIC_NAME ?? 'Luk Dental',
+    replyTo: process.env.EMAIL_REPLY_TO ?? process.env.ADMIN_EMAIL ?? ''
+  }
 };

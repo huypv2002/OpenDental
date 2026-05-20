@@ -4,6 +4,7 @@ import { config } from './config.js';
 import { pool, closePool } from './db.js';
 import { requireApiToken } from './auth.js';
 import { createBooking, parseBookingBody } from './bookings.js';
+import { sendBookingEmails } from './email.js';
 import { getAvailableSlots, getReferenceData, parseSlotQuery } from './slots.js';
 
 const app = express();
@@ -51,6 +52,18 @@ app.post('/api/bookings', requireApiToken, async (req, res, next) => {
   try {
     const body = parseBookingBody(req.body ?? {});
     const data = await createBooking(body);
+    let email = { enabled: config.email.enabled, sent: [] };
+    try {
+      email = await sendBookingEmails(body, data);
+    } catch (error) {
+      console.warn(`Booking ${data.aptNum} was created, but email failed: ${error.message}`);
+      email = {
+        enabled: config.email.enabled,
+        sent: [],
+        error: error.message
+      };
+    }
+    data.email = email;
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
