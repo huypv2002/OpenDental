@@ -41,6 +41,23 @@ function dateTime(date, time) {
   return `${date} ${time}:00`;
 }
 
+function formatUsDate(date) {
+  if (!DATE_RE.test(date)) return date;
+  const [year, month, day] = date.split('-');
+  return `${month}/${day}/${year}`;
+}
+
+function normalizeUsPhone(phone) {
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  const normalized = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  if (normalized.length !== 10) {
+    const error = new Error('phone must use (xxx) xxx-xxxx format.');
+    error.status = 400;
+    throw error;
+  }
+  return `(${normalized.slice(0, 3)}) ${normalized.slice(3, 6)}-${normalized.slice(6)}`;
+}
+
 async function appointmentPattern(connection, appointmentTypeNum, fallbackDurationMinutes) {
   const [rows] = await connection.execute(
     'SELECT Pattern FROM appointmenttype WHERE AppointmentTypeNum = ? LIMIT 1',
@@ -84,7 +101,7 @@ export function parseBookingBody(body) {
     endsAt: optionalString(body, 'endsAt'),
     firstName: requiredString(body, 'firstName'),
     lastName: requiredString(body, 'lastName'),
-    phone: requiredString(body, 'phone'),
+    phone: normalizeUsPhone(requiredString(body, 'phone')),
     email: optionalString(body, 'email'),
     birthdate: birthdateRaw && DATE_RE.test(birthdateRaw) ? birthdateRaw : '0001-01-01',
     note: optionalString(body, 'note'),
@@ -129,8 +146,8 @@ export async function createBooking(input) {
       `Name: ${input.firstName} ${input.lastName}`,
       input.phone ? `Cell: ${input.phone}` : '',
       input.email ? `Email: ${input.email}` : '',
-      input.birthdate !== '0001-01-01' ? `DOB: ${input.birthdate}` : '',
-      input.note ? `Note: ${input.note}` : ''
+      input.birthdate !== '0001-01-01' ? `DOB: ${formatUsDate(input.birthdate)}` : '',
+      input.note ? `Note:\n${input.note}` : ''
     ].filter(Boolean);
 
     const [appointmentResult] = await connection.execute(
@@ -144,7 +161,7 @@ export async function createBooking(input) {
         input.providerNum,
         dateTime(input.date, input.time),
         'Website Booking - New Patient',
-        noteParts.join('\\n'),
+        noteParts.join('\n'),
         input.appointmentTypeNum
       ]
     );
