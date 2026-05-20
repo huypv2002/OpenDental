@@ -1,0 +1,163 @@
+import { config } from './config.js';
+import { pool } from './db.js';
+import { getAvailableSlots } from './slots.js';
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^\d{2}:\d{2}$/;
+
+function requiredString(body, key) {
+  const value = String(body[key] ?? '').trim();
+  if (!value) {
+    const error = new Error(`${key} is required.`);
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
+function optionalString(body, key) {
+  return String(body[key] ?? '').trim();
+}
+
+function normalizeDate(value, key) {
+  if (!DATE_RE.test(value)) {
+    const error = new Error(`${key} must use YYYY-MM-DD format.`);
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
+function normalizeTime(value, key) {
+  if (!TIME_RE.test(value)) {
+    const error = new Error(`${key} must use HH:mm format.`);
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
+function dateTime(date, time) {
+  return `${date} ${time}:00`;
+}
+
+async function appointmentPattern(connection, appointmentTypeNum, fallbackDurationMinutes) {
+  const [rows] = await connection.execute(
+    'SELECT Pattern FROM appointmenttype WHERE AppointmentTypeNum = ? LIMIT 1',
+    [appointmentTypeNum]
+  );
+  const pattern = String(rows[0]?.Pattern ?? '');
+  if (pattern) return pattern;
+
+  const blocks = Math.max(1, Math.ceil(fallbackDurationMinutes / 5));
+  return 'X'.repeat(blocks);
+}
+
+async function assertSlotStillAvailable(input) {
+  const availability = await getAvailableSlots({
+    date: input.date,
+    providerNum: input.providerNum,
+    operatoryNum: input.operatoryNum,
+    appointmentTypeNum: input.appointmentTypeNum,
+    openTime: config.booking.openTime,
+    closeTime: config.booking.closeTime,
+    slotIntervalMinutes: config.booking.slotIntervalMinutes,
+    fallbackDurationMinutes: config.booking.fallbackDurationMinutes,
+    busyAptStatuses: config.booking.busyAptStatuses
+  });
+  const available = availability.slots.some((slot) => slot.time === input.time);
+  if (!available) {
+    const error = new Error('Selected appointment time is no longer available.');
+    error.status = 409;
+    throw error;
+  }
+}
+
+export function parseBookingBody(body) {
+  const date = normalizeDate(requiredString(body, 'date'), 'date');
+  const time = normalizeTime(requiredString(body, 'time'), 'time');
+  const birthdateRaw = optionalString(body, 'birthdate');
+
+  return {
+    date,
+    time,
+    endsAt: optionalString(body, 'endsAt'),
+    firstName: requiredString(body, 'firstName'),
+    lastName: requiredString(body, 'lastName'),
+    phone: requiredString(body, 'phone'),
+    email: optionalString(body, 'email'),
+    birthdate: birthdateRaw && DATE_RE.test(birthdateRaw) ? birthdateRaw : '0001-01-01',
+    note: optionalString(body, 'note'),
+    providerNum: Number.parseInt(body.providerNum ?? config.booking.providerNum, 10),
+    operatoryNum: Number.parseInt(body.operatoryNum ?? config.booking.operatoryNum, 10),
+    appointmentTypeNum: Number.parseInt(body.appointmentTypeNum ?? config.booking.appointmentTypeNum, 10)
+  };
+}
+
+export async function createBooking(input) {
+  if (!config.writesEnabled) {
+    const error = new Error('Open Dental write mode is disabled. Set ENABLE_OPEN_DENTAL_WRITES=true after testing on clone DB.');
+    error.status = 501;
+    throw error;
+  }
+
+  await assertSlotStillAvailable(input);
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [patientResult] = await connection.execute(
+      `INSERT INTO patient
+        (LName, FName, WirelessPhone, Email, Birthdate, PatStatus, Gender, Position, PriProv, SecProv, BillingType, FeeSched)
+       VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, 0, 0, 0)`,
+      [
+        input.lastName,
+        input.firstName,
+        input.phone,
+        input.email,
+        input.birthdate,
+        input.providerNum
+      ]
+    );
+    const patNum = patientResult.insertId;
+    await connection.execute('UPDATE patient SET Guarantor = ? WHERE PatNum = ?', [patNum, patNum]);
+
+    const pattern = await appointmentPattern(connection, input.appointmentTypeNum, config.booking.fallbackDurationMinutes);
+    const noteParts = [
+      'Created from website booking bridge.',
+      input.phone ? `Phone: ${input.phone}` : '',
+      input.email ? `Email: ${input.email}` : '',
+      input.note ? `Note: ${input.note}` : ''
+    ].filter(Boolean);
+
+    const [appointmentResult] = await connection.execute(
+      `INSERT INTO appointment
+        (PatNum, AptStatus, Pattern, Confirmed, TimeLocked, Op, ProvNum, ProvHyg, AptDateTime, IsNewPatient, ProcDescript, Note, ClinicNum, AppointmentTypeNum, SecUserNumEntry, SecDateTEntry)
+       VALUES (?, 1, ?, 0, 0, ?, ?, 0, ?, 1, ?, ?, 0, ?, 0, NOW())`,
+      [
+        patNum,
+        pattern,
+        input.operatoryNum,
+        input.providerNum,
+        dateTime(input.date, input.time),
+        'Website Booking',
+        noteParts.join('\\n'),
+        input.appointmentTypeNum
+      ]
+    );
+
+    await connection.commit();
+    return {
+      patNum,
+      aptNum: appointmentResult.insertId,
+      date: input.date,
+      time: input.time
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
