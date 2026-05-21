@@ -3,6 +3,9 @@ import path from 'node:path';
 import { config } from './config.js';
 import { pool } from './db.js';
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_REPORT_DAYS = 370;
+
 function pad(value) {
   return String(value).padStart(2, '0');
 }
@@ -23,6 +26,23 @@ function mdy(date) {
 
 function mdyPathParts(date) {
   return [`report-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${date.getFullYear()}`];
+}
+
+function parseDateInput(value, field) {
+  const raw = String(value ?? '').trim();
+  if (!DATE_RE.test(raw)) {
+    const error = new Error(`${field} must use YYYY-MM-DD format.`);
+    error.status = 400;
+    throw error;
+  }
+  const [year, month, day] = raw.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+    const error = new Error(`${field} is not a valid date.`);
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
 }
 
 function toDate(value) {
@@ -118,11 +138,58 @@ function toCsv(headers, rows) {
   return `\uFEFF${[headers, ...rows].map((row) => row.map(csvValue).join(',')).join('\r\n')}\r\n`;
 }
 
+function defaultStartDate() {
+  const today = new Date();
+  return new Date(today.getFullYear(), today.getMonth(), today.getDate());
+}
+
+function resolveRange(body) {
+  const preset = String(body.preset ?? body.range ?? '15days').trim().toLowerCase();
+  const today = defaultStartDate();
+  let start = body.startDate ? parseDateInput(body.startDate, 'startDate') : today;
+  let end;
+
+  if (body.endDate) {
+    end = parseDateInput(body.endDate, 'endDate');
+  } else if (preset === 'week') {
+    if (!body.startDate) {
+      start = addDays(today, -today.getDay());
+    }
+    end = addDays(start, 6);
+  } else if (preset === 'month') {
+    if (!body.startDate) {
+      start = new Date(today.getFullYear(), today.getMonth(), 1);
+    }
+    end = addDays(new Date(start.getFullYear(), start.getMonth() + 1, start.getDate()), -1);
+  } else if (preset === 'year') {
+    if (!body.startDate) {
+      start = new Date(today.getFullYear(), 0, 1);
+    }
+    end = addDays(new Date(start.getFullYear() + 1, start.getMonth(), start.getDate()), -1);
+  } else {
+    const parsedDays = Number.parseInt(body.days ?? '15', 10);
+    const days = Number.isInteger(parsedDays) ? Math.max(1, Math.min(MAX_REPORT_DAYS, parsedDays)) : 15;
+    end = addDays(start, days - 1);
+  }
+
+  if (end < start) {
+    const error = new Error('endDate must be the same as or after startDate.');
+    error.status = 400;
+    throw error;
+  }
+
+  const days = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+  if (days > MAX_REPORT_DAYS) {
+    const error = new Error(`Report range cannot exceed ${MAX_REPORT_DAYS} days.`);
+    error.status = 400;
+    throw error;
+  }
+
+  return { preset, start, end, days };
+}
+
 export function parseAppointmentReportBody(body = {}) {
-  const parsedDays = Number.parseInt(body.days ?? '15', 10);
-  return {
-    days: Number.isInteger(parsedDays) ? Math.max(1, Math.min(60, parsedDays)) : 15
-  };
+  return resolveRange(body);
 }
 
 export async function exportAppointmentReport(input) {
@@ -130,9 +197,7 @@ export async function exportAppointmentReport(input) {
     return { enabled: false, rows: 0 };
   }
 
-  const today = new Date();
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const end = addDays(start, input.days - 1);
+  const { preset, start, end, days } = input;
   const startDate = ymd(start);
   const endDate = ymd(end);
 
@@ -239,13 +304,14 @@ export async function exportAppointmentReport(input) {
   const folder = path.join(config.reportStorage.dir, ...mdyPathParts(start));
   await fs.mkdir(folder, { recursive: true });
 
-  const fileName = `clinic-appointments-next-${input.days}-days-${startDate}.csv`;
+  const fileName = `clinic-appointments-${preset}-${startDate}-to-${endDate}.csv`;
   const filePath = path.join(folder, fileName);
   await fs.writeFile(filePath, toCsv(headers, dataRows), 'utf8');
 
   return {
     enabled: true,
-    days: input.days,
+    preset,
+    days,
     startDate: startDisplay,
     endDate: endDisplay,
     folder,
