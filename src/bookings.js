@@ -207,11 +207,20 @@ export async function createBooking(input) {
         input.appointmentTypeNum
       ]
     );
+    const aptNum = appointmentResult.insertId;
+    if (input.driverLicense) {
+      await connection.execute(
+        `INSERT INTO apptfield
+          (AptNum, FieldName, FieldValue)
+         VALUES (?, 'Driver License ID', ?)`,
+        [aptNum, input.driverLicense]
+      );
+    }
 
     await connection.commit();
     return {
       patNum,
-      aptNum: appointmentResult.insertId,
+      aptNum,
       date: input.date,
       time: input.time,
       endsAt: input.endsAt
