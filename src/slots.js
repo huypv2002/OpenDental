@@ -55,6 +55,35 @@ function minutesToTime(value) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
+function clinicNow() {
+  const parts = {};
+  new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(new Date()).forEach((part) => {
+    parts[part.type] = part.value;
+  });
+
+  let hour = Number.parseInt(parts.hour ?? '0', 10);
+  if (hour === 24) hour = 0;
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    minutes: (hour * 60) + Number.parseInt(parts.minute ?? '0', 10)
+  };
+}
+
+function isPastClinicSlot(date, startMinutes) {
+  const now = clinicNow();
+  if (date < now.date) return true;
+  if (date > now.date) return false;
+  return startMinutes <= now.minutes;
+}
+
 function patternToMinutes(pattern, fallback) {
   const minutes = String(pattern ?? '').length * 5;
   return minutes > 0 ? minutes : fallback;
@@ -333,6 +362,7 @@ function slotsForDate(params, date, duration, blocked) {
 
   for (let start = open; start + duration <= close; start += params.slotIntervalMinutes) {
     const end = start + duration;
+    if (isPastClinicSlot(date, start)) continue;
     if (overlaps(start, end, blocked)) continue;
 
     slots.push({
