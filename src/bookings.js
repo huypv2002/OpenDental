@@ -78,10 +78,10 @@ async function appointmentPattern(connection, appointmentTypeNum, fallbackDurati
 function bookingHoursForDate(date) {
   const weekday = new Date(`${date}T12:00:00`).getDay();
   if (weekday === 1) {
-    return { openTime: '14:00', closeTime: '17:00' };
+    return { openTime: '14:00', closeTime: '18:00' };
   }
   if ([0, 2, 4, 5].includes(weekday)) {
-    return { openTime: '09:00', closeTime: '17:00' };
+    return { openTime: '09:00', closeTime: '18:00' };
   }
   return null;
 }
