@@ -128,6 +128,9 @@ export function parseBookingBody(body) {
     phone: normalizeUsPhone(requiredString(body, 'phone')),
     email: optionalString(body, 'email'),
     birthdate: birthdateRaw && DATE_RE.test(birthdateRaw) ? birthdateRaw : '0001-01-01',
+    address: optionalString(body, 'address'),
+    city: optionalString(body, 'city'),
+    state: optionalString(body, 'state'),
     note: optionalString(body, 'note'),
     providerNum: Number.parseInt(body.providerNum ?? config.booking.providerNum, 10),
     operatoryNum: Number.parseInt(body.operatoryNum ?? config.booking.operatoryNum, 10),
@@ -151,14 +154,17 @@ export async function createBooking(input) {
 
     const [patientResult] = await connection.execute(
       `INSERT INTO patient
-        (LName, FName, WirelessPhone, Email, Birthdate, PatStatus, Gender, Position, PriProv, SecProv, BillingType, FeeSched)
-       VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, 0, 0, 0)`,
+        (LName, FName, WirelessPhone, Email, Birthdate, Address, City, State, PatStatus, Gender, Position, PriProv, SecProv, BillingType, FeeSched)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, 0, 0, 0)`,
       [
         input.lastName,
         input.firstName,
         input.phone,
         input.email,
         input.birthdate,
+        input.address,
+        input.city,
+        input.state,
         input.providerNum
       ]
     );
