@@ -4,6 +4,7 @@ import { getAvailableSlots } from './slots.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}$/;
+const CLINIC_TIME_ZONE = 'America/Chicago';
 
 function requiredString(body, key) {
   const value = String(body[key] ?? '').trim();
@@ -49,6 +50,30 @@ function normalizeTime(value, key) {
 
 function dateTime(date, time) {
   return `${date} ${time}:00`;
+}
+
+function clinicNowParts() {
+  const parts = {};
+  new Intl.DateTimeFormat('en-US', {
+    timeZone: CLINIC_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date()).forEach((part) => {
+    parts[part.type] = part.value;
+  });
+
+  let hour = Number.parseInt(parts.hour ?? '0', 10);
+  if (hour === 24) hour = 0;
+  const time = `${String(hour).padStart(2, '0')}:${parts.minute}:${parts.second}`;
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    dateTime: `${parts.year}-${parts.month}-${parts.day} ${time}`
+  };
 }
 
 function formatUsDate(date) {
@@ -181,13 +206,14 @@ export async function createBooking(input) {
       ]
     );
     const patNum = patientResult.insertId;
+    const clinicNow = clinicNowParts();
     await connection.execute('UPDATE patient SET Guarantor = ? WHERE PatNum = ?', [patNum, patNum]);
     if (input.driverLicense) {
       await connection.execute(
         `INSERT INTO patfield
           (PatNum, FieldName, FieldValue, SecUserNumEntry, SecDateEntry)
-         VALUES (?, 'Driver License ID', ?, 0, CURDATE())`,
-        [patNum, input.driverLicense]
+         VALUES (?, 'Driver License ID', ?, 0, ?)`,
+        [patNum, input.driverLicense, clinicNow.date]
       );
     }
 
@@ -205,7 +231,7 @@ export async function createBooking(input) {
     const [appointmentResult] = await connection.execute(
       `INSERT INTO appointment
         (PatNum, AptStatus, Pattern, Confirmed, TimeLocked, Op, ProvNum, ProvHyg, AptDateTime, IsNewPatient, ProcDescript, Note, ClinicNum, AppointmentTypeNum, SecUserNumEntry, SecDateTEntry)
-       VALUES (?, 1, ?, 0, 0, ?, ?, 0, ?, 1, ?, ?, 0, ?, 0, NOW())`,
+       VALUES (?, 1, ?, 0, 0, ?, ?, 0, ?, 1, ?, ?, 0, ?, 0, ?)`,
       [
         patNum,
         pattern,
@@ -214,7 +240,8 @@ export async function createBooking(input) {
         dateTime(input.date, input.time),
         'Website Booking - New Patient',
         noteParts.join('\n'),
-        input.appointmentTypeNum
+        input.appointmentTypeNum,
+        clinicNow.dateTime
       ]
     );
     const aptNum = appointmentResult.insertId;

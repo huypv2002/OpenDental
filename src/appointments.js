@@ -4,6 +4,7 @@ import { appointmentPattern, assertSlotStillAvailable } from './bookings.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}$/;
+const CLINIC_TIME_ZONE = 'America/Chicago';
 
 function requiredString(body, key) {
   const value = String(body[key] ?? '').trim();
@@ -74,6 +75,35 @@ function mysqlDateTimeToParts(value) {
   };
 }
 
+function clinicNowParts() {
+  const parts = {};
+  new Intl.DateTimeFormat('en-US', {
+    timeZone: CLINIC_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date()).forEach((part) => {
+    parts[part.type] = part.value;
+  });
+
+  let hour = Number.parseInt(parts.hour ?? '0', 10);
+  if (hour === 24) hour = 0;
+  return {
+    dateTime: `${parts.year}-${parts.month}-${parts.day} ${String(hour).padStart(2, '0')}:${parts.minute}:${parts.second}`,
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${String(hour).padStart(2, '0')}:${parts.minute}`
+  };
+}
+
+function appointmentIsBeforeClinicNow(value, clinicNow) {
+  const parts = mysqlDateTimeToParts(value);
+  return `${parts.date} ${parts.time}:00` < clinicNow.dateTime;
+}
+
 function patternToMinutes(pattern, fallback) {
   const minutes = String(pattern ?? '').length * 5;
   return minutes > 0 ? minutes : fallback;
@@ -112,6 +142,7 @@ export function parseChangeAppointmentBody(body) {
 }
 
 async function findMatchingAppointment(connection, input) {
+  const clinicNow = clinicNowParts();
   const [rows] = await connection.execute(
     `SELECT
        a.AptNum, a.PatNum, a.AptDateTime, a.Pattern, a.Op, a.ProvNum, a.AppointmentTypeNum, a.Note,
@@ -129,7 +160,7 @@ async function findMatchingAppointment(connection, input) {
        AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
        AND p.Birthdate = ?
        AND a.AptStatus = 1
-       AND a.AptDateTime >= NOW()
+       AND a.AptDateTime >= ?
        AND a.Note LIKE '%ONLINE PT%'
        AND (
          a.Note LIKE ? ESCAPE '\\\\'
@@ -143,6 +174,7 @@ async function findMatchingAppointment(connection, input) {
       input.lastName,
       phoneDigits(input.phone),
       input.birthdate,
+      clinicNow.dateTime,
       `%${escapeLike(input.driverLicense)}%`,
       input.driverLicense,
       input.driverLicense
@@ -186,13 +218,12 @@ async function findMatchingAppointment(connection, input) {
 
     if (diagnosticRows.length) {
       const diagnostic = diagnosticRows[0];
-      const diagnosticDate = diagnostic.AptDateTime instanceof Date ? diagnostic.AptDateTime : new Date(diagnostic.AptDateTime);
       if (Number(diagnostic.AptStatus) !== 1) {
         const error = new Error('A matching online appointment was found, but it is no longer active and cannot be changed online.');
         error.status = 409;
         throw error;
       }
-      if (diagnosticDate < new Date()) {
+      if (appointmentIsBeforeClinicNow(diagnostic.AptDateTime, clinicNow)) {
         const error = new Error('A matching online appointment was found, but it is in the past and cannot be changed online.');
         error.status = 409;
         throw error;
@@ -259,7 +290,7 @@ export async function changeAppointment(input) {
     await assertSlotStillAvailable(updateInput);
 
     const pattern = await appointmentPattern(connection, updateInput.appointmentTypeNum, updateInput.durationMinutes);
-    const auditNote = `Online appointment changed from ${appointment.date} ${appointment.time} to ${input.date} ${input.time} on ${new Date().toISOString().slice(0, 19).replace('T', ' ')}.`;
+    const auditNote = `Online appointment changed from ${appointment.date} ${appointment.time} to ${input.date} ${input.time} on ${clinicNowParts().dateTime} Houston time.`;
 
     await connection.execute(
       `UPDATE appointment
