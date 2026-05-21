@@ -132,6 +132,7 @@ export function parseBookingBody(body) {
     address: optionalString(body, 'address'),
     city: optionalString(body, 'city'),
     state: optionalString(body, 'state'),
+    driverLicense: optionalString(body, 'driverLicense'),
     note: optionalString(body, 'note'),
     providerNum: Number.parseInt(body.providerNum ?? config.booking.providerNum, 10),
     operatoryNum: Number.parseInt(body.operatoryNum ?? config.booking.operatoryNum, 10),
@@ -171,6 +172,14 @@ export async function createBooking(input) {
     );
     const patNum = patientResult.insertId;
     await connection.execute('UPDATE patient SET Guarantor = ? WHERE PatNum = ?', [patNum, patNum]);
+    if (input.driverLicense) {
+      await connection.execute(
+        `INSERT INTO patfield
+          (PatNum, FieldName, FieldValue, SecUserNumEntry, SecDateEntry)
+         VALUES (?, 'Driver License ID', ?, 0, CURDATE())`,
+        [patNum, input.driverLicense]
+      );
+    }
 
     const pattern = await appointmentPattern(connection, input.appointmentTypeNum, input.durationMinutes);
     const noteParts = [
