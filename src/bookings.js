@@ -19,6 +19,16 @@ function optionalString(body, key) {
   return String(body[key] ?? '').trim();
 }
 
+function plainLatinName(body, key) {
+  const value = requiredString(body, key);
+  if (!/^[A-Za-z][A-Za-z '\-]*$/.test(value)) {
+    const error = new Error(`${key} must use letters without accents.`);
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
 function normalizeDate(value, key) {
   if (!DATE_RE.test(value)) {
     const error = new Error(`${key} must use YYYY-MM-DD format.`);
@@ -124,8 +134,8 @@ export function parseBookingBody(body) {
     date,
     time,
     endsAt: optionalString(body, 'endsAt'),
-    firstName: requiredString(body, 'firstName'),
-    lastName: requiredString(body, 'lastName'),
+    firstName: plainLatinName(body, 'firstName'),
+    lastName: plainLatinName(body, 'lastName'),
     phone: normalizeUsPhone(requiredString(body, 'phone')),
     email: optionalString(body, 'email'),
     birthdate: birthdateRaw && DATE_RE.test(birthdateRaw) ? birthdateRaw : '0001-01-01',

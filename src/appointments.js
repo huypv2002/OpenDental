@@ -15,6 +15,16 @@ function requiredString(body, key) {
   return value;
 }
 
+function plainLatinName(body, key) {
+  const value = requiredString(body, key);
+  if (!/^[A-Za-z][A-Za-z '\-]*$/.test(value)) {
+    const error = new Error(`${key} must use letters without accents.`);
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
 function normalizeDate(value, key) {
   if (!DATE_RE.test(value)) {
     const error = new Error(`${key} must use YYYY-MM-DD format.`);
@@ -75,8 +85,8 @@ function escapeLike(value) {
 
 function parseIdentity(body) {
   return {
-    firstName: requiredString(body, 'firstName'),
-    lastName: requiredString(body, 'lastName'),
+    firstName: plainLatinName(body, 'firstName'),
+    lastName: plainLatinName(body, 'lastName'),
     phone: normalizeUsPhone(requiredString(body, 'phone')),
     birthdate: normalizeDate(requiredString(body, 'birthdate'), 'birthdate'),
     driverLicense: requiredString(body, 'driverLicense')
