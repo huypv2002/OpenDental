@@ -150,6 +150,55 @@ async function findMatchingAppointment(connection, input) {
   );
 
   if (!rows.length) {
+    const [diagnosticRows] = await connection.execute(
+      `SELECT
+         a.AptNum, a.AptStatus, a.AptDateTime
+       FROM appointment a
+       INNER JOIN patient p ON p.PatNum = a.PatNum
+       LEFT JOIN apptfield af
+         ON af.AptNum = a.AptNum
+        AND af.FieldName = 'Driver License ID'
+       LEFT JOIN patfield pf
+         ON pf.PatNum = p.PatNum
+        AND pf.FieldName = 'Driver License ID'
+       WHERE LOWER(p.FName) = LOWER(?)
+         AND LOWER(p.LName) = LOWER(?)
+         AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
+         AND p.Birthdate = ?
+         AND a.Note LIKE '%ONLINE PT%'
+         AND (
+           a.Note LIKE ? ESCAPE '\\\\'
+           OR af.FieldValue = ?
+           OR pf.FieldValue = ?
+         )
+       ORDER BY a.AptDateTime DESC
+       LIMIT 1`,
+      [
+        input.firstName,
+        input.lastName,
+        phoneDigits(input.phone),
+        input.birthdate,
+        `%${escapeLike(input.driverLicense)}%`,
+        input.driverLicense,
+        input.driverLicense
+      ]
+    );
+
+    if (diagnosticRows.length) {
+      const diagnostic = diagnosticRows[0];
+      const diagnosticDate = diagnostic.AptDateTime instanceof Date ? diagnostic.AptDateTime : new Date(diagnostic.AptDateTime);
+      if (Number(diagnostic.AptStatus) !== 1) {
+        const error = new Error('A matching online appointment was found, but it is no longer active and cannot be changed online.');
+        error.status = 409;
+        throw error;
+      }
+      if (diagnosticDate < new Date()) {
+        const error = new Error('A matching online appointment was found, but it is in the past and cannot be changed online.');
+        error.status = 409;
+        throw error;
+      }
+    }
+
     const error = new Error('No matching active online appointment was found for those details.');
     error.status = 404;
     throw error;
