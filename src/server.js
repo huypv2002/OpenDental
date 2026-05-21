@@ -9,7 +9,7 @@ import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
 import { exportAppointmentReport, parseAppointmentReportBody } from './reports.js';
-import { getAvailableSlots, getReferenceData, parseSlotQuery } from './slots.js';
+import { getAvailableSlots, getAvailableSlotsRange, getReferenceData, parseSlotQuery, parseSlotRangeQuery } from './slots.js';
 
 const app = express();
 const upload = multer({
@@ -53,6 +53,16 @@ app.get('/api/slots', requireApiToken, async (req, res, next) => {
   try {
     const query = parseSlotQuery(req.query);
     const data = await getAvailableSlots(query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/slots/range', requireApiToken, async (req, res, next) => {
+  try {
+    const query = parseSlotRangeQuery(req.query);
+    const data = await getAvailableSlotsRange(query);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
