@@ -25,6 +25,8 @@ function csvStringsEnv(name, fallback = '') {
     .filter(Boolean);
 }
 
+const patientFileStorageDir = process.env.PATIENT_FILE_STORAGE_DIR ?? 'G:\\Online Patient Information';
+
 export const config = {
   port: intEnv('PORT', 3008, 1, 65535),
   apiToken: process.env.API_TOKEN ?? '',
@@ -69,8 +71,12 @@ export const config = {
   },
   fileStorage: {
     enabled: (process.env.PATIENT_FILE_STORAGE_ENABLED ?? 'true').toLowerCase() === 'true',
-    dir: process.env.PATIENT_FILE_STORAGE_DIR ?? 'G:\\Online Patient Information',
+    dir: patientFileStorageDir,
     maxFiles: intEnv('MAX_BOOKING_FILES', 5, 0, 20),
     maxFileBytes: intEnv('MAX_BOOKING_FILE_MB', 10, 1, 100) * 1024 * 1024
+  },
+  reportStorage: {
+    enabled: (process.env.REPORT_STORAGE_ENABLED ?? 'true').toLowerCase() === 'true',
+    dir: process.env.REPORT_STORAGE_DIR ?? 'G:\\Open Dental Report'
   }
 };

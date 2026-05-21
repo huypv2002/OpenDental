@@ -8,6 +8,7 @@ import { changeAppointment, parseChangeAppointmentBody, parseVerifyAppointmentBo
 import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
+import { exportAppointmentReport, parseAppointmentReportBody } from './reports.js';
 import { getAvailableSlots, getReferenceData, parseSlotQuery } from './slots.js';
 
 const app = express();
@@ -120,6 +121,16 @@ app.post('/api/appointments/change', requireApiToken, async (req, res, next) => 
   try {
     const body = parseChangeAppointmentBody(req.body ?? {});
     const data = await changeAppointment(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/reports/appointments/export', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parseAppointmentReportBody(req.body ?? {});
+    const data = await exportAppointmentReport(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
