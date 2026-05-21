@@ -44,6 +44,11 @@ function normalizeUsPhone(phone) {
   return `(${normalized.slice(0, 3)}) ${normalized.slice(3, 6)}-${normalized.slice(6)}`;
 }
 
+function phoneDigits(phone) {
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+}
+
 function mysqlDateToYmd(value) {
   if (value instanceof Date) {
     return value.toISOString().slice(0, 10);
@@ -103,22 +108,34 @@ async function findMatchingAppointment(connection, input) {
        p.FName, p.LName, p.WirelessPhone, p.Birthdate, p.Email
      FROM appointment a
      INNER JOIN patient p ON p.PatNum = a.PatNum
+     LEFT JOIN apptfield af
+       ON af.AptNum = a.AptNum
+      AND af.FieldName = 'Driver License ID'
+     LEFT JOIN patfield pf
+       ON pf.PatNum = p.PatNum
+      AND pf.FieldName = 'Driver License ID'
      WHERE LOWER(p.FName) = LOWER(?)
        AND LOWER(p.LName) = LOWER(?)
-       AND p.WirelessPhone = ?
+       AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
        AND p.Birthdate = ?
        AND a.AptStatus = 1
        AND a.AptDateTime >= NOW()
        AND a.Note LIKE '%ONLINE PT%'
-       AND a.Note LIKE ? ESCAPE '\\\\'
+       AND (
+         a.Note LIKE ? ESCAPE '\\\\'
+         OR af.FieldValue = ?
+         OR pf.FieldValue = ?
+       )
      ORDER BY a.AptDateTime
      LIMIT 5`,
     [
       input.firstName,
       input.lastName,
-      input.phone,
+      phoneDigits(input.phone),
       input.birthdate,
-      `%${escapeLike(input.driverLicense)}%`
+      `%${escapeLike(input.driverLicense)}%`,
+      input.driverLicense,
+      input.driverLicense
     ]
   );
 
