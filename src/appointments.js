@@ -100,7 +100,7 @@ async function findMatchingAppointment(connection, input) {
   const [rows] = await connection.execute(
     `SELECT
        a.AptNum, a.PatNum, a.AptDateTime, a.Pattern, a.Op, a.ProvNum, a.AppointmentTypeNum, a.Note,
-       p.FName, p.LName, p.WirelessPhone, p.Birthdate
+       p.FName, p.LName, p.WirelessPhone, p.Birthdate, p.Email
      FROM appointment a
      INNER JOIN patient p ON p.PatNum = a.PatNum
      WHERE LOWER(p.FName) = LOWER(?)
@@ -136,6 +136,7 @@ async function findMatchingAppointment(connection, input) {
     firstName: row.FName,
     lastName: row.LName,
     phone: row.WirelessPhone,
+    email: row.Email || '',
     birthdate: mysqlDateToYmd(row.Birthdate),
     date: parts.date,
     time: parts.time,
@@ -197,6 +198,11 @@ export async function changeAppointment(input) {
     return {
       aptNum: appointment.aptNum,
       patNum: appointment.patNum,
+      firstName: appointment.firstName,
+      lastName: appointment.lastName,
+      phone: appointment.phone,
+      email: appointment.email || '',
+      birthdate: appointment.birthdate,
       previousDate: appointment.date,
       previousTime: appointment.time,
       date: input.date,
