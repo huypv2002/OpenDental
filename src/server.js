@@ -4,6 +4,7 @@ import multer from 'multer';
 import { config } from './config.js';
 import { pool, closePool } from './db.js';
 import { requireApiToken } from './auth.js';
+import { changeAppointment, parseChangeAppointmentBody, parseVerifyAppointmentBody, verifyAppointmentForChange } from './appointments.js';
 import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
@@ -99,6 +100,26 @@ app.post('/api/bookings/:aptNum/files', requireApiToken, upload.any(), async (re
     } else {
       console.log(`Received ${req.files?.length ?? 0} booking file(s) for appointment ${input.aptNum}; no files were stored.`);
     }
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/appointments/verify-change', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parseVerifyAppointmentBody(req.body ?? {});
+    const data = await verifyAppointmentForChange(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/appointments/change', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parseChangeAppointmentBody(req.body ?? {});
+    const data = await changeAppointment(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);

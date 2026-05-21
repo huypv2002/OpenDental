@@ -71,6 +71,7 @@ export function parseSlotQuery(query) {
     slotIntervalMinutes: Number.parseInt(query.interval ?? config.booking.slotIntervalMinutes, 10),
     fallbackDurationMinutes: Number.parseInt(query.duration ?? config.booking.fallbackDurationMinutes, 10),
     durationOverrideMinutes: Number.isInteger(durationOverrideMinutes) ? durationOverrideMinutes : 0,
+    excludeAptNum: Number.parseInt(query.excludeAptNum ?? '', 10) || 0,
     busyAptStatuses: parseCsvIntsParam(query.busyStatuses, config.booking.busyAptStatuses)
   };
 }
@@ -111,14 +112,20 @@ async function busyAppointmentRanges(params) {
   if (!params.busyAptStatuses.length) return [];
 
   const placeholders = params.busyAptStatuses.map(() => '?').join(',');
+  const excludeClause = params.excludeAptNum ? ' AND AptNum <> ?' : '';
+  const values = [params.date, params.operatoryNum, ...params.busyAptStatuses];
+  if (params.excludeAptNum) {
+    values.push(params.excludeAptNum);
+  }
   const [rows] = await pool.execute(
     `SELECT AptNum, AptDateTime, Pattern
      FROM appointment
      WHERE DATE(AptDateTime) = ?
        AND Op = ?
        AND AptStatus IN (${placeholders})
+       ${excludeClause}
      ORDER BY AptDateTime`,
-    [params.date, params.operatoryNum, ...params.busyAptStatuses]
+    values
   );
 
   return rows.map((row) => {
@@ -165,7 +172,8 @@ export async function getAvailableSlots(input) {
     appointmentTypeNum: Number.isInteger(input.appointmentTypeNum) ? input.appointmentTypeNum : config.booking.appointmentTypeNum,
     slotIntervalMinutes: Math.max(5, input.slotIntervalMinutes || config.booking.slotIntervalMinutes),
     fallbackDurationMinutes: Math.max(5, input.fallbackDurationMinutes || config.booking.fallbackDurationMinutes),
-    durationOverrideMinutes: Math.max(0, input.durationOverrideMinutes || 0)
+    durationOverrideMinutes: Math.max(0, input.durationOverrideMinutes || 0),
+    excludeAptNum: Math.max(0, input.excludeAptNum || 0)
   };
 
   const weekday = new Date(`${params.date}T12:00:00`).getDay();

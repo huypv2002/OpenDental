@@ -58,7 +58,7 @@ function normalizeUsPhone(phone) {
   return `(${normalized.slice(0, 3)}) ${normalized.slice(3, 6)}-${normalized.slice(6)}`;
 }
 
-async function appointmentPattern(connection, appointmentTypeNum, fallbackDurationMinutes) {
+export async function appointmentPattern(connection, appointmentTypeNum, fallbackDurationMinutes) {
   if (fallbackDurationMinutes > 0) {
     const blocks = Math.max(1, Math.ceil(fallbackDurationMinutes / 5));
     return 'X'.repeat(blocks);
@@ -86,7 +86,7 @@ function bookingHoursForDate(date) {
   return null;
 }
 
-async function assertSlotStillAvailable(input) {
+export async function assertSlotStillAvailable(input) {
   const hours = bookingHoursForDate(input.date);
   if (!hours) {
     const error = new Error('Selected appointment date is outside online booking hours.');
@@ -104,6 +104,7 @@ async function assertSlotStillAvailable(input) {
     slotIntervalMinutes: config.booking.slotIntervalMinutes,
     fallbackDurationMinutes: input.durationMinutes,
     durationOverrideMinutes: input.durationMinutes,
+    excludeAptNum: input.excludeAptNum || 0,
     busyAptStatuses: config.booking.busyAptStatuses
   });
   const available = availability.slots.some((slot) => slot.time === input.time);
