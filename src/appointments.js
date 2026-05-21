@@ -177,8 +177,7 @@ export async function changeAppointment(input) {
       ...input,
       providerNum: appointment.providerNum || input.providerNum,
       operatoryNum: appointment.operatoryNum || input.operatoryNum,
-      appointmentTypeNum: appointment.appointmentTypeNum || input.appointmentTypeNum,
-      excludeAptNum: appointment.aptNum
+      appointmentTypeNum: appointment.appointmentTypeNum || input.appointmentTypeNum
     };
     await assertSlotStillAvailable(updateInput);
 
