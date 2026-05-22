@@ -52,6 +52,23 @@ function dateTime(date, time) {
   return `${date} ${time}:00`;
 }
 
+function dateKey(date) {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function parseDate(value) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
 function clinicNowParts() {
   const parts = {};
   new Intl.DateTimeFormat('en-US', {
@@ -91,6 +108,15 @@ function normalizeUsPhone(phone) {
     throw error;
   }
   return `(${normalized.slice(0, 3)}) ${normalized.slice(3, 6)}-${normalized.slice(6)}`;
+}
+
+function phoneDigits(phone) {
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+}
+
+function escapeLike(value) {
+  return String(value).replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
 export async function appointmentPattern(connection, appointmentTypeNum, fallbackDurationMinutes) {
@@ -150,6 +176,59 @@ export async function assertSlotStillAvailable(input) {
   }
 }
 
+async function assertNoSameDayPatientBooking(connection, input) {
+  const nextDate = dateKey(addDays(parseDate(input.date), 1));
+  const values = [
+    `${input.date} 00:00:00`,
+    `${nextDate} 00:00:00`,
+    input.firstName,
+    input.lastName,
+    phoneDigits(input.phone),
+    input.birthdate
+  ];
+  let licenseClause = '';
+
+  if (input.driverLicense) {
+    licenseClause = `
+       AND (
+         a.Note LIKE ? ESCAPE '\\\\'
+         OR af.FieldValue = ?
+         OR pf.FieldValue = ?
+       )`;
+    values.push(`%${escapeLike(input.driverLicense)}%`, input.driverLicense, input.driverLicense);
+  }
+
+  const [rows] = await connection.execute(
+    `SELECT a.AptNum, a.AptDateTime
+     FROM appointment a
+     INNER JOIN patient p ON p.PatNum = a.PatNum
+     LEFT JOIN apptfield af
+       ON af.AptNum = a.AptNum
+      AND af.FieldName = 'Driver License ID'
+     LEFT JOIN patfield pf
+       ON pf.PatNum = p.PatNum
+      AND pf.FieldName = 'Driver License ID'
+     WHERE a.AptStatus = 1
+       AND a.AptDateTime >= ?
+       AND a.AptDateTime < ?
+       AND LOWER(p.FName) = LOWER(?)
+       AND LOWER(p.LName) = LOWER(?)
+       AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
+       AND p.Birthdate = ?
+       AND a.Note LIKE '%ONLINE PT%'
+       ${licenseClause}
+     ORDER BY a.AptDateTime
+     LIMIT 1`,
+    values
+  );
+
+  if (rows.length) {
+    const error = new Error('This patient already has an active online appointment on this date.');
+    error.status = 409;
+    throw error;
+  }
+}
+
 export function parseBookingBody(body) {
   const date = normalizeDate(requiredString(body, 'date'), 'date');
   const time = normalizeTime(requiredString(body, 'time'), 'time');
@@ -188,6 +267,7 @@ export async function createBooking(input) {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    await assertNoSameDayPatientBooking(connection, input);
 
     const [patientResult] = await connection.execute(
       `INSERT INTO patient
