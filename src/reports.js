@@ -243,6 +243,30 @@ export async function exportAppointmentReport(input) {
     [startDate, endDate]
   );
 
+  const [[patientTotals]] = await pool.execute(
+    `SELECT
+       COUNT(*) AS TotalPatients,
+       SUM(CASE WHEN PatStatus = 0 THEN 1 ELSE 0 END) AS ActivePatients
+     FROM patient`
+  );
+  const [[newPatientTotals]] = await pool.execute(
+    `SELECT
+       COUNT(*) AS NewPatients,
+       SUM(CASE WHEN PatStatus = 0 THEN 1 ELSE 0 END) AS NewActivePatients
+     FROM patient
+     WHERE SecDateEntry BETWEEN ? AND ?`,
+    [startDate, endDate]
+  );
+  const [[appointmentPatientTotals]] = await pool.execute(
+    `SELECT
+       COUNT(DISTINCT PatNum) AS PatientsWithAppointments,
+       COUNT(DISTINCT CASE WHEN AptStatus = 1 THEN PatNum END) AS PatientsWithScheduledAppointments,
+       COUNT(*) AS AppointmentRows
+     FROM appointment
+     WHERE DATE(AptDateTime) BETWEEN ? AND ?`,
+    [startDate, endDate]
+  );
+
   const headers = [
     'Report Start Date',
     'Report End Date',
@@ -308,6 +332,20 @@ export async function exportAppointmentReport(input) {
   const filePath = path.join(folder, fileName);
   await fs.writeFile(filePath, toCsv(headers, dataRows), 'utf8');
 
+  const patientSummaryHeaders = ['Metric', 'Value', 'Report Start Date', 'Report End Date', 'Notes'];
+  const patientSummaryRows = [
+    ['Total patient records currently in Open Dental', patientTotals.TotalPatients ?? 0, startDisplay, endDisplay, 'All rows currently present in patient table.'],
+    ['Active patient records currently in Open Dental', patientTotals.ActivePatients ?? 0, startDisplay, endDisplay, 'Patients with PatStatus = 0.'],
+    ['New patient records created in date range', newPatientTotals.NewPatients ?? 0, startDisplay, endDisplay, 'Based on patient.SecDateEntry.'],
+    ['New active patient records created in date range', newPatientTotals.NewActivePatients ?? 0, startDisplay, endDisplay, 'Based on patient.SecDateEntry and PatStatus = 0.'],
+    ['Patients with any appointment in date range', appointmentPatientTotals.PatientsWithAppointments ?? 0, startDisplay, endDisplay, 'Distinct patient count from appointment table.'],
+    ['Patients with scheduled appointments in date range', appointmentPatientTotals.PatientsWithScheduledAppointments ?? 0, startDisplay, endDisplay, 'Distinct patient count where AptStatus = 1.'],
+    ['Appointment rows in date range', appointmentPatientTotals.AppointmentRows ?? rows.length, startDisplay, endDisplay, 'All appointment rows in exported range.']
+  ];
+  const patientSummaryFileName = `clinic-patient-summary-${preset}-${startDate}-to-${endDate}.csv`;
+  const patientSummaryFilePath = path.join(folder, patientSummaryFileName);
+  await fs.writeFile(patientSummaryFilePath, toCsv(patientSummaryHeaders, patientSummaryRows), 'utf8');
+
   return {
     enabled: true,
     preset,
@@ -317,6 +355,17 @@ export async function exportAppointmentReport(input) {
     folder,
     fileName,
     filePath,
-    rows: rows.length
+    rows: rows.length,
+    patientSummaryFileName,
+    patientSummaryFilePath,
+    patientSummary: {
+      totalPatients: Number(patientTotals.TotalPatients ?? 0),
+      activePatients: Number(patientTotals.ActivePatients ?? 0),
+      newPatients: Number(newPatientTotals.NewPatients ?? 0),
+      newActivePatients: Number(newPatientTotals.NewActivePatients ?? 0),
+      patientsWithAppointments: Number(appointmentPatientTotals.PatientsWithAppointments ?? 0),
+      patientsWithScheduledAppointments: Number(appointmentPatientTotals.PatientsWithScheduledAppointments ?? 0),
+      appointmentRows: Number(appointmentPatientTotals.AppointmentRows ?? rows.length)
+    }
   };
 }
