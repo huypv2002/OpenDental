@@ -232,7 +232,6 @@ async function assertNoSameDayPatientBooking(connection, input) {
 export function parseBookingBody(body) {
   const date = normalizeDate(requiredString(body, 'date'), 'date');
   const time = normalizeTime(requiredString(body, 'time'), 'time');
-  const birthdateRaw = optionalString(body, 'birthdate');
 
   return {
     date,
@@ -242,11 +241,11 @@ export function parseBookingBody(body) {
     lastName: plainLatinName(body, 'lastName'),
     phone: normalizeUsPhone(requiredString(body, 'phone')),
     email: optionalString(body, 'email'),
-    birthdate: birthdateRaw && DATE_RE.test(birthdateRaw) ? birthdateRaw : '0001-01-01',
+    birthdate: normalizeDate(requiredString(body, 'birthdate'), 'birthdate'),
     address: optionalString(body, 'address'),
     city: optionalString(body, 'city'),
     state: optionalString(body, 'state'),
-    driverLicense: optionalString(body, 'driverLicense'),
+    driverLicense: requiredString(body, 'driverLicense'),
     note: optionalString(body, 'note'),
     providerNum: Number.parseInt(body.providerNum ?? config.booking.providerNum, 10),
     operatoryNum: Number.parseInt(body.operatoryNum ?? config.booking.operatoryNum, 10),
