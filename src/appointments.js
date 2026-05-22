@@ -378,14 +378,16 @@ export async function cancelAppointment(input) {
       throw error;
     }
 
-    const auditNote = `Online appointment canceled from website on ${clinicNowParts().dateTime} Houston time.`;
-    await connection.execute(
-      `UPDATE appointment
-       SET AptStatus = 5,
-           Note = CONCAT(COALESCE(Note, ''), '\n', ?)
-       WHERE AptNum = ?`,
-      [auditNote, appointment.aptNum]
+    await connection.execute('DELETE FROM apptfield WHERE AptNum = ?', [appointment.aptNum]);
+    const [deleteResult] = await connection.execute(
+      'DELETE FROM appointment WHERE AptNum = ? AND AptStatus = 1',
+      [appointment.aptNum]
     );
+    if (!deleteResult.affectedRows) {
+      const error = new Error('The selected appointment could not be deleted because it is no longer active.');
+      error.status = 409;
+      throw error;
+    }
 
     await connection.commit();
     return appointment;

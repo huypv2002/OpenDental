@@ -229,6 +229,71 @@ async function assertNoSameDayPatientBooking(connection, input) {
   }
 }
 
+async function findExistingOnlinePatient(connection, input) {
+  const [rows] = await connection.execute(
+    `SELECT
+       p.PatNum, p.FName, p.LName, p.WirelessPhone, p.Email, p.Birthdate, p.Address, p.City, p.State
+     FROM patient p
+     LEFT JOIN patfield pf
+       ON pf.PatNum = p.PatNum
+      AND pf.FieldName = 'Driver License ID'
+     WHERE LOWER(p.FName) = LOWER(?)
+       AND LOWER(p.LName) = LOWER(?)
+       AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
+       AND p.Birthdate = ?
+       AND (
+         pf.FieldValue = ?
+         OR EXISTS (
+           SELECT 1
+           FROM appointment a
+           LEFT JOIN apptfield af
+             ON af.AptNum = a.AptNum
+            AND af.FieldName = 'Driver License ID'
+           WHERE a.PatNum = p.PatNum
+             AND a.Note LIKE '%ONLINE PT%'
+             AND (
+               a.Note LIKE ? ESCAPE '\\\\'
+               OR af.FieldValue = ?
+             )
+           LIMIT 1
+         )
+       )
+     ORDER BY p.PatNum
+     LIMIT 1`,
+    [
+      input.firstName,
+      input.lastName,
+      phoneDigits(input.phone),
+      input.birthdate,
+      input.driverLicense,
+      `%${escapeLike(input.driverLicense)}%`,
+      input.driverLicense
+    ]
+  );
+
+  return rows[0] || null;
+}
+
+async function ensureDriverLicensePatField(connection, patNum, input, clinicDate) {
+  if (!input.driverLicense) return;
+  const [rows] = await connection.execute(
+    `SELECT PatFieldNum
+     FROM patfield
+     WHERE PatNum = ?
+       AND FieldName = 'Driver License ID'
+     LIMIT 1`,
+    [patNum]
+  );
+  if (rows.length) return;
+
+  await connection.execute(
+    `INSERT INTO patfield
+      (PatNum, FieldName, FieldValue, SecUserNumEntry, SecDateEntry)
+     VALUES (?, 'Driver License ID', ?, 0, ?)`,
+    [patNum, input.driverLicense, clinicDate]
+  );
+}
+
 export function parseBookingBody(body) {
   const date = normalizeDate(requiredString(body, 'date'), 'date');
   const time = normalizeTime(requiredString(body, 'time'), 'time');
@@ -268,26 +333,34 @@ export async function createBooking(input) {
     await connection.beginTransaction();
     await assertNoSameDayPatientBooking(connection, input);
 
-    const [patientResult] = await connection.execute(
-      `INSERT INTO patient
-        (LName, FName, WirelessPhone, Email, Birthdate, Address, City, State, PatStatus, Gender, Position, PriProv, SecProv, BillingType, FeeSched)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, 0, 0, 0)`,
-      [
-        input.lastName,
-        input.firstName,
-        input.phone,
-        input.email,
-        input.birthdate,
-        input.address,
-        input.city,
-        input.state,
-        input.providerNum
-      ]
-    );
-    const patNum = patientResult.insertId;
     const clinicNow = clinicNowParts();
-    await connection.execute('UPDATE patient SET Guarantor = ? WHERE PatNum = ?', [patNum, patNum]);
-    if (input.driverLicense) {
+    const existingPatient = await findExistingOnlinePatient(connection, input);
+    let patNum;
+    let isReturningPatient = false;
+
+    if (existingPatient) {
+      patNum = existingPatient.PatNum;
+      isReturningPatient = true;
+      await ensureDriverLicensePatField(connection, patNum, input, clinicNow.date);
+    } else {
+      const [patientResult] = await connection.execute(
+        `INSERT INTO patient
+          (LName, FName, WirelessPhone, Email, Birthdate, Address, City, State, PatStatus, Gender, Position, PriProv, SecProv, BillingType, FeeSched)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, 0, 0, 0)`,
+        [
+          input.lastName,
+          input.firstName,
+          input.phone,
+          input.email,
+          input.birthdate,
+          input.address,
+          input.city,
+          input.state,
+          input.providerNum
+        ]
+      );
+      patNum = patientResult.insertId;
+      await connection.execute('UPDATE patient SET Guarantor = ? WHERE PatNum = ?', [patNum, patNum]);
       await connection.execute(
         `INSERT INTO patfield
           (PatNum, FieldName, FieldValue, SecUserNumEntry, SecDateEntry)
@@ -299,7 +372,7 @@ export async function createBooking(input) {
     const pattern = await appointmentPattern(connection, input.appointmentTypeNum, input.durationMinutes);
     const noteParts = [
       'ONLINE PT',
-      'Created from website booking bridge.',
+      isReturningPatient ? 'Created from website booking bridge using existing Open Dental patient.' : 'Created from website booking bridge.',
       `Name: ${input.firstName} ${input.lastName}`,
       input.phone ? `Cell: ${input.phone}` : '',
       input.email ? `Email: ${input.email}` : '',
@@ -317,7 +390,7 @@ export async function createBooking(input) {
         input.operatoryNum,
         input.providerNum,
         dateTime(input.date, input.time),
-        'Website Booking - New Patient',
+        isReturningPatient ? 'Website Booking - Existing Patient' : 'Website Booking - New Patient',
         noteParts.join('\n'),
         input.appointmentTypeNum,
         clinicNow.dateTime
@@ -337,6 +410,7 @@ export async function createBooking(input) {
     return {
       patNum,
       aptNum,
+      reusedPatient: isReturningPatient,
       date: input.date,
       time: input.time,
       endsAt: input.endsAt
