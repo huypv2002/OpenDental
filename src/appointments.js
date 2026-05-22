@@ -141,6 +141,21 @@ export function parseChangeAppointmentBody(body) {
   };
 }
 
+export function parseCancelAppointmentBody(body) {
+  return {
+    ...parseIdentity(body),
+    aptNum: Number.parseInt(body.aptNum ?? '', 10) || 0
+  };
+}
+
+function addMinutesToTime(time, minutesToAdd) {
+  const [hours, minutes] = String(time).split(':').map(Number);
+  const total = (hours * 60) + minutes + minutesToAdd;
+  const nextHours = Math.floor(total / 60) % 24;
+  const nextMinutes = total % 60;
+  return `${String(nextHours).padStart(2, '0')}:${String(nextMinutes).padStart(2, '0')}`;
+}
+
 async function findMatchingAppointment(connection, input) {
   const clinicNow = clinicNowParts();
   const [rows] = await connection.execute(
@@ -254,10 +269,129 @@ async function findMatchingAppointment(connection, input) {
   };
 }
 
+async function findMatchingAppointmentsForCancel(connection, input) {
+  const clinicNow = clinicNowParts();
+  const [rows] = await connection.execute(
+    `SELECT
+       a.AptNum, a.PatNum, a.AptDateTime, a.Pattern, a.Op, a.ProvNum, a.AppointmentTypeNum, a.Note,
+       p.FName, p.LName, p.WirelessPhone, p.Birthdate, p.Email
+     FROM appointment a
+     INNER JOIN patient p ON p.PatNum = a.PatNum
+     LEFT JOIN apptfield af
+       ON af.AptNum = a.AptNum
+      AND af.FieldName = 'Driver License ID'
+     LEFT JOIN patfield pf
+       ON pf.PatNum = p.PatNum
+      AND pf.FieldName = 'Driver License ID'
+     WHERE LOWER(p.FName) = LOWER(?)
+       AND LOWER(p.LName) = LOWER(?)
+       AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
+       AND p.Birthdate = ?
+       AND a.AptStatus = 1
+       AND a.AptDateTime >= ?
+       AND a.Note LIKE '%ONLINE PT%'
+       AND (
+         a.Note LIKE ? ESCAPE '\\\\'
+         OR af.FieldValue = ?
+         OR pf.FieldValue = ?
+       )
+     ORDER BY a.AptDateTime
+     LIMIT 25`,
+    [
+      input.firstName,
+      input.lastName,
+      phoneDigits(input.phone),
+      input.birthdate,
+      clinicNow.dateTime,
+      `%${escapeLike(input.driverLicense)}%`,
+      input.driverLicense,
+      input.driverLicense
+    ]
+  );
+
+  return rows.map((row) => {
+    const parts = mysqlDateTimeToParts(row.AptDateTime);
+    const durationMinutes = patternToMinutes(row.Pattern, config.booking.fallbackDurationMinutes);
+    return {
+      aptNum: row.AptNum,
+      patNum: row.PatNum,
+      firstName: row.FName,
+      lastName: row.LName,
+      phone: row.WirelessPhone,
+      email: row.Email || '',
+      birthdate: mysqlDateToYmd(row.Birthdate),
+      date: parts.date,
+      time: parts.time,
+      endsAt: addMinutesToTime(parts.time, durationMinutes),
+      durationMinutes,
+      providerNum: row.ProvNum,
+      operatoryNum: row.Op,
+      appointmentTypeNum: row.AppointmentTypeNum || config.booking.appointmentTypeNum
+    };
+  });
+}
+
 export async function verifyAppointmentForChange(input) {
   const connection = await pool.getConnection();
   try {
     return await findMatchingAppointment(connection, input);
+  } finally {
+    connection.release();
+  }
+}
+
+export async function verifyAppointmentsForCancel(input) {
+  const connection = await pool.getConnection();
+  try {
+    const appointments = await findMatchingAppointmentsForCancel(connection, input);
+    if (!appointments.length) {
+      const error = new Error('No matching active online appointments were found for those details.');
+      error.status = 404;
+      throw error;
+    }
+    return { appointments };
+  } finally {
+    connection.release();
+  }
+}
+
+export async function cancelAppointment(input) {
+  if (!config.writesEnabled) {
+    const error = new Error('Open Dental write mode is disabled. Set ENABLE_OPEN_DENTAL_WRITES=true after testing on clone DB.');
+    error.status = 501;
+    throw error;
+  }
+  if (!input.aptNum) {
+    const error = new Error('aptNum is required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const appointments = await findMatchingAppointmentsForCancel(connection, input);
+    const appointment = appointments.find((item) => Number(item.aptNum) === Number(input.aptNum));
+    if (!appointment) {
+      const error = new Error('The selected appointment no longer matches the verified patient details.');
+      error.status = 409;
+      throw error;
+    }
+
+    const auditNote = `Online appointment canceled from website on ${clinicNowParts().dateTime} Houston time.`;
+    await connection.execute(
+      `UPDATE appointment
+       SET AptStatus = 5,
+           Note = CONCAT(COALESCE(Note, ''), '\n', ?)
+       WHERE AptNum = ?`,
+      [auditNote, appointment.aptNum]
+    );
+
+    await connection.commit();
+    return appointment;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
   } finally {
     connection.release();
   }

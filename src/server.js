@@ -4,7 +4,15 @@ import multer from 'multer';
 import { config } from './config.js';
 import { pool, closePool } from './db.js';
 import { requireApiToken } from './auth.js';
-import { changeAppointment, parseChangeAppointmentBody, parseVerifyAppointmentBody, verifyAppointmentForChange } from './appointments.js';
+import {
+  cancelAppointment,
+  changeAppointment,
+  parseCancelAppointmentBody,
+  parseChangeAppointmentBody,
+  parseVerifyAppointmentBody,
+  verifyAppointmentForChange,
+  verifyAppointmentsForCancel
+} from './appointments.js';
 import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
@@ -131,6 +139,26 @@ app.post('/api/appointments/change', requireApiToken, async (req, res, next) => 
   try {
     const body = parseChangeAppointmentBody(req.body ?? {});
     const data = await changeAppointment(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/appointments/verify-cancel', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parseVerifyAppointmentBody(req.body ?? {});
+    const data = await verifyAppointmentsForCancel(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/appointments/cancel', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parseCancelAppointmentBody(req.body ?? {});
+    const data = await cancelAppointment(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
