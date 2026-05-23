@@ -315,7 +315,7 @@ export function parseBookingBody(body) {
     providerNum: Number.parseInt(body.providerNum ?? config.booking.providerNum, 10),
     operatoryNum: Number.parseInt(body.operatoryNum ?? config.booking.operatoryNum, 10),
     appointmentTypeNum: Number.parseInt(body.appointmentTypeNum ?? config.booking.appointmentTypeNum, 10),
-    durationMinutes: Math.max(60, Number.parseInt(body.durationMinutes ?? config.booking.fallbackDurationMinutes, 10) || 60)
+    durationMinutes: Math.max(5, Number.parseInt(body.durationMinutes ?? config.booking.fallbackDurationMinutes, 10) || config.booking.fallbackDurationMinutes)
   };
 }
 
