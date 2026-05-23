@@ -26,6 +26,16 @@ function plainLatinName(body, key) {
   return value;
 }
 
+function optionalPlainLatinName(body, key) {
+  const value = String(body[key] ?? '').trim();
+  if (value && !/^[A-Za-z][A-Za-z '\-]*$/.test(value)) {
+    const error = new Error(`${key} must use letters without accents.`);
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
 function normalizeDate(value, key) {
   if (!DATE_RE.test(value)) {
     const error = new Error(`${key} must use YYYY-MM-DD format.`);
@@ -123,13 +133,28 @@ function parseIdentity(body) {
   };
 }
 
+function parseChangeIdentity(body) {
+  const phone = String(body.phone ?? '').trim();
+  return {
+    firstName: optionalPlainLatinName(body, 'firstName'),
+    lastName: optionalPlainLatinName(body, 'lastName'),
+    phone: phone ? normalizeUsPhone(phone) : '',
+    birthdate: normalizeDate(requiredString(body, 'birthdate'), 'birthdate'),
+    driverLicense: requiredString(body, 'driverLicense')
+  };
+}
+
 export function parseVerifyAppointmentBody(body) {
   return parseIdentity(body);
 }
 
+export function parseVerifyChangeAppointmentBody(body) {
+  return parseChangeIdentity(body);
+}
+
 export function parseChangeAppointmentBody(body) {
   return {
-    ...parseIdentity(body),
+    ...parseChangeIdentity(body),
     aptNum: Number.parseInt(body.aptNum ?? '', 10) || 0,
     date: normalizeDate(requiredString(body, 'date'), 'date'),
     time: normalizeTime(requiredString(body, 'time'), 'time'),
@@ -169,11 +194,8 @@ async function findMatchingAppointment(connection, input) {
       AND af.FieldName = 'Driver License ID'
      LEFT JOIN patfield pf
        ON pf.PatNum = p.PatNum
-      AND pf.FieldName = 'Driver License ID'
-     WHERE LOWER(p.FName) = LOWER(?)
-       AND LOWER(p.LName) = LOWER(?)
-       AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
-       AND p.Birthdate = ?
+     AND pf.FieldName = 'Driver License ID'
+     WHERE p.Birthdate = ?
        AND a.AptStatus = 1
        AND a.AptDateTime >= ?
        AND a.Note LIKE '%ONLINE PT%'
@@ -185,9 +207,6 @@ async function findMatchingAppointment(connection, input) {
      ORDER BY a.AptDateTime
      LIMIT 5`,
     [
-      input.firstName,
-      input.lastName,
-      phoneDigits(input.phone),
       input.birthdate,
       clinicNow.dateTime,
       `%${escapeLike(input.driverLicense)}%`,
@@ -208,10 +227,7 @@ async function findMatchingAppointment(connection, input) {
        LEFT JOIN patfield pf
          ON pf.PatNum = p.PatNum
         AND pf.FieldName = 'Driver License ID'
-       WHERE LOWER(p.FName) = LOWER(?)
-         AND LOWER(p.LName) = LOWER(?)
-         AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
-         AND p.Birthdate = ?
+       WHERE p.Birthdate = ?
          AND a.Note LIKE '%ONLINE PT%'
          AND (
            a.Note LIKE ? ESCAPE '\\\\'
@@ -221,9 +237,6 @@ async function findMatchingAppointment(connection, input) {
        ORDER BY a.AptDateTime DESC
        LIMIT 1`,
       [
-        input.firstName,
-        input.lastName,
-        phoneDigits(input.phone),
         input.birthdate,
         `%${escapeLike(input.driverLicense)}%`,
         input.driverLicense,

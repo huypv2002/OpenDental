@@ -9,6 +9,7 @@ import {
   changeAppointment,
   parseCancelAppointmentBody,
   parseChangeAppointmentBody,
+  parseVerifyChangeAppointmentBody,
   parseVerifyAppointmentBody,
   verifyAppointmentForChange,
   verifyAppointmentsForCancel
@@ -127,7 +128,7 @@ app.post('/api/bookings/:aptNum/files', requireApiToken, upload.any(), async (re
 
 app.post('/api/appointments/verify-change', requireApiToken, async (req, res, next) => {
   try {
-    const body = parseVerifyAppointmentBody(req.body ?? {});
+    const body = parseVerifyChangeAppointmentBody(req.body ?? {});
     const data = await verifyAppointmentForChange(body);
     res.json({ ok: true, data });
   } catch (error) {
