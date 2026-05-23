@@ -372,7 +372,7 @@ export async function createBooking(input) {
     const pattern = await appointmentPattern(connection, input.appointmentTypeNum, input.durationMinutes);
     const noteParts = [
       'ONLINE PT',
-      isReturningPatient ? 'Created from website booking bridge using existing Open Dental patient.' : 'Created from website booking bridge.',
+      isReturningPatient ? 'Created from website Luk Dental booking using existing Open Dental patient.' : 'Created from website Luk Dental booking.',
       `Name: ${input.firstName} ${input.lastName}`,
       input.phone ? `Cell: ${input.phone}` : '',
       input.email ? `Email: ${input.email}` : '',
