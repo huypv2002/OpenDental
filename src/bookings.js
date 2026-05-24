@@ -139,10 +139,10 @@ export async function appointmentPattern(connection, appointmentTypeNum, fallbac
 function bookingHoursForDate(date) {
   const weekday = new Date(`${date}T12:00:00`).getDay();
   if (weekday === 1) {
-    return { openTime: '14:00', closeTime: '18:00' };
+    return { openTime: '14:00', closeTime: '17:30' };
   }
   if ([0, 2, 4, 5].includes(weekday)) {
-    return { openTime: '09:00', closeTime: '18:00' };
+    return { openTime: '09:00', closeTime: '17:30' };
   }
   return null;
 }
@@ -232,7 +232,7 @@ async function assertNoSameDayPatientBooking(connection, input) {
 async function findExistingOnlinePatient(connection, input) {
   const [rows] = await connection.execute(
     `SELECT
-       p.PatNum, p.FName, p.LName, p.WirelessPhone, p.Email, p.Birthdate, p.Address, p.City, p.State
+       p.PatNum, p.FName, p.LName, p.WirelessPhone, p.Email, p.Birthdate, p.Address, p.City, p.State, p.Zip
      FROM patient p
      LEFT JOIN patfield pf
        ON pf.PatNum = p.PatNum
@@ -310,6 +310,7 @@ export function parseBookingBody(body) {
     address: optionalString(body, 'address'),
     city: optionalString(body, 'city'),
     state: optionalString(body, 'state'),
+    zip: optionalString(body, 'zip'),
     driverLicense: requiredString(body, 'driverLicense'),
     note: optionalString(body, 'note'),
     providerNum: Number.parseInt(body.providerNum ?? config.booking.providerNum, 10),
@@ -345,8 +346,8 @@ export async function createBooking(input) {
     } else {
       const [patientResult] = await connection.execute(
         `INSERT INTO patient
-          (LName, FName, WirelessPhone, Email, Birthdate, Address, City, State, PatStatus, Gender, Position, PriProv, SecProv, BillingType, FeeSched)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, 0, 0, 0)`,
+          (LName, FName, WirelessPhone, Email, Birthdate, Address, City, State, Zip, PatStatus, Gender, Position, PriProv, SecProv, BillingType, FeeSched)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, 0, 0, 0)`,
         [
           input.lastName,
           input.firstName,
@@ -356,6 +357,7 @@ export async function createBooking(input) {
           input.address,
           input.city,
           input.state,
+          input.zip,
           input.providerNum
         ]
       );
@@ -377,6 +379,7 @@ export async function createBooking(input) {
       input.phone ? `Cell: ${input.phone}` : '',
       input.email ? `Email: ${input.email}` : '',
       input.birthdate !== '0001-01-01' ? `DOB: ${formatUsDate(input.birthdate)}` : '',
+      input.zip ? `Zip: ${input.zip}` : '',
       input.note ? `Note:\n${input.note}` : ''
     ].filter(Boolean);
 

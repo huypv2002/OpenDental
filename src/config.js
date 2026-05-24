@@ -46,7 +46,7 @@ export const config = {
     operatoryNum: intEnv('DEFAULT_OPERATORY_NUM', 1, 0),
     appointmentTypeNum: intEnv('DEFAULT_APPOINTMENT_TYPE_NUM', 1, 0),
     openTime: process.env.OPEN_TIME ?? '09:00',
-    closeTime: process.env.CLOSE_TIME ?? '18:00',
+    closeTime: process.env.CLOSE_TIME ?? '17:30',
     slotIntervalMinutes: intEnv('SLOT_INTERVAL_MINUTES', 30, 5),
     fallbackDurationMinutes: intEnv('FALLBACK_DURATION_MINUTES', 30, 5),
     activeWeekdays: csvIntsEnv('ACTIVE_WEEKDAYS', '0,1,2,3,4,5,6'),

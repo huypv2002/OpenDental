@@ -49,6 +49,7 @@ function buildAdminEmail(booking, result) {
     ['Cell', booking.phone],
     ['Email', booking.email || ''],
     ['DOB', booking.birthdate === '0001-01-01' ? '' : booking.birthdate],
+    ['Zip', booking.zip || ''],
     ['Appointment', appointmentLabel(booking)],
     ['Patient #', result.patNum],
     ['Appointment #', result.aptNum],
