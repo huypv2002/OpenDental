@@ -1,0 +1,15 @@
+{
+  "db_host": "127.0.0.1",
+  "db_port": 3306,
+  "db_name": "opendental",
+  "db_user": "luk_booking_read",
+  "db_password": "",
+  "clinic_name": "LUK Dental",
+  "clinic_phone": "281-760-1357",
+  "reminder_days_ahead": 1,
+  "scheduled_send_time": "09:00",
+  "appointment_statuses": [1],
+  "fallback_duration_minutes": 30,
+  "dry_run": true,
+  "sms_template": "Hi {first_name}, this is {clinic_name} reminding you of your appointment on {date} at {time}. Please call {clinic_phone} if you need to change anything."
+}
