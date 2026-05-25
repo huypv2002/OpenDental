@@ -124,10 +124,11 @@ function escapeLike(value) {
 }
 
 function parseIdentity(body) {
+  const phone = String(body.phone ?? '').trim();
   return {
-    firstName: plainLatinName(body, 'firstName'),
-    lastName: plainLatinName(body, 'lastName'),
-    phone: normalizeUsPhone(requiredString(body, 'phone')),
+    firstName: optionalPlainLatinName(body, 'firstName'),
+    lastName: optionalPlainLatinName(body, 'lastName'),
+    phone: phone ? normalizeUsPhone(phone) : '',
     birthdate: normalizeDate(requiredString(body, 'birthdate'), 'birthdate'),
     driverLicense: requiredString(body, 'driverLicense')
   };
@@ -296,10 +297,7 @@ async function findMatchingAppointmentsForCancel(connection, input) {
      LEFT JOIN patfield pf
        ON pf.PatNum = p.PatNum
       AND pf.FieldName = 'Driver License ID'
-     WHERE LOWER(p.FName) = LOWER(?)
-       AND LOWER(p.LName) = LOWER(?)
-       AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
-       AND p.Birthdate = ?
+     WHERE p.Birthdate = ?
        AND a.AptStatus = 1
        AND a.AptDateTime >= ?
        AND a.Note LIKE '%ONLINE PT%'
@@ -311,9 +309,6 @@ async function findMatchingAppointmentsForCancel(connection, input) {
      ORDER BY a.AptDateTime
      LIMIT 25`,
     [
-      input.firstName,
-      input.lastName,
-      phoneDigits(input.phone),
       input.birthdate,
       clinicNow.dateTime,
       `%${escapeLike(input.driverLicense)}%`,

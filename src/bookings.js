@@ -30,6 +30,16 @@ function plainLatinName(body, key) {
   return value;
 }
 
+function optionalPlainLatinName(body, key) {
+  const value = String(body[key] ?? '').trim();
+  if (value && !/^[A-Za-z][A-Za-z '\-]*$/.test(value)) {
+    const error = new Error(`${key} must use letters without accents.`);
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
 function normalizeDate(value, key) {
   if (!DATE_RE.test(value)) {
     const error = new Error(`${key} must use YYYY-MM-DD format.`);
@@ -181,22 +191,11 @@ async function assertNoSameDayPatientBooking(connection, input) {
   const values = [
     `${input.date} 00:00:00`,
     `${nextDate} 00:00:00`,
-    input.firstName,
-    input.lastName,
-    phoneDigits(input.phone),
-    input.birthdate
+    input.birthdate,
+    `%${escapeLike(input.driverLicense)}%`,
+    input.driverLicense,
+    input.driverLicense
   ];
-  let licenseClause = '';
-
-  if (input.driverLicense) {
-    licenseClause = `
-       AND (
-         a.Note LIKE ? ESCAPE '\\\\'
-         OR af.FieldValue = ?
-         OR pf.FieldValue = ?
-       )`;
-    values.push(`%${escapeLike(input.driverLicense)}%`, input.driverLicense, input.driverLicense);
-  }
 
   const [rows] = await connection.execute(
     `SELECT a.AptNum, a.AptDateTime
@@ -211,12 +210,13 @@ async function assertNoSameDayPatientBooking(connection, input) {
      WHERE a.AptStatus = 1
        AND a.AptDateTime >= ?
        AND a.AptDateTime < ?
-       AND LOWER(p.FName) = LOWER(?)
-       AND LOWER(p.LName) = LOWER(?)
-       AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
        AND p.Birthdate = ?
        AND a.Note LIKE '%ONLINE PT%'
-       ${licenseClause}
+       AND (
+         a.Note LIKE ? ESCAPE '\\\\'
+         OR af.FieldValue = ?
+         OR pf.FieldValue = ?
+       )
      ORDER BY a.AptDateTime
      LIMIT 1`,
     values
@@ -237,10 +237,7 @@ async function findExistingOnlinePatient(connection, input) {
      LEFT JOIN patfield pf
        ON pf.PatNum = p.PatNum
       AND pf.FieldName = 'Driver License ID'
-     WHERE LOWER(p.FName) = LOWER(?)
-       AND LOWER(p.LName) = LOWER(?)
-       AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') = ?
-       AND p.Birthdate = ?
+     WHERE p.Birthdate = ?
        AND (
          pf.FieldValue = ?
          OR EXISTS (
@@ -259,11 +256,8 @@ async function findExistingOnlinePatient(connection, input) {
          )
        )
      ORDER BY p.PatNum
-     LIMIT 1`,
+    LIMIT 1`,
     [
-      input.firstName,
-      input.lastName,
-      phoneDigits(input.phone),
       input.birthdate,
       input.driverLicense,
       `%${escapeLike(input.driverLicense)}%`,
@@ -302,9 +296,9 @@ export function parseBookingBody(body) {
     date,
     time,
     endsAt: optionalString(body, 'endsAt'),
-    firstName: plainLatinName(body, 'firstName'),
-    lastName: plainLatinName(body, 'lastName'),
-    phone: normalizeUsPhone(requiredString(body, 'phone')),
+    firstName: optionalPlainLatinName(body, 'firstName'),
+    lastName: optionalPlainLatinName(body, 'lastName'),
+    phone: optionalString(body, 'phone') ? normalizeUsPhone(optionalString(body, 'phone')) : '',
     email: optionalString(body, 'email'),
     birthdate: normalizeDate(requiredString(body, 'birthdate'), 'birthdate'),
     address: optionalString(body, 'address'),
