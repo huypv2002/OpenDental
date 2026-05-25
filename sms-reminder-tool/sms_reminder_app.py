@@ -8,12 +8,13 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
-import pymysql
 import pyperclip
+import requests
 from dotenv import load_dotenv
 from PySide6.QtCore import QDate, QSettings, QThread, QTime, QTimer, Signal, Qt
 from PySide6.QtGui import QColor, QFont
@@ -49,20 +50,12 @@ from PySide6.QtWidgets import (
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "sms_config.json"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
-LOG_TABLE = "luk_sms_reminder_log"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
 
 
 def digits_only(value: str) -> str:
     digits = re.sub(r"\D+", "", value or "")
     return digits[1:] if len(digits) == 11 and digits.startswith("1") else digits
-
-
-def format_us_phone(value: str) -> str:
-    digits = digits_only(value)
-    if len(digits) != 10:
-        return value.strip()
-    return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
 
 
 def display_date(value: date | datetime | str | None) -> str:
@@ -78,6 +71,18 @@ def display_date(value: date | datetime | str | None) -> str:
         return str(value)
 
 
+def parse_datetime(value: datetime | str | None) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        raise ValueError("Missing appointment datetime.")
+    text = str(value).replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return datetime.strptime(str(value)[:19], "%Y-%m-%d %H:%M:%S")
+
+
 def display_time(value: datetime | str | None) -> str:
     if not value:
         return ""
@@ -85,23 +90,19 @@ def display_time(value: datetime | str | None) -> str:
         return value.strftime("%I:%M %p").lstrip("0")
     text = str(value)
     try:
+        return parse_datetime(text).strftime("%I:%M %p").lstrip("0")
+    except ValueError:
+        pass
+    try:
         return datetime.strptime(text[:5], "%H:%M").strftime("%I:%M %p").lstrip("0")
     except ValueError:
         return text
 
 
-def pattern_minutes(pattern: str | None, fallback: int) -> int:
-    minutes = len(str(pattern or "")) * 5
-    return minutes if minutes > 0 else fallback
-
-
 @dataclass
 class AppConfig:
-    db_host: str = "127.0.0.1"
-    db_port: int = 3306
-    db_name: str = "opendental"
-    db_user: str = "luk_booking_read"
-    db_password: str = ""
+    bridge_url: str = "http://127.0.0.1:3008"
+    api_token: str = ""
     clinic_name: str = "LUK Dental"
     clinic_phone: str = "281-760-1357"
     reminder_days_ahead: int = 1
@@ -119,16 +120,15 @@ class AppConfig:
         if CONFIG_PATH.exists():
             with CONFIG_PATH.open("r", encoding="utf-8") as file:
                 raw = json.load(file)
-            return cls(**{**asdict(cls()), **raw})
+            defaults = asdict(cls())
+            known = {key: value for key, value in raw.items() if key in defaults}
+            return cls(**{**defaults, **known})
         if BRIDGE_ENV_PATH.exists():
             load_dotenv(BRIDGE_ENV_PATH)
         defaults = cls()
         cfg = cls(
-            db_host=os.getenv("DB_HOST", defaults.db_host),
-            db_port=int(os.getenv("DB_PORT", str(defaults.db_port))),
-            db_name=os.getenv("DB_NAME", defaults.db_name),
-            db_user=os.getenv("DB_USER", defaults.db_user),
-            db_password=os.getenv("DB_PASSWORD", defaults.db_password),
+            bridge_url=os.getenv("BRIDGE_URL", defaults.bridge_url),
+            api_token=os.getenv("API_TOKEN", defaults.api_token),
             clinic_name=os.getenv("CLINIC_NAME", defaults.clinic_name),
         )
         cfg.save()
@@ -138,128 +138,69 @@ class AppConfig:
         CONFIG_PATH.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
 
 
-class OpenDentalRepository:
+class BridgeClient:
     def __init__(self, config: AppConfig):
         self.config = config
 
-    def connect(self):
-        return pymysql.connect(
-            host=self.config.db_host,
-            port=self.config.db_port,
-            user=self.config.db_user,
-            password=self.config.db_password,
-            database=self.config.db_name,
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            autocommit=True,
-            connect_timeout=8,
-        )
+    def endpoint(self, path: str) -> str:
+        return urljoin(self.config.bridge_url.rstrip("/") + "/", path.lstrip("/"))
 
-    def ensure_log_table(self) -> None:
-        with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {LOG_TABLE} (
-                    ReminderLogNum BIGINT NOT NULL AUTO_INCREMENT,
-                    AptNum BIGINT NOT NULL,
-                    PatNum BIGINT NOT NULL,
-                    Phone VARCHAR(30) NOT NULL,
-                    ReminderForDate DATE NOT NULL,
-                    Message TEXT NOT NULL,
-                    Status VARCHAR(30) NOT NULL,
-                    SentAt DATETIME NULL,
-                    ErrorMessage TEXT NULL,
-                    CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (ReminderLogNum),
-                    UNIQUE KEY uq_luk_sms_reminder (AptNum, ReminderForDate)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-                """
-            )
+    def headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.config.api_token}"}
+
+    def request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
+        if not self.config.bridge_url.strip():
+            raise RuntimeError("Bridge URL is required.")
+        if not self.config.api_token.strip():
+            raise RuntimeError("Bridge API token is required.")
+        response = requests.request(
+            method,
+            self.endpoint(path),
+            headers=self.headers(),
+            timeout=20,
+            **kwargs,
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"Bridge returned non-JSON response: HTTP {response.status_code}") from exc
+        if not response.ok or not payload.get("ok"):
+            raise RuntimeError(payload.get("error") or f"Bridge request failed: HTTP {response.status_code}")
+        return payload.get("data") or {}
+
+    def health_check(self) -> None:
+        self.request("GET", "/health")
 
     def fetch_appointments(self, target_date: date) -> list[dict[str, Any]]:
-        statuses = self.config.appointment_statuses or [1]
-        placeholders = ",".join(["%s"] * len(statuses))
-        next_date = target_date + timedelta(days=1)
-        with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT
-                    a.AptNum,
-                    a.PatNum,
-                    a.AptDateTime,
-                    a.Pattern,
-                    a.AptStatus,
-                    a.ProcDescript,
-                    p.FName,
-                    p.LName,
-                    p.WirelessPhone,
-                    p.HmPhone,
-                    p.WkPhone,
-                    p.Email,
-                    p.Birthdate,
-                    COALESCE(l.Status, '') AS ReminderStatus,
-                    l.SentAt AS ReminderSentAt,
-                    l.ErrorMessage AS ReminderError
-                FROM appointment a
-                INNER JOIN patient p ON p.PatNum = a.PatNum
-                LEFT JOIN {LOG_TABLE} l
-                  ON l.AptNum = a.AptNum
-                 AND l.ReminderForDate = DATE(a.AptDateTime)
-                WHERE a.AptDateTime >= %s
-                  AND a.AptDateTime < %s
-                  AND a.AptStatus IN ({placeholders})
-                ORDER BY a.AptDateTime, p.LName, p.FName
-                """,
-                [f"{target_date.isoformat()} 00:00:00", f"{next_date.isoformat()} 00:00:00", *statuses],
-            )
-            rows = cur.fetchall()
-
-        for row in rows:
-            row["Phone"] = format_us_phone(row.get("WirelessPhone") or row.get("HmPhone") or row.get("WkPhone") or "")
-            row["DurationMinutes"] = pattern_minutes(row.get("Pattern"), self.config.fallback_duration_minutes)
-        return rows
+        data = self.request(
+            "GET",
+            "/api/sms-reminders/appointments",
+            params={
+                "date": target_date.isoformat(),
+                "statuses": ",".join(str(item) for item in self.config.appointment_statuses or [1]),
+            },
+        )
+        return data.get("appointments") or []
 
     def log_result(self, appointment: dict[str, Any], message: str, status: str, error: str = "") -> None:
-        apt_time = appointment["AptDateTime"]
-        reminder_date = apt_time.date() if isinstance(apt_time, datetime) else datetime.fromisoformat(str(apt_time)).date()
-        with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"""
-                INSERT INTO {LOG_TABLE}
-                    (AptNum, PatNum, Phone, ReminderForDate, Message, Status, SentAt, ErrorMessage)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    Phone = VALUES(Phone),
-                    Message = VALUES(Message),
-                    Status = VALUES(Status),
-                    SentAt = VALUES(SentAt),
-                    ErrorMessage = VALUES(ErrorMessage)
-                """,
-                [
-                    appointment["AptNum"],
-                    appointment["PatNum"],
-                    appointment.get("Phone", ""),
-                    reminder_date,
-                    message,
-                    status,
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S") if status in {"sent", "dry-run"} else None,
-                    error,
-                ],
-            )
+        apt_time = parse_datetime(appointment.get("AptDateTime"))
+        self.request(
+            "POST",
+            "/api/sms-reminders/log",
+            json={
+                "aptNum": appointment["AptNum"],
+                "patNum": appointment["PatNum"],
+                "phone": appointment.get("Phone", ""),
+                "reminderForDate": apt_time.date().isoformat(),
+                "message": message,
+                "status": status,
+                "errorMessage": error,
+            },
+        )
 
     def fetch_recent_logs(self, limit: int = 200) -> list[dict[str, Any]]:
-        self.ensure_log_table()
-        with self.connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT ReminderLogNum, AptNum, PatNum, Phone, ReminderForDate, Status, SentAt, ErrorMessage, CreatedAt
-                FROM {LOG_TABLE}
-                ORDER BY ReminderLogNum DESC
-                LIMIT %s
-                """,
-                [limit],
-            )
-            return cur.fetchall()
+        data = self.request("GET", "/api/sms-reminders/logs", params={"limit": limit})
+        return data.get("logs") or []
 
 
 class PhoneLinkSender:
@@ -324,11 +265,10 @@ class SendWorker(QThread):
         self.template = template
 
     def run(self) -> None:
-        repo = OpenDentalRepository(self.config)
+        repo = BridgeClient(self.config)
         sender = PhoneLinkSender(self.config.dry_run)
         sent = 0
         failed = 0
-        repo.ensure_log_table()
         for appointment in self.appointments:
             message = render_message(self.config, appointment, self.template)
             patient = patient_name(appointment)
@@ -376,7 +316,7 @@ class SmsReminderWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.config = AppConfig.load()
-        self.repo = OpenDentalRepository(self.config)
+        self.repo = BridgeClient(self.config)
         self.appointments: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
@@ -396,7 +336,11 @@ class SmsReminderWindow(QMainWindow):
         self.scheduler_timer = QTimer(self)
         self.scheduler_timer.timeout.connect(self.check_schedule)
         self.scheduler_timer.start(60_000)
-        self.load_appointments()
+        self.update_dry_run_badge()
+        if self.config.bridge_url and self.config.api_token:
+            self.load_appointments()
+        else:
+            self.statusBar().showMessage("Set Bridge URL and API token in Settings before loading appointments.", 6000)
 
     def card(self, object_name: str = "Card") -> QFrame:
         frame = QFrame()
@@ -429,7 +373,7 @@ class SmsReminderWindow(QMainWindow):
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("SMS appointment reminders")
         title.setObjectName("HeroTitle")
-        subtitle = QLabel("Review tomorrow's Open Dental appointments, send reminder texts, and keep a MySQL audit log.")
+        subtitle = QLabel("Review tomorrow's Open Dental appointments from the bridge, send reminder texts, and keep an audit log.")
         subtitle.setObjectName("HeroSubtitle")
         brand.addWidget(eyebrow)
         brand.addWidget(title)
@@ -549,23 +493,16 @@ class SmsReminderWindow(QMainWindow):
         heading.setObjectName("HeroTitle")
         layout.addWidget(heading)
 
-        db_box = QGroupBox("Database")
-        db_form = QFormLayout(db_box)
-        db_form.setContentsMargins(20, 20, 20, 20)
-        db_form.setSpacing(12)
-        self.db_host = QLineEdit(self.config.db_host)
-        self.db_port = QSpinBox()
-        self.db_port.setRange(1, 65535)
-        self.db_port.setValue(self.config.db_port)
-        self.db_name = QLineEdit(self.config.db_name)
-        self.db_user = QLineEdit(self.config.db_user)
-        self.db_password = QLineEdit(self.config.db_password)
-        self.db_password.setEchoMode(QLineEdit.Password)
-        db_form.addRow("Host", self.db_host)
-        db_form.addRow("Port", self.db_port)
-        db_form.addRow("Database", self.db_name)
-        db_form.addRow("User", self.db_user)
-        db_form.addRow("Password", self.db_password)
+        bridge_box = QGroupBox("Bridge API")
+        bridge_form = QFormLayout(bridge_box)
+        bridge_form.setContentsMargins(20, 20, 20, 20)
+        bridge_form.setSpacing(12)
+        self.bridge_url = QLineEdit(self.config.bridge_url)
+        self.bridge_url.setPlaceholderText("http://SERVER-IP:3008")
+        self.api_token = QLineEdit(self.config.api_token)
+        self.api_token.setEchoMode(QLineEdit.Password)
+        bridge_form.addRow("Bridge URL", self.bridge_url)
+        bridge_form.addRow("API token", self.api_token)
 
         sms_box = QGroupBox("SMS and schedule")
         sms_form = QFormLayout(sms_box)
@@ -589,16 +526,16 @@ class SmsReminderWindow(QMainWindow):
         sms_form.addRow("", self.dry_run)
 
         buttons = QHBoxLayout()
-        self.test_db_button = QPushButton("Test DB connection")
-        self.test_db_button.clicked.connect(self.test_db_connection)
+        self.test_bridge_button = QPushButton("Test bridge connection")
+        self.test_bridge_button.clicked.connect(self.test_bridge_connection)
         self.save_button = QPushButton("Save settings")
         self.save_button.setObjectName("PrimaryButton")
         self.save_button.clicked.connect(self.save_settings)
         buttons.addStretch()
-        buttons.addWidget(self.test_db_button)
+        buttons.addWidget(self.test_bridge_button)
         buttons.addWidget(self.save_button)
 
-        layout.addWidget(db_box)
+        layout.addWidget(bridge_box)
         layout.addWidget(sms_box)
         layout.addLayout(buttons)
         layout.addStretch()
@@ -637,11 +574,8 @@ class SmsReminderWindow(QMainWindow):
         except ValueError:
             QMessageBox.warning(self, "Invalid statuses", "Appointment statuses must be comma-separated numbers.")
             return
-        self.config.db_host = self.db_host.text().strip()
-        self.config.db_port = self.db_port.value()
-        self.config.db_name = self.db_name.text().strip()
-        self.config.db_user = self.db_user.text().strip()
-        self.config.db_password = self.db_password.text()
+        self.config.bridge_url = self.bridge_url.text().strip().rstrip("/")
+        self.config.api_token = self.api_token.text().strip()
         self.config.clinic_name = self.clinic_name.text().strip()
         self.config.clinic_phone = self.clinic_phone.text().strip()
         self.config.reminder_days_ahead = self.days_ahead.value()
@@ -650,23 +584,22 @@ class SmsReminderWindow(QMainWindow):
         self.config.dry_run = self.dry_run.isChecked()
         self.config.sms_template = self.template_edit.toPlainText().strip() or AppConfig().sms_template
         self.config.save()
-        self.repo = OpenDentalRepository(self.config)
+        self.repo = BridgeClient(self.config)
         self.update_dry_run_badge()
         self.statusBar().showMessage("Settings saved.", 4000)
 
-    def test_db_connection(self) -> None:
+    def test_bridge_connection(self) -> None:
         self.save_settings()
         try:
-            self.repo.ensure_log_table()
-            QMessageBox.information(self, "Database OK", "Connected to Open Dental database and log table is ready.")
+            self.repo.health_check()
+            QMessageBox.information(self, "Bridge OK", "Connected to the Open Dental bridge.")
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Database error", str(exc))
+            QMessageBox.critical(self, "Bridge error", str(exc))
 
     def load_appointments(self) -> None:
         self.save_settings()
         target = self.date_edit.date().toPython()
         try:
-            self.repo.ensure_log_table()
             self.appointments = self.repo.fetch_appointments(target)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Load error", str(exc))

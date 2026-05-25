@@ -1,9 +1,6 @@
 {
-  "db_host": "127.0.0.1",
-  "db_port": 3306,
-  "db_name": "opendental",
-  "db_user": "luk_booking_read",
-  "db_password": "",
+  "bridge_url": "http://127.0.0.1:3008",
+  "api_token": "CHANGE_ME",
   "clinic_name": "LUK Dental",
   "clinic_phone": "281-760-1357",
   "reminder_days_ahead": 1,

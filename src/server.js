@@ -18,6 +18,11 @@ import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
 import { exportAppointmentReport, parseAppointmentReportBody } from './reports.js';
+import {
+  getSmsReminderAppointments,
+  getSmsReminderLogs,
+  logSmsReminderResult
+} from './smsReminders.js';
 import { getAvailableSlots, getAvailableSlotsRange, getReferenceData, parseSlotQuery, parseSlotRangeQuery } from './slots.js';
 
 const app = express();
@@ -170,6 +175,33 @@ app.post('/api/reports/appointments/export', requireApiToken, async (req, res, n
   try {
     const body = parseAppointmentReportBody(req.body ?? {});
     const data = await exportAppointmentReport(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/sms-reminders/appointments', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getSmsReminderAppointments(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/sms-reminders/log', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await logSmsReminderResult(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/sms-reminders/logs', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getSmsReminderLogs(req.query);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);

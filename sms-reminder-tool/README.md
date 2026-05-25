@@ -1,21 +1,21 @@
 # LUK Dental SMS Reminder Tool
 
-PySide6 desktop tool for sending one-day appointment reminders from the Open Dental MySQL database through Windows Phone Link.
+PySide6 desktop tool for sending one-day appointment reminders from the Open Dental bridge API through Windows Phone Link.
 
 ## Features
 
-- Load Open Dental appointments by reminder date.
+- Load Open Dental appointments by reminder date through the bridge API.
 - Show patient name, appointment time, phone, email, appointment number, and reminder status.
 - Send selected reminders or all pending reminders.
 - Daily scheduler based on the configured send time.
 - SMS template with placeholders.
-- MySQL log table to prevent duplicate sends.
+- Bridge-managed reminder log to prevent duplicate sends.
 - Dry-run mode for safe testing before real SMS.
 - Phone Link automation through `pywinauto` on Windows.
 
 ## Install
 
-Run on the Windows server where Phone Link is already signed in.
+Run on a Windows 10/11 workstation where Phone Link is already signed in. The Open Dental bridge stays on the server.
 
 ```bat
 cd open-dental-bridge\sms-reminder-tool
@@ -28,24 +28,20 @@ python sms_reminder_app.py
 
 ## Database Permission
 
-The app reads Open Dental appointments and creates a small log table:
+The desktop app does not connect directly to MySQL. It calls the bridge API:
 
-```sql
-CREATE TABLE luk_sms_reminder_log (...);
-```
+- `GET /api/sms-reminders/appointments`
+- `POST /api/sms-reminders/log`
+- `GET /api/sms-reminders/logs`
 
-Use a database account with permission to:
-
-- `SELECT` Open Dental appointment and patient data
-- `CREATE` the `luk_sms_reminder_log` table once
-- `INSERT` and `UPDATE` reminder log rows
+The bridge server handles Open Dental database access and creates/updates the `luk_sms_reminder_log` table.
 
 ## First Test
 
 1. Keep `dry_run` enabled.
 2. Open the app.
-3. Set DB credentials in `Settings`.
-4. Click `Test DB connection`.
+3. Set the bridge URL and API token in `Settings`.
+4. Click `Test bridge connection`.
 5. Load tomorrow's appointments.
 6. Click `Send all not sent`.
 7. Confirm the logs show `dry-run`.
