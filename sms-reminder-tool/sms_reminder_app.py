@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTextEdit,
     QTimeEdit,
+    QInputDialog,
     QVBoxLayout,
     QWidget,
 )
@@ -421,8 +422,11 @@ class SmsReminderWindow(QMainWindow):
         self.preview_button.clicked.connect(self.preview_selected)
         self.open_phone_button = QPushButton("Open Phone Link")
         self.open_phone_button.clicked.connect(self.open_phone_link)
+        self.test_sms_button = QPushButton("Send test SMS now")
+        self.test_sms_button.clicked.connect(self.send_test_sms_now)
         controls.addWidget(self.preview_button)
         controls.addWidget(self.open_phone_button)
+        controls.addWidget(self.test_sms_button)
         controls.addWidget(self.send_selected_button)
         controls.addWidget(self.send_all_button)
         layout.addWidget(controls_card)
@@ -700,6 +704,41 @@ class SmsReminderWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Phone Link", str(exc))
 
+    def send_test_sms_now(self) -> None:
+        phone, ok = QInputDialog.getText(self, "Send test SMS", "Phone number:")
+        if not ok:
+            return
+        phone = phone.strip()
+        if not digits_only(phone):
+            QMessageBox.warning(self, "Invalid phone", "Please enter a valid phone number.")
+            return
+        message, ok = QInputDialog.getMultiLineText(
+            self,
+            "Send test SMS",
+            "Message:",
+            f"Test message from {self.config.clinic_name}. Please ignore.",
+        )
+        if not ok:
+            return
+        message = message.strip()
+        if not message:
+            QMessageBox.warning(self, "Missing message", "Please enter a message.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Send real test SMS?",
+            f"This will send a real SMS through Phone Link to {phone}.\n\nContinue?",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        try:
+            PhoneLinkSender(dry_run=False).send_sms(phone, message)
+            self.append_activity(f"TEST SENT: {phone}")
+            QMessageBox.information(self, "Test SMS", "Test SMS was sent through Phone Link.")
+        except Exception as exc:  # noqa: BLE001
+            self.append_activity(f"TEST FAILED: {phone} -> {exc}")
+            QMessageBox.critical(self, "Test SMS failed", str(exc))
+
     def send_all_not_sent(self) -> None:
         pending = [row for row in self.appointments if row.get("ReminderStatus") not in {"sent", "dry-run"}]
         if not pending:
@@ -731,6 +770,7 @@ class SmsReminderWindow(QMainWindow):
         self.send_all_button.setEnabled(enabled)
         self.preview_button.setEnabled(enabled)
         self.open_phone_button.setEnabled(enabled)
+        self.test_sms_button.setEnabled(enabled)
         self.load_button.setEnabled(enabled)
 
     def append_activity(self, message: str) -> None:
