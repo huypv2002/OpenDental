@@ -266,6 +266,16 @@ class PhoneLinkSender:
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
 
+    @staticmethod
+    def open_phone_link() -> None:
+        if platform.system() != "Windows":
+            raise RuntimeError("Phone Link can only be opened on the Windows clinic server.")
+        subprocess.Popen(
+            ["explorer.exe", r"shell:AppsFolder\Microsoft.YourPhone_8wekyb3d8bbwe!App"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
     def send_sms(self, phone: str, message: str) -> None:
         if self.dry_run:
             time.sleep(0.25)
@@ -281,11 +291,7 @@ class PhoneLinkSender:
         except ImportError as exc:
             raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
 
-        subprocess.Popen(
-            ["explorer.exe", r"shell:AppsFolder\Microsoft.YourPhone_8wekyb3d8bbwe!App"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        self.open_phone_link()
         time.sleep(3)
 
         desktop = Desktop(backend="uia")
@@ -465,9 +471,25 @@ class SmsReminderWindow(QMainWindow):
         controls.addWidget(self.load_button)
         controls.addStretch()
         controls.addWidget(QLabel(CLINIC_TIME_ZONE_NOTE))
+        self.preview_button = QPushButton("Preview selected")
+        self.preview_button.clicked.connect(self.preview_selected)
+        self.open_phone_button = QPushButton("Open Phone Link")
+        self.open_phone_button.clicked.connect(self.open_phone_link)
+        controls.addWidget(self.preview_button)
+        controls.addWidget(self.open_phone_button)
         controls.addWidget(self.send_selected_button)
         controls.addWidget(self.send_all_button)
         layout.addWidget(controls_card)
+
+        search_card = self.card()
+        search_layout = QHBoxLayout(search_card)
+        search_layout.setContentsMargins(18, 12, 18, 12)
+        search_layout.addWidget(QLabel("Search"))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Patient, phone, email, appointment #, procedure...")
+        self.search_edit.textChanged.connect(self.apply_appointment_filter)
+        search_layout.addWidget(self.search_edit)
+        layout.addWidget(search_card)
 
         splitter = QSplitter(Qt.Vertical)
         splitter.setObjectName("MainSplitter")
@@ -689,6 +711,28 @@ class SmsReminderWindow(QMainWindow):
         self.pending_stat.setText(str(pending_count))
         self.sent_stat.setText(str(sent_count))
         self.missing_phone_stat.setText(str(missing_phone_count))
+        self.apply_appointment_filter()
+
+    def apply_appointment_filter(self) -> None:
+        if not hasattr(self, "appointment_table"):
+            return
+        query = self.search_edit.text().strip().lower() if hasattr(self, "search_edit") else ""
+        for row_index, appointment in enumerate(self.appointments):
+            haystack = " ".join(
+                str(value or "")
+                for value in (
+                    status_label(appointment.get("AptStatus")),
+                    display_time(appointment.get("AptDateTime")),
+                    patient_name(appointment),
+                    appointment.get("Phone"),
+                    appointment.get("Email"),
+                    appointment.get("AptNum"),
+                    appointment.get("PatNum"),
+                    appointment.get("ReminderStatus") or "not sent",
+                    appointment.get("ProcDescript"),
+                )
+            ).lower()
+            self.appointment_table.setRowHidden(row_index, bool(query and query not in haystack))
 
     def selected_appointments(self) -> list[dict[str, Any]]:
         rows = sorted({index.row() for index in self.appointment_table.selectedIndexes()})
@@ -700,6 +744,26 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.information(self, "No selection", "Please select at least one appointment.")
             return
         self.start_send(selected)
+
+    def preview_selected(self) -> None:
+        selected = self.selected_appointments()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select one appointment to preview.")
+            return
+        appointment = selected[0]
+        message = render_message(self.config, appointment, self.template_edit.toPlainText())
+        QMessageBox.information(
+            self,
+            "SMS preview",
+            f"To: {patient_name(appointment)}\nPhone: {appointment.get('Phone', '')}\n\n{message}",
+        )
+
+    def open_phone_link(self) -> None:
+        try:
+            PhoneLinkSender.open_phone_link()
+            self.append_activity("Phone Link opened. Please confirm the phone is connected before sending real SMS.")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Phone Link", str(exc))
 
     def send_all_not_sent(self) -> None:
         pending = [row for row in self.appointments if row.get("ReminderStatus") not in {"sent", "dry-run"}]
@@ -730,6 +794,8 @@ class SmsReminderWindow(QMainWindow):
     def set_send_enabled(self, enabled: bool) -> None:
         self.send_selected_button.setEnabled(enabled)
         self.send_all_button.setEnabled(enabled)
+        self.preview_button.setEnabled(enabled)
+        self.open_phone_button.setEnabled(enabled)
         self.load_button.setEnabled(enabled)
 
     def append_activity(self, message: str) -> None:
