@@ -317,36 +317,41 @@ class SendWorker(QThread):
     progress = Signal(str)
     finished = Signal(int, int)
 
-    def __init__(self, config: AppConfig, appointments: list[dict[str, Any]], template: str):
+    def __init__(self, config: AppConfig, appointments: list[dict[str, Any]], template: str, demo_mode: bool = False):
         super().__init__()
         self.config = config
         self.appointments = appointments
         self.template = template
+        self.demo_mode = demo_mode
 
     def run(self) -> None:
         repo = OpenDentalRepository(self.config)
         sender = PhoneLinkSender(self.config.dry_run)
         sent = 0
         failed = 0
-        repo.ensure_log_table()
+        if not self.demo_mode:
+            repo.ensure_log_table()
         for appointment in self.appointments:
             message = render_message(self.config, appointment, self.template)
             patient = patient_name(appointment)
             phone = appointment.get("Phone", "")
             if not digits_only(phone):
                 failed += 1
-                repo.log_result(appointment, message, "failed", "Missing patient phone number.")
+                if not self.demo_mode:
+                    repo.log_result(appointment, message, "failed", "Missing patient phone number.")
                 self.progress.emit(f"Failed: {patient} has no phone number.")
                 continue
             try:
                 sender.send_sms(phone, message)
                 status = "dry-run" if self.config.dry_run else "sent"
-                repo.log_result(appointment, message, status)
+                if not self.demo_mode:
+                    repo.log_result(appointment, message, status)
                 sent += 1
                 self.progress.emit(f"{status.upper()}: {patient} -> {phone}")
             except Exception as exc:  # noqa: BLE001 - show UI-friendly automation errors
                 failed += 1
-                repo.log_result(appointment, message, "failed", str(exc))
+                if not self.demo_mode:
+                    repo.log_result(appointment, message, "failed", str(exc))
                 self.progress.emit(f"Failed: {patient} -> {exc}")
         self.finished.emit(sent, failed)
 
@@ -379,6 +384,7 @@ class SmsReminderWindow(QMainWindow):
         self.repo = OpenDentalRepository(self.config)
         self.appointments: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
+        self.demo_mode = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
 
         self.setWindowTitle("LUK Dental SMS Reminder Tool")
@@ -462,6 +468,8 @@ class SmsReminderWindow(QMainWindow):
         self.date_edit.setDisplayFormat("MM/dd/yyyy")
         self.load_button = QPushButton("Load appointments")
         self.load_button.clicked.connect(self.load_appointments)
+        self.sample_button = QPushButton("Load local demo")
+        self.sample_button.clicked.connect(self.load_sample_appointments)
         self.send_selected_button = QPushButton("Send selected")
         self.send_selected_button.clicked.connect(self.send_selected)
         self.send_all_button = QPushButton("Send all not sent")
@@ -469,6 +477,7 @@ class SmsReminderWindow(QMainWindow):
         self.send_all_button.clicked.connect(self.send_all_not_sent)
         controls.addWidget(self.date_edit)
         controls.addWidget(self.load_button)
+        controls.addWidget(self.sample_button)
         controls.addStretch()
         controls.addWidget(QLabel(CLINIC_TIME_ZONE_NOTE))
         self.preview_button = QPushButton("Preview selected")
@@ -663,6 +672,7 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.critical(self, "Database error", str(exc))
 
     def load_appointments(self) -> None:
+        self.demo_mode = False
         self.save_settings()
         target = self.date_edit.date().toPython()
         try:
@@ -675,6 +685,19 @@ class SmsReminderWindow(QMainWindow):
         self.load_logs()
         self.update_dry_run_badge()
         self.statusBar().showMessage(f"Loaded {len(self.appointments)} appointments for {display_date(target)}.", 4000)
+
+    def load_sample_appointments(self) -> None:
+        self.demo_mode = True
+        self.config.dry_run = True
+        if hasattr(self, "dry_run"):
+            self.dry_run.setChecked(True)
+        target = self.date_edit.date().toPython()
+        self.appointments = sample_appointments(target)
+        self.render_appointments()
+        self.update_dry_run_badge()
+        self.activity_log.clear()
+        self.append_activity("Loaded local demo appointments. This mode does not connect to Open Dental or Phone Link.")
+        self.statusBar().showMessage("Local demo loaded. Dry run only, no server connection.", 5000)
 
     def render_appointments(self) -> None:
         self.appointment_table.setRowCount(len(self.appointments))
@@ -786,7 +809,7 @@ class SmsReminderWindow(QMainWindow):
                 return
         self.save_settings()
         self.set_send_enabled(False)
-        self.worker = SendWorker(self.config, appointments, self.template_edit.toPlainText())
+        self.worker = SendWorker(self.config, appointments, self.template_edit.toPlainText(), self.demo_mode)
         self.worker.progress.connect(self.append_activity)
         self.worker.finished.connect(self.send_finished)
         self.worker.start()
@@ -797,6 +820,7 @@ class SmsReminderWindow(QMainWindow):
         self.preview_button.setEnabled(enabled)
         self.open_phone_button.setEnabled(enabled)
         self.load_button.setEnabled(enabled)
+        self.sample_button.setEnabled(enabled)
 
     def append_activity(self, message: str) -> None:
         self.activity_log.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
@@ -804,6 +828,12 @@ class SmsReminderWindow(QMainWindow):
     def send_finished(self, sent: int, failed: int) -> None:
         self.set_send_enabled(True)
         self.append_activity(f"Done. Sent/dry-run: {sent}. Failed: {failed}.")
+        if self.demo_mode:
+            for appointment in self.appointments:
+                if digits_only(appointment.get("Phone", "")) and appointment.get("ReminderStatus") not in {"sent", "dry-run"}:
+                    appointment["ReminderStatus"] = "dry-run"
+            self.render_appointments()
+            return
         self.load_appointments()
 
     def load_logs(self) -> None:
@@ -864,6 +894,70 @@ def status_label(status: Any) -> str:
         return labels.get(int(status), str(status))
     except (TypeError, ValueError):
         return str(status or "")
+
+
+def sample_appointments(target_date: date) -> list[dict[str, Any]]:
+    base = datetime.combine(target_date, datetime.min.time())
+    rows = [
+        {
+            "AptNum": 9001,
+            "PatNum": 1073,
+            "AptDateTime": base.replace(hour=9, minute=0),
+            "Pattern": "XXXXXX",
+            "AptStatus": 1,
+            "ProcDescript": "New patient exam",
+            "FName": "Huy",
+            "LName": "Pham",
+            "WirelessPhone": "(281) 234-5678",
+            "HmPhone": "",
+            "WkPhone": "",
+            "Email": "huy.demo@example.com",
+            "Birthdate": date(1999, 9, 19),
+            "ReminderStatus": "",
+            "ReminderSentAt": None,
+            "ReminderError": "",
+        },
+        {
+            "AptNum": 9002,
+            "PatNum": 1088,
+            "AptDateTime": base.replace(hour=10, minute=30),
+            "Pattern": "XXXXXX",
+            "AptStatus": 1,
+            "ProcDescript": "Cleaning",
+            "FName": "Maria",
+            "LName": "Lopez",
+            "WirelessPhone": "(832) 372-3958",
+            "HmPhone": "",
+            "WkPhone": "",
+            "Email": "",
+            "Birthdate": date(1988, 3, 10),
+            "ReminderStatus": "",
+            "ReminderSentAt": None,
+            "ReminderError": "",
+        },
+        {
+            "AptNum": 9003,
+            "PatNum": 1091,
+            "AptDateTime": base.replace(hour=14, minute=0),
+            "Pattern": "XXXXXX",
+            "AptStatus": 1,
+            "ProcDescript": "Treatment consult",
+            "FName": "No",
+            "LName": "Phone",
+            "WirelessPhone": "",
+            "HmPhone": "",
+            "WkPhone": "",
+            "Email": "missing.phone@example.com",
+            "Birthdate": date(1977, 7, 7),
+            "ReminderStatus": "",
+            "ReminderSentAt": None,
+            "ReminderError": "",
+        },
+    ]
+    for row in rows:
+        row["Phone"] = format_us_phone(row.get("WirelessPhone") or row.get("HmPhone") or row.get("WkPhone") or "")
+        row["DurationMinutes"] = pattern_minutes(row.get("Pattern"), 30)
+    return rows
 
 
 APP_STYLES = """
