@@ -7,15 +7,16 @@ PySide6 desktop tool for sending one-day appointment reminders from the Open Den
 - Load Open Dental appointments by reminder date through the bridge API.
 - Show patient name, appointment time, phone, email, appointment number, and reminder status.
 - Send selected reminders or all pending reminders.
-- Auto-load appointments when the reminder date changes.
-- Daily scheduler based on the configured send time.
+- Auto-load appointments when the reminder date changes on the dashboard.
+- Monitoring tab with explicit Start/Stop controls for daily automatic sending.
+- Daily scheduler runs only after `Start Monitoring` is clicked.
 - Dedicated template management tab with country/language templates.
 - Per-appointment template selection, defaulting to the configured template.
 - Bridge-managed reminder log to prevent duplicate sends.
 - Dry-run mode for safe testing before real SMS.
 - Phone Link automation through `pywinauto` on Windows.
 
-Default reminder schedule: send at `11:00 AM` for appointments one day ahead.
+Default reminder schedule: after staff clicks `Start Monitoring`, send at `11:00 AM` for appointments one day ahead.
 
 ## Install
 
@@ -46,11 +47,12 @@ The bridge server handles Open Dental database access and creates/updates the `l
 2. Open the app.
 3. Set the bridge URL and API token in `Settings`.
 4. Click `Test bridge connection`.
-5. Choose the reminder date. The appointment list loads automatically.
-6. Review or change the `Template` column for each patient if needed.
-7. Click `Send all not sent`.
-8. Confirm the logs show `dry-run`.
-9. Turn off dry run only after confirming Phone Link is ready.
+5. Open `Monitoring` and click `Start Monitoring`.
+6. The app loads the reminder target date automatically.
+7. Review or change the `Template` column for each patient if needed.
+8. Click `Send all not sent`, or leave monitoring running for the configured send time.
+9. Confirm the logs show `dry-run`.
+10. Turn off dry run only after confirming Phone Link is ready.
 
 ## Sending Behavior
 

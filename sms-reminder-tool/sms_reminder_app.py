@@ -440,6 +440,7 @@ class SmsReminderWindow(QMainWindow):
         self.load_worker: LoadAppointmentsWorker | None = None
         self.queued_load = False
         self.send_after_load = False
+        self.monitoring_active = False
         self.row_template_combos: dict[int, QComboBox] = {}
         self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
@@ -453,6 +454,7 @@ class SmsReminderWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
         self.setStatusBar(QStatusBar())
         self.tabs.addTab(self.build_dashboard_tab(), "Dashboard")
+        self.tabs.addTab(self.build_monitoring_tab(), "Monitoring")
         self.tabs.addTab(self.build_templates_tab(), "Templates")
         self.tabs.addTab(self.build_settings_tab(), "Settings")
         self.tabs.addTab(self.build_logs_tab(), "Logs")
@@ -466,10 +468,8 @@ class SmsReminderWindow(QMainWindow):
         self.scheduler_timer.timeout.connect(self.check_schedule)
         self.scheduler_timer.start(60_000)
         self.update_dry_run_badge()
-        if self.config.bridge_url and self.config.api_token:
-            QTimer.singleShot(0, self.load_appointments)
-        else:
-            self.statusBar().showMessage("Set Bridge URL and API token in Settings before loading appointments.", 6000)
+        self.update_monitoring_status()
+        self.statusBar().showMessage("Open Monitoring and click Start Monitoring to begin automatic reminders.", 6000)
 
     def card(self, object_name: str = "Card") -> QFrame:
         frame = QFrame()
@@ -680,8 +680,6 @@ class SmsReminderWindow(QMainWindow):
         self.days_ahead.setValue(self.config.reminder_days_ahead)
         self.schedule_time = QTimeEdit(QTime.fromString(self.config.scheduled_send_time, "HH:mm"))
         self.schedule_time.setDisplayFormat("HH:mm")
-        self.scheduler_enabled = QCheckBox("Run daily schedule automatically while this app is open")
-        self.scheduler_enabled.setChecked(self.config.scheduler_enabled)
         self.dry_run = QCheckBox("Dry run only, do not send real SMS")
         self.dry_run.setChecked(self.config.dry_run)
         self.statuses = QLineEdit(",".join(str(item) for item in self.config.appointment_statuses))
@@ -690,7 +688,6 @@ class SmsReminderWindow(QMainWindow):
         sms_form.addRow("Reminder days ahead", self.days_ahead)
         sms_form.addRow("Daily send time", self.schedule_time)
         sms_form.addRow("Appointment statuses", self.statuses)
-        sms_form.addRow("", self.scheduler_enabled)
         sms_form.addRow("", self.dry_run)
 
         buttons = QHBoxLayout()
@@ -706,6 +703,66 @@ class SmsReminderWindow(QMainWindow):
         layout.addWidget(bridge_box)
         layout.addWidget(sms_box)
         layout.addLayout(buttons)
+        layout.addStretch()
+        return page
+
+    def build_monitoring_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(16)
+
+        hero = self.card("HeroCard")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(24, 22, 24, 22)
+        eyebrow = QLabel("AUTOMATION")
+        eyebrow.setObjectName("Eyebrow")
+        title = QLabel("Daily SMS monitoring")
+        title.setObjectName("HeroTitle")
+        subtitle = QLabel("Start monitoring when Phone Link is ready. The app will load tomorrow's appointments and send pending reminders at the configured time.")
+        subtitle.setObjectName("HeroSubtitle")
+        hero_layout.addWidget(eyebrow)
+        hero_layout.addWidget(title)
+        hero_layout.addWidget(subtitle)
+        layout.addWidget(hero)
+
+        monitor_card = self.card()
+        monitor_layout = QGridLayout(monitor_card)
+        monitor_layout.setContentsMargins(22, 20, 22, 22)
+        monitor_layout.setHorizontalSpacing(18)
+        monitor_layout.setVerticalSpacing(14)
+
+        self.monitor_status_value = QLabel("Stopped")
+        self.monitor_status_value.setObjectName("MonitorStatus")
+        self.monitor_date_value = QLabel("")
+        self.monitor_date_value.setObjectName("Muted")
+        self.monitor_time_value = QLabel("")
+        self.monitor_time_value.setObjectName("Muted")
+        self.monitor_note_value = QLabel("")
+        self.monitor_note_value.setObjectName("Muted")
+        self.monitor_note_value.setWordWrap(True)
+
+        monitor_layout.addWidget(QLabel("Status"), 0, 0)
+        monitor_layout.addWidget(self.monitor_status_value, 0, 1)
+        monitor_layout.addWidget(QLabel("Reminder target"), 1, 0)
+        monitor_layout.addWidget(self.monitor_date_value, 1, 1)
+        monitor_layout.addWidget(QLabel("Send time"), 2, 0)
+        monitor_layout.addWidget(self.monitor_time_value, 2, 1)
+        monitor_layout.addWidget(QLabel("Behavior"), 3, 0, Qt.AlignTop)
+        monitor_layout.addWidget(self.monitor_note_value, 3, 1)
+
+        action_row = QHBoxLayout()
+        self.start_monitoring_button = QPushButton("Start Monitoring")
+        self.start_monitoring_button.setObjectName("PrimaryButton")
+        self.start_monitoring_button.clicked.connect(self.start_monitoring)
+        self.stop_monitoring_button = QPushButton("Stop Monitoring")
+        self.stop_monitoring_button.clicked.connect(self.stop_monitoring)
+        action_row.addStretch()
+        action_row.addWidget(self.stop_monitoring_button)
+        action_row.addWidget(self.start_monitoring_button)
+        monitor_layout.addLayout(action_row, 4, 0, 1, 2)
+
+        layout.addWidget(monitor_card)
         layout.addStretch()
         return page
 
@@ -894,7 +951,6 @@ class SmsReminderWindow(QMainWindow):
         self.config.reminder_days_ahead = self.days_ahead.value()
         self.config.scheduled_send_time = self.schedule_time.time().toString("HH:mm")
         self.config.appointment_statuses = statuses or [1]
-        self.config.scheduler_enabled = self.scheduler_enabled.isChecked()
         self.config.dry_run = self.dry_run.isChecked()
         if hasattr(self, "default_template_select"):
             self.config.default_template_key = str(self.default_template_select.currentData() or self.config.default_template_key)
@@ -902,6 +958,7 @@ class SmsReminderWindow(QMainWindow):
         self.config.save()
         self.repo = BridgeClient(self.config)
         self.update_dry_run_badge()
+        self.update_monitoring_status()
         self.refresh_template_controls()
         if not silent:
             self.statusBar().showMessage("Settings saved.", 4000)
@@ -1178,8 +1235,48 @@ class SmsReminderWindow(QMainWindow):
         self.dry_run_badge.style().unpolish(self.dry_run_badge)
         self.dry_run_badge.style().polish(self.dry_run_badge)
 
+    def update_monitoring_status(self) -> None:
+        if not hasattr(self, "monitor_status_value"):
+            return
+        target_date = QDate.currentDate().addDays(self.config.reminder_days_ahead).toPython()
+        self.monitor_status_value.setText("Running" if self.monitoring_active else "Stopped")
+        self.monitor_status_value.setProperty("running", "true" if self.monitoring_active else "false")
+        self.monitor_status_value.style().unpolish(self.monitor_status_value)
+        self.monitor_status_value.style().polish(self.monitor_status_value)
+        self.monitor_date_value.setText(f"{display_date(target_date)} ({self.config.reminder_days_ahead} day ahead)")
+        self.monitor_time_value.setText(self.config.scheduled_send_time)
+        self.monitor_note_value.setText(
+            "When monitoring is running, the app loads the reminder target date and waits for the daily send time. "
+            "It sends only pending reminders and writes each result to the bridge log."
+        )
+        self.start_monitoring_button.setEnabled(not self.monitoring_active)
+        self.stop_monitoring_button.setEnabled(self.monitoring_active)
+
+    def start_monitoring(self) -> None:
+        self.save_settings(silent=True)
+        if not self.config.bridge_url or not self.config.api_token:
+            QMessageBox.warning(self, "Bridge settings required", "Please set Bridge URL and API token in Settings first.")
+            return
+        self.monitoring_active = True
+        self.update_monitoring_status()
+        self.tabs.setCurrentWidget(self.tabs.widget(0))
+        try:
+            self.suppress_auto_load = True
+            self.date_edit.setDate(QDate.currentDate().addDays(self.config.reminder_days_ahead))
+        finally:
+            self.suppress_auto_load = False
+        self.append_activity("Monitoring started. Loading reminder target appointments.")
+        self.load_appointments()
+
+    def stop_monitoring(self) -> None:
+        self.monitoring_active = False
+        self.send_after_load = False
+        self.update_monitoring_status()
+        self.append_activity("Monitoring stopped.")
+        self.statusBar().showMessage("Monitoring stopped.", 4000)
+
     def check_schedule(self) -> None:
-        if not self.config.scheduler_enabled:
+        if not self.monitoring_active:
             return
         if self.worker and self.worker.isRunning():
             return
@@ -1346,6 +1443,22 @@ QPushButton:pressed {
 #Badge[mode="real"] {
   background: #fff1f0;
   color: #b42318;
+}
+#MonitorStatus {
+  padding: 9px 14px;
+  border-radius: 16px;
+  background: #fff7ed;
+  color: #b45309;
+  font-size: 18px;
+  font-weight: 900;
+}
+#MonitorStatus[running="true"] {
+  background: #e8f8ef;
+  color: #0f7b3a;
+}
+#MonitorStatus[running="false"] {
+  background: #fff7ed;
+  color: #b45309;
 }
 QLineEdit, QSpinBox, QDateEdit, QTimeEdit, QTextEdit, QPlainTextEdit {
   border: 1px solid #d5dfe8;
