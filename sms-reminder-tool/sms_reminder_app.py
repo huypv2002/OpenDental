@@ -599,7 +599,22 @@ class SmsReminderWindow(QMainWindow):
         self.appointment_table.setHorizontalHeaderLabels(
             ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Template"]
         )
-        self.appointment_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        header = self.appointment_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        column_widths = {
+            0: 120,  # Status
+            1: 110,  # Time
+            2: 190,  # Patient
+            3: 150,  # Phone
+            4: 170,  # Email
+            5: 90,   # Apt #
+            6: 90,   # Pat #
+            7: 110,  # Reminder
+            8: 280,  # Template
+        }
+        for col, width in column_widths.items():
+            self.appointment_table.setColumnWidth(col, width)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
         self.appointment_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.appointment_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.appointment_table.verticalHeader().setVisible(False)
@@ -607,8 +622,9 @@ class SmsReminderWindow(QMainWindow):
         self.appointment_table.setShowGrid(False)
         self.appointment_table.verticalHeader().setDefaultSectionSize(46)
         self.appointment_table.verticalHeader().setMinimumSectionSize(44)
-        self.appointment_table.setColumnWidth(8, 260)
-        self.appointment_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.Fixed)
+        header.setSectionResizeMode(7, QHeaderView.Fixed)
+        header.setSectionResizeMode(8, QHeaderView.Fixed)
         table_layout.addWidget(self.appointment_table)
         self.loading_overlay = QFrame(table_card)
         self.loading_overlay.setObjectName("LoadingOverlay")
