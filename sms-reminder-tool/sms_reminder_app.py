@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDateEdit,
+    QDialog,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -36,7 +37,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QSpinBox,
-    QSplitter,
     QStatusBar,
     QTabWidget,
     QTableWidget,
@@ -54,6 +54,25 @@ FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
+DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
+DEFAULT_RECALL_TEMPLATES = {
+    "US": (
+        "Good morning {first_name}, this is Luk Dental. Your 6-month cleaning recall is due. "
+        "Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ "
+        "to schedule your appointment. Thank you and have a great day."
+    ),
+    "ES": (
+        "Buenos días {first_name}, le habla Luk Dental. Ya llegó el momento de su limpieza "
+        "de 6 meses. Por favor llame al {clinic_phone} o haga su cita en "
+        "https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día."
+    ),
+    "VI": (
+        "Good morning anh/chị {first_name}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng "
+        "của anh/chị đã đến. Anh/chị vui lòng gọi {clinic_phone} hoặc đặt lịch tại "
+        "https://lukdental.us/dental-appointment/. Thank you and have a great day."
+    ),
+}
+DEFAULT_RECALL_TEMPLATE = DEFAULT_RECALL_TEMPLATES["US"]
 
 
 DEFAULT_SMS_TEMPLATES = {
@@ -99,6 +118,13 @@ LEGACY_SMS_TEMPLATES = {
 def digits_only(value: str) -> str:
     digits = re.sub(r"\D+", "", value or "")
     return digits[1:] if len(digits) == 11 and digits.startswith("1") else digits
+
+
+def format_us_phone(value: str) -> str:
+    digits = digits_only(value)
+    if len(digits) != 10:
+        return str(value or "").strip()
+    return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
 
 
 def display_date(value: date | datetime | str | None) -> str:
@@ -187,6 +213,11 @@ class AppConfig:
     default_template_key: str = "US"
     sms_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SMS_TEMPLATES))
     sms_template_countries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TEMPLATE_COUNTRIES))
+    recall_codes: str = DEFAULT_RECALL_CODES
+    recall_months: int = 6
+    recall_template: str = DEFAULT_RECALL_TEMPLATE
+    recall_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_RECALL_TEMPLATES))
+    recall_template_countries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TEMPLATE_COUNTRIES))
     sms_template: str = (
         "Hi {first_name}, this is {clinic_name} reminding you of your appointment "
         "on {date} at {time}. Please call {clinic_phone} if you need to change anything."
@@ -204,6 +235,13 @@ class AppConfig:
                 cfg.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
             if not cfg.sms_template_countries:
                 cfg.sms_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
+            if not cfg.recall_templates:
+                cfg.recall_templates = dict(DEFAULT_RECALL_TEMPLATES)
+            if not cfg.recall_template_countries:
+                cfg.recall_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
+            if raw.get("recall_template") and not raw.get("recall_templates"):
+                cfg.recall_templates["US"] = str(raw["recall_template"])
+                cfg.recall_template_countries["US"] = "US"
             if "sms_template" in raw and raw.get("sms_template") and not raw.get("sms_templates"):
                 cfg.sms_templates["US"] = str(raw["sms_template"])
                 cfg.sms_template_countries["US"] = "US"
@@ -214,11 +252,17 @@ class AppConfig:
                     cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
             for key in cfg.sms_templates:
                 cfg.sms_template_countries.setdefault(key, infer_template_country(key))
+            for key in cfg.recall_templates:
+                cfg.recall_template_countries.setdefault(key, infer_template_country(key))
             if "US" not in cfg.sms_templates:
                 cfg.sms_templates["US"] = DEFAULT_SMS_TEMPLATES["US"]
                 cfg.sms_template_countries["US"] = "US"
+            if "US" not in cfg.recall_templates:
+                cfg.recall_templates["US"] = DEFAULT_RECALL_TEMPLATES["US"]
+                cfg.recall_template_countries["US"] = "US"
             cfg.default_template_key = "US"
             cfg.sms_template = default_template(cfg)
+            cfg.recall_template = cfg.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
             return cfg
         if BRIDGE_ENV_PATH.exists():
             load_dotenv(BRIDGE_ENV_PATH)
@@ -279,7 +323,20 @@ class BridgeClient:
         )
         return data.get("appointments") or []
 
-    def log_result(self, appointment: dict[str, Any], message: str, status: str, error: str = "") -> None:
+    def fetch_recall_candidates(self, months: int, codes: str) -> list[dict[str, Any]]:
+        data = self.request(
+            "GET",
+            "/api/sms-reminders/recall-candidates",
+            params={
+                "months": months,
+                "codes": codes,
+                "statuses": ",".join(str(item) for item in self.config.appointment_statuses or [1]),
+                "limit": 500,
+            },
+        )
+        return data.get("patients") or []
+
+    def log_result(self, appointment: dict[str, Any], message: str, status: str, error: str = "", phone: str | None = None) -> None:
         apt_time = parse_datetime(appointment.get("AptDateTime"))
         self.request(
             "POST",
@@ -287,8 +344,23 @@ class BridgeClient:
             json={
                 "aptNum": appointment["AptNum"],
                 "patNum": appointment["PatNum"],
-                "phone": appointment.get("Phone", ""),
+                "phone": phone or appointment.get("Phone", ""),
                 "reminderForDate": apt_time.date().isoformat(),
+                "message": message,
+                "status": status,
+                "errorMessage": error,
+            },
+        )
+
+    def log_recall_result(self, patient: dict[str, Any], message: str, status: str, error: str = "", phone: str | None = None) -> None:
+        self.request(
+            "POST",
+            "/api/sms-reminders/recall-log",
+            json={
+                "patNum": patient["PatNum"],
+                "phone": phone or patient.get("Phone", ""),
+                "procedureCodes": patient.get("ProcedureCodes", ""),
+                "lastProcDate": patient.get("LastProcDate", ""),
                 "message": message,
                 "status": status,
                 "errorMessage": error,
@@ -370,22 +442,37 @@ class SendWorker(QThread):
         for appointment in self.appointments:
             message = render_message(self.config, appointment, appointment.get("_TemplateText") or default_template(self.config))
             patient = patient_name(appointment)
-            phone = appointment.get("Phone", "")
-            if not digits_only(phone):
+            targets = [
+                target for target in appointment.get("PhoneTargets", [])
+                if digits_only(target.get("phone", "")) and target.get("status") not in {"sent", "dry-run"}
+            ]
+            if "PhoneTargets" not in appointment and not targets and digits_only(appointment.get("Phone", "")):
+                targets = [{"source": appointment.get("PhoneSource") or "Phone", "phone": appointment.get("Phone", "")}]
+            if not targets:
                 failed += 1
-                repo.log_result(appointment, message, "failed", "Missing patient phone number.")
+                if not appointment.get("_Recall"):
+                    repo.log_result(appointment, message, "failed", "Missing patient phone number.")
                 self.progress.emit(f"Failed: {patient} has no phone number.")
                 continue
-            try:
-                sender.send_sms(phone, message)
-                status = "dry-run" if self.config.dry_run else "sent"
-                repo.log_result(appointment, message, status)
-                sent += 1
-                self.progress.emit(f"{status.upper()}: {patient} -> {phone}")
-            except Exception as exc:  # noqa: BLE001 - show UI-friendly automation errors
-                failed += 1
-                repo.log_result(appointment, message, "failed", str(exc))
-                self.progress.emit(f"Failed: {patient} -> {exc}")
+            for target in targets:
+                phone = target.get("phone", "")
+                source = target.get("source") or "Phone"
+                try:
+                    sender.send_sms(phone, message)
+                    status = "dry-run" if self.config.dry_run else "sent"
+                    if appointment.get("_Recall"):
+                        repo.log_recall_result(appointment, message, status, phone=phone)
+                    else:
+                        repo.log_result(appointment, message, status, phone=phone)
+                    sent += 1
+                    self.progress.emit(f"{status.upper()}: {patient} {source} -> {phone}")
+                except Exception as exc:  # noqa: BLE001 - show UI-friendly automation errors
+                    failed += 1
+                    if appointment.get("_Recall"):
+                        repo.log_recall_result(appointment, message, "failed", str(exc), phone=phone)
+                    else:
+                        repo.log_result(appointment, message, "failed", str(exc), phone=phone)
+                    self.progress.emit(f"Failed: {patient} {source} -> {exc}")
         self.finished.emit(sent, failed)
 
 
@@ -406,6 +493,32 @@ class LoadAppointmentsWorker(QThread):
             self.loaded.emit(self.target_date, appointments, logs)
         except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
             self.failed.emit(self.target_date, str(exc))
+
+
+class LoadRecallWorker(QThread):
+    loaded = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, config: AppConfig, months: int, codes: str):
+        super().__init__()
+        self.config = config
+        self.months = months
+        self.codes = codes
+
+    def run(self) -> None:
+        try:
+            repo = BridgeClient(self.config)
+            self.loaded.emit(repo.fetch_recall_candidates(self.months, self.codes))
+        except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
+            self.failed.emit(str(exc))
+
+
+def reminder_log_key(row: dict[str, Any], phone: str | None = None) -> tuple[str, str, str]:
+    try:
+        reminder_date = parse_datetime(row.get("AptDateTime")).date().isoformat()
+    except ValueError:
+        reminder_date = str(row.get("ReminderForDate") or "")[:10]
+    return (str(row.get("AptNum") or ""), reminder_date, digits_only(phone or row.get("Phone", "")))
 
 
 def patient_name(row: dict[str, Any]) -> str:
@@ -439,6 +552,26 @@ def infer_template_country(key: str) -> str:
 
 def template_country(config: AppConfig, key: str) -> str:
     return str(config.sms_template_countries.get(key) or infer_template_country(key)).upper()
+
+
+def template_key_for_language(config: AppConfig, language: str | None) -> str:
+    return template_key_for_language_keys(config.sms_templates.keys(), language)
+
+
+def recall_template_key_for_language(config: AppConfig, language: str | None) -> str:
+    return template_key_for_language_keys(config.recall_templates.keys(), language)
+
+
+def template_key_for_language_keys(keys: Any, language: str | None) -> str:
+    available = {str(key).upper() for key in keys}
+    text = str(language or "").strip().lower()
+    if "spanish" in text or text in {"es", "spa", "espanol", "español"}:
+        preferred = "ES"
+    elif "vietnam" in text or text in {"vi", "vn", "vie", "tieng viet", "tiếng việt"}:
+        preferred = "VI"
+    else:
+        preferred = "US"
+    return preferred if preferred in available else "US"
 
 
 def template_flag_path(key: str) -> Path | None:
@@ -480,6 +613,8 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
         phone=row.get("Phone", ""),
         apt_num=row.get("AptNum", ""),
         pat_num=row.get("PatNum", ""),
+        last_proc_date=display_date(row.get("LastProcDate")),
+        procedure_codes=row.get("ProcedureCodes", ""),
     )
 
 
@@ -489,12 +624,17 @@ class SmsReminderWindow(QMainWindow):
         self.config = AppConfig.load()
         self.repo = BridgeClient(self.config)
         self.appointments: list[dict[str, Any]] = []
+        self.recall_patients: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
+        self.active_send_kind = "appointments"
         self.load_worker: LoadAppointmentsWorker | None = None
+        self.recall_load_worker: LoadRecallWorker | None = None
         self.queued_load = False
         self.send_after_load = False
         self.monitoring_active = False
         self.row_template_combos: dict[int, QComboBox] = {}
+        self.recall_template_combos: dict[int, QComboBox] = {}
+        self.activity_messages: list[str] = []
         self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
 
@@ -508,6 +648,7 @@ class SmsReminderWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
         self.tabs.addTab(self.build_dashboard_tab(), "Dashboard")
         self.tabs.addTab(self.build_monitoring_tab(), "Monitoring")
+        self.tabs.addTab(self.build_recall_tab(), "Recall")
         self.tabs.addTab(self.build_templates_tab(), "Templates")
         self.tabs.addTab(self.build_settings_tab(), "Settings")
         self.tabs.addTab(self.build_logs_tab(), "Logs")
@@ -638,8 +779,6 @@ class SmsReminderWindow(QMainWindow):
         search_layout.addWidget(self.search_edit)
         layout.addWidget(search_card)
 
-        splitter = QSplitter(Qt.Vertical)
-        splitter.setObjectName("MainSplitter")
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
@@ -652,8 +791,8 @@ class SmsReminderWindow(QMainWindow):
         column_widths = {
             0: 120,  # Status
             1: 110,  # Time
-            2: 190,  # Patient
-            3: 150,  # Phone
+            2: 120,  # Patient
+            3: 340,  # Phone
             4: 170,  # Email
             5: 90,   # Apt #
             6: 90,   # Pat #
@@ -662,7 +801,8 @@ class SmsReminderWindow(QMainWindow):
         }
         for col, width in column_widths.items():
             self.appointment_table.setColumnWidth(col, width)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
         self.appointment_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.appointment_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.appointment_table.verticalHeader().setVisible(False)
@@ -684,37 +824,7 @@ class SmsReminderWindow(QMainWindow):
         loading_text.setAlignment(Qt.AlignCenter)
         loading_layout.addWidget(loading_text)
         self.loading_overlay.hide()
-        splitter.addWidget(table_card)
-
-        bottom = QWidget()
-        bottom_layout = QGridLayout(bottom)
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setHorizontalSpacing(16)
-        template_card = self.card()
-        template_layout = QVBoxLayout(template_card)
-        template_layout.setContentsMargins(18, 16, 18, 18)
-        template_title = QLabel("Default SMS template preview")
-        template_title.setObjectName("SectionTitle")
-        self.template_edit = QTextEdit()
-        self.template_edit.setPlainText(default_template(self.config))
-        self.template_edit.setMinimumHeight(110)
-        self.template_edit.setReadOnly(True)
-        template_layout.addWidget(template_title)
-        template_layout.addWidget(self.template_edit)
-        activity_card = self.card()
-        activity_layout = QVBoxLayout(activity_card)
-        activity_layout.setContentsMargins(18, 16, 18, 18)
-        activity_title = QLabel("Activity")
-        activity_title.setObjectName("SectionTitle")
-        self.activity_log = QPlainTextEdit()
-        self.activity_log.setReadOnly(True)
-        activity_layout.addWidget(activity_title)
-        activity_layout.addWidget(self.activity_log)
-        bottom_layout.addWidget(template_card, 0, 0)
-        bottom_layout.addWidget(activity_card, 0, 1)
-        splitter.addWidget(bottom)
-        splitter.setSizes([440, 220])
-        layout.addWidget(splitter)
+        layout.addWidget(table_card, 1)
         return page
 
     def build_settings_tab(self) -> QWidget:
@@ -833,6 +943,89 @@ class SmsReminderWindow(QMainWindow):
 
         layout.addWidget(monitor_card)
         layout.addStretch()
+        return page
+
+    def build_recall_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(16)
+
+        hero = self.card("HeroCard")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(24, 22, 24, 22)
+        eyebrow = QLabel("RECALL")
+        eyebrow.setObjectName("Eyebrow")
+        title = QLabel("Cleaning recall SMS")
+        title.setObjectName("HeroTitle")
+        subtitle = QLabel("Find patients with D1110, D1120, D4341, or D4342 treatment who have not returned after the recall window.")
+        subtitle.setObjectName("HeroSubtitle")
+        hero_layout.addWidget(eyebrow)
+        hero_layout.addWidget(title)
+        hero_layout.addWidget(subtitle)
+        layout.addWidget(hero)
+
+        controls_card = self.card()
+        controls = QHBoxLayout(controls_card)
+        controls.setContentsMargins(18, 14, 18, 14)
+        controls.setSpacing(12)
+        controls.addWidget(QLabel("Recall after"))
+        self.recall_months = QSpinBox()
+        self.recall_months.setRange(1, 60)
+        self.recall_months.setValue(self.config.recall_months)
+        self.recall_months.setSuffix(" months")
+        self.recall_months.setMinimumHeight(42)
+        controls.addWidget(self.recall_months)
+        controls.addWidget(QLabel("Procedure codes"))
+        self.recall_codes = QLineEdit(self.config.recall_codes)
+        self.recall_codes.setPlaceholderText(DEFAULT_RECALL_CODES)
+        self.recall_codes.setMinimumWidth(260)
+        controls.addWidget(self.recall_codes)
+        self.load_recall_button = QPushButton("Load recall list")
+        self.load_recall_button.clicked.connect(self.load_recall_patients)
+        self.preview_recall_button = QPushButton("Preview selected")
+        self.preview_recall_button.clicked.connect(self.preview_recall_selected)
+        self.manage_recall_templates_button = QPushButton("Recall templates")
+        self.manage_recall_templates_button.clicked.connect(self.open_recall_templates_popup)
+        self.send_recall_button = QPushButton("Send selected recall SMS")
+        self.send_recall_button.setObjectName("PrimaryButton")
+        self.send_recall_button.clicked.connect(self.send_selected_recall)
+        controls.addStretch()
+        controls.addWidget(self.load_recall_button)
+        controls.addWidget(self.manage_recall_templates_button)
+        controls.addWidget(self.preview_recall_button)
+        controls.addWidget(self.send_recall_button)
+        layout.addWidget(controls_card)
+
+        table_card = self.card()
+        table_layout = QVBoxLayout(table_card)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        self.recall_table = QTableWidget(0, 10)
+        self.recall_table.setHorizontalHeaderLabels(
+            ["Last treatment", "Patient", "Phone", "Email", "Language", "Codes", "Sent", "Last sent", "Pat #", "Template"]
+        )
+        recall_header = self.recall_table.horizontalHeader()
+        recall_header.setSectionResizeMode(QHeaderView.Interactive)
+        self.recall_table.setColumnWidth(0, 130)
+        self.recall_table.setColumnWidth(2, 260)
+        self.recall_table.setColumnWidth(3, 150)
+        self.recall_table.setColumnWidth(4, 100)
+        self.recall_table.setColumnWidth(5, 140)
+        self.recall_table.setColumnWidth(6, 70)
+        self.recall_table.setColumnWidth(7, 140)
+        self.recall_table.setColumnWidth(8, 90)
+        self.recall_table.setColumnWidth(9, 190)
+        recall_header.setSectionResizeMode(1, QHeaderView.Stretch)
+        recall_header.setSectionResizeMode(3, QHeaderView.Fixed)
+        recall_header.setSectionResizeMode(9, QHeaderView.Fixed)
+        self.recall_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.recall_table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self.recall_table.verticalHeader().setVisible(False)
+        self.recall_table.setAlternatingRowColors(True)
+        self.recall_table.setShowGrid(False)
+        self.recall_table.verticalHeader().setDefaultSectionSize(46)
+        table_layout.addWidget(self.recall_table)
+        layout.addWidget(table_card, 1)
         return page
 
     def build_templates_tab(self) -> QWidget:
@@ -954,8 +1147,6 @@ class SmsReminderWindow(QMainWindow):
         self.template_select.blockSignals(False)
         self.default_template_select.blockSignals(False)
         self.load_template_into_editor()
-        if hasattr(self, "template_edit"):
-            self.template_edit.setPlainText(default_template(self.config))
 
     def current_template_key(self) -> str:
         if not hasattr(self, "template_select"):
@@ -1036,6 +1227,149 @@ class SmsReminderWindow(QMainWindow):
         QMessageBox.information(self, "Template deleted", f"Template {key} was deleted successfully.")
         self.statusBar().showMessage("Template deleted.", 3000)
 
+    def open_recall_templates_popup(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Recall SMS templates")
+        dialog.resize(900, 620)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 18, 20, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Recall SMS templates")
+        title.setObjectName("HeroTitle")
+        layout.addWidget(title)
+
+        form_card = self.card()
+        form = QGridLayout(form_card)
+        form.setContentsMargins(18, 16, 18, 18)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(14)
+
+        select = QComboBox()
+        select.setIconSize(QSize(30, 22))
+        name = QLineEdit()
+        country_select = QComboBox()
+        for country in ("US", "VI", "ES"):
+            country_select.addItem(template_icon(country), country, country)
+        country_select.setIconSize(QSize(30, 22))
+        text = QTextEdit()
+        text.setMinimumHeight(280)
+
+        def refresh(selected_key: str | None = None) -> None:
+            current = selected_key or str(select.currentData() or "US")
+            select.blockSignals(True)
+            select.clear()
+            for key in sorted(self.config.recall_templates):
+                country = str(self.config.recall_template_countries.get(key) or infer_template_country(key)).upper()
+                select.addItem(template_icon(country), template_label(key), key)
+            index = select.findData(current)
+            if index < 0:
+                index = max(0, select.findData("US"))
+            select.setCurrentIndex(index)
+            select.blockSignals(False)
+            load_current()
+
+        def current_key() -> str:
+            return str(select.currentData() or select.currentText() or "US").strip().upper()
+
+        def load_current(*_args: Any) -> None:
+            key = current_key()
+            name.setText(key)
+            country = str(self.config.recall_template_countries.get(key) or infer_template_country(key)).upper()
+            country_index = country_select.findData(country)
+            country_select.setCurrentIndex(country_index if country_index >= 0 else 0)
+            text.setPlainText(self.config.recall_templates.get(key, ""))
+
+        def add_template() -> None:
+            key, ok = QInputDialog.getText(dialog, "Add recall template", "Template key, for example US_RECALL_2 or VI_RECALL:")
+            if not ok:
+                return
+            key = key.strip().upper()
+            if not key:
+                return
+            if key in self.config.recall_templates:
+                QMessageBox.information(dialog, "Template exists", "That recall template already exists.")
+                return
+            self.config.recall_templates[key] = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            self.config.recall_template_countries[key] = infer_template_country(key)
+            self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            self.config.save()
+            refresh(key)
+            self.refresh_table_template_combos()
+            QMessageBox.information(dialog, "Template added", f"Recall template {key} was added successfully.")
+
+        def save_template() -> None:
+            old_key = current_key()
+            new_key = name.text().strip().upper()
+            body = text.toPlainText().strip()
+            country = str(country_select.currentData() or infer_template_country(new_key)).upper()
+            if not new_key or not body:
+                QMessageBox.warning(dialog, "Template required", "Template key and message are required.")
+                return
+            if old_key != new_key:
+                self.config.recall_templates.pop(old_key, None)
+                self.config.recall_template_countries.pop(old_key, None)
+            self.config.recall_templates[new_key] = body
+            self.config.recall_template_countries[new_key] = country
+            if "US" not in self.config.recall_templates:
+                self.config.recall_templates["US"] = DEFAULT_RECALL_TEMPLATES["US"]
+                self.config.recall_template_countries["US"] = "US"
+            self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            self.config.save()
+            refresh(new_key)
+            self.refresh_table_template_combos()
+            QMessageBox.information(dialog, "Template saved", f"Recall template {new_key} was saved successfully.")
+
+        def delete_template() -> None:
+            key = current_key()
+            if len(self.config.recall_templates) <= 1 or key == "US":
+                QMessageBox.warning(dialog, "Cannot delete", "The default US recall template must remain available.")
+                return
+            confirm = QMessageBox.question(dialog, "Delete recall template?", f"Delete recall template {key}?")
+            if confirm != QMessageBox.Yes:
+                return
+            self.config.recall_templates.pop(key, None)
+            self.config.recall_template_countries.pop(key, None)
+            self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            self.config.save()
+            refresh("US")
+            self.refresh_table_template_combos()
+            QMessageBox.information(dialog, "Template deleted", f"Recall template {key} was deleted successfully.")
+
+        select.currentTextChanged.connect(load_current)
+        form.addWidget(QLabel("Edit template"), 0, 0)
+        form.addWidget(select, 0, 1)
+        form.addWidget(QLabel("Template key"), 1, 0)
+        form.addWidget(name, 1, 1)
+        form.addWidget(QLabel("Country flag"), 1, 2)
+        form.addWidget(country_select, 1, 3)
+        form.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
+        form.addWidget(text, 2, 1, 1, 3)
+        helper = QLabel("Placeholders: {first_name}, {last_name}, {patient_name}, {last_proc_date}, {procedure_codes}, {clinic_phone}")
+        helper.setObjectName("Muted")
+        helper.setWordWrap(True)
+        form.addWidget(helper, 3, 1, 1, 3)
+        layout.addWidget(form_card, 1)
+
+        actions = QHBoxLayout()
+        add_button = QPushButton("Add template")
+        delete_button = QPushButton("Delete template")
+        save_button = QPushButton("Save template")
+        save_button.setObjectName("PrimaryButton")
+        close_button = QPushButton("Close")
+        add_button.clicked.connect(add_template)
+        delete_button.clicked.connect(delete_template)
+        save_button.clicked.connect(save_template)
+        close_button.clicked.connect(dialog.accept)
+        actions.addStretch()
+        actions.addWidget(add_button)
+        actions.addWidget(delete_button)
+        actions.addWidget(save_button)
+        actions.addWidget(close_button)
+        layout.addLayout(actions)
+        refresh("US")
+        dialog.exec()
+
     def save_settings(self, silent: bool = False) -> None:
         try:
             statuses = [int(part.strip()) for part in self.statuses.text().split(",") if part.strip()]
@@ -1050,8 +1384,13 @@ class SmsReminderWindow(QMainWindow):
         self.config.scheduled_send_time = self.schedule_time.time().toString("HH:mm")
         self.config.appointment_statuses = statuses or [1]
         self.config.dry_run = self.dry_run.isChecked()
+        if hasattr(self, "recall_codes"):
+            self.config.recall_codes = self.recall_codes.text().strip() or DEFAULT_RECALL_CODES
+        if hasattr(self, "recall_months"):
+            self.config.recall_months = self.recall_months.value()
         self.config.default_template_key = "US"
         self.config.sms_template = default_template(self.config)
+        self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
         self.config.save()
         self.repo = BridgeClient(self.config)
         self.update_dry_run_badge()
@@ -1086,7 +1425,7 @@ class SmsReminderWindow(QMainWindow):
         self.load_worker.start()
 
     def appointments_loaded(self, target: date, appointments: list[dict[str, Any]], logs: list[dict[str, Any]]) -> None:
-        self.appointments = appointments
+        self.appointments = self.expand_appointment_phone_targets(appointments, logs)
         self.render_appointments()
         self.render_logs(logs)
         self.update_dry_run_badge()
@@ -1111,6 +1450,188 @@ class SmsReminderWindow(QMainWindow):
             return
         self.statusBar().showMessage("Preparing selected date...", 1200)
         self.load_debounce.start()
+
+    def expand_appointment_phone_targets(self, appointments: list[dict[str, Any]], logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        log_map = {reminder_log_key(row): row for row in logs}
+        expanded: list[dict[str, Any]] = []
+        for appointment in appointments:
+            phone_targets: list[tuple[str, str]] = []
+            for source, value in (
+                ("Wireless", appointment.get("WirelessPhoneFormatted") or appointment.get("WirelessPhone")),
+                ("Work Phone", appointment.get("WorkPhoneFormatted") or appointment.get("WkPhone")),
+            ):
+                phone = format_us_phone(str(value or ""))
+                digits = digits_only(phone)
+                if digits and digits not in {digits_only(item[1]) for item in phone_targets}:
+                    phone_targets.append((source, phone))
+            if not phone_targets:
+                fallback = appointment.get("Phone") or appointment.get("HomePhoneFormatted") or appointment.get("HmPhone")
+                phone_targets.append(("Phone", format_us_phone(str(fallback or ""))))
+            row = dict(appointment)
+            row_targets: list[dict[str, str]] = []
+            for source, phone in phone_targets:
+                log = log_map.get(reminder_log_key(row, phone))
+                if log:
+                    status = log.get("Status") or ""
+                    sent_at = log.get("SentAt") or ""
+                    error = log.get("ErrorMessage") or ""
+                else:
+                    status = ""
+                    sent_at = ""
+                    error = ""
+                row_targets.append({
+                    "source": source,
+                    "phone": phone,
+                    "status": status,
+                    "sent_at": sent_at,
+                    "error": error,
+                })
+            row["PhoneTargets"] = row_targets
+            row["Phone"] = self.phone_targets_display(row_targets)
+            row["PhoneSource"] = ", ".join(target["source"] for target in row_targets if target.get("phone"))
+            target_statuses = [target.get("status", "") for target in row_targets if digits_only(target.get("phone", ""))]
+            if target_statuses and all(status in {"sent", "dry-run"} for status in target_statuses):
+                row["ReminderStatus"] = "sent" if any(status == "sent" for status in target_statuses) else "dry-run"
+            elif any(status in {"sent", "dry-run"} for status in target_statuses):
+                row["ReminderStatus"] = "partial"
+            elif any(status == "failed" for status in target_statuses):
+                row["ReminderStatus"] = "failed"
+            else:
+                row["ReminderStatus"] = ""
+            row["ReminderSentAt"] = ", ".join(target.get("sent_at", "") for target in row_targets if target.get("sent_at"))
+            row["ReminderError"] = "; ".join(target.get("error", "") for target in row_targets if target.get("error"))
+            expanded.append(row)
+        return expanded
+
+    def phone_targets_display(self, targets: list[dict[str, str]]) -> str:
+        parts = [
+            f"{target.get('source')}: {target.get('phone')}"
+            for target in targets
+            if digits_only(target.get("phone", ""))
+        ]
+        return " | ".join(parts)
+
+    def normalize_patient_phone_targets(self, patient: dict[str, Any]) -> dict[str, Any]:
+        phone_targets: list[tuple[str, str]] = []
+        for source, value in (
+            ("Wireless", patient.get("WirelessPhoneFormatted") or patient.get("WirelessPhone")),
+            ("Work Phone", patient.get("WorkPhoneFormatted") or patient.get("WkPhone")),
+        ):
+            phone = format_us_phone(str(value or ""))
+            digits = digits_only(phone)
+            if digits and digits not in {digits_only(item[1]) for item in phone_targets}:
+                phone_targets.append((source, phone))
+        if not phone_targets:
+            fallback = patient.get("Phone") or patient.get("HomePhoneFormatted") or patient.get("HmPhone")
+            phone_targets.append(("Phone", format_us_phone(str(fallback or ""))))
+        row = dict(patient)
+        row_targets = [
+            {"source": source, "phone": phone, "status": ""}
+            for source, phone in phone_targets
+            if digits_only(phone)
+        ]
+        row["PhoneTargets"] = row_targets
+        row["Phone"] = self.phone_targets_display(row_targets)
+        row["PhoneSource"] = ", ".join(target["source"] for target in row_targets)
+        row["_Recall"] = True
+        key = recall_template_key_for_language(self.config, row.get("Language"))
+        row["_TemplateKey"] = key
+        row["_TemplateText"] = self.config.recall_templates.get(key, DEFAULT_RECALL_TEMPLATE)
+        return row
+
+    def load_recall_patients(self) -> None:
+        if self.recall_load_worker and self.recall_load_worker.isRunning():
+            QMessageBox.information(self, "Loading", "Recall list is already loading.")
+            return
+        self.save_settings()
+        self.load_recall_button.setEnabled(False)
+        self.statusBar().showMessage("Loading recall candidates...", 4000)
+        self.recall_load_worker = LoadRecallWorker(self.config, self.config.recall_months, self.config.recall_codes)
+        self.recall_load_worker.loaded.connect(self.recall_patients_loaded)
+        self.recall_load_worker.failed.connect(self.recall_patients_failed)
+        self.recall_load_worker.finished.connect(lambda: self.load_recall_button.setEnabled(True))
+        self.recall_load_worker.start()
+
+    def recall_patients_loaded(self, patients: list[dict[str, Any]]) -> None:
+        self.recall_patients = [self.normalize_patient_phone_targets(patient) for patient in patients]
+        self.render_recall_patients()
+        self.statusBar().showMessage(f"Loaded {len(self.recall_patients)} recall patients.", 4000)
+
+    def recall_patients_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "Recall load error", message)
+
+    def render_recall_patients(self) -> None:
+        self.recall_template_combos = {}
+        self.recall_table.setRowCount(len(self.recall_patients))
+        for row_index, row in enumerate(self.recall_patients):
+            values = [
+                display_date(row.get("LastProcDate")),
+                patient_name(row),
+                row.get("Phone", ""),
+                row.get("Email", ""),
+                row.get("Language", ""),
+                row.get("ProcedureCodes", ""),
+                row.get("RecallSentCount", 0),
+                row.get("LastRecallSentAt", ""),
+                row.get("PatNum", ""),
+                "",
+            ]
+            for col, value in enumerate(values):
+                if col == 9:
+                    combo = QComboBox()
+                    self.populate_recall_template_combo(combo, row.get("_TemplateKey") or recall_template_key_for_language(self.config, row.get("Language")))
+                    self.recall_table.setCellWidget(row_index, col, combo)
+                    self.recall_template_combos[row_index] = combo
+                    continue
+                item = QTableWidgetItem(str(value or ""))
+                if col in {6, 8}:
+                    item.setTextAlignment(Qt.AlignCenter)
+                if int(row.get("RecallSentCount") or 0) >= 2:
+                    item.setForeground(QColor("#9aa3ad"))
+                self.recall_table.setItem(row_index, col, item)
+
+    def selected_recall_patients(self) -> list[dict[str, Any]]:
+        rows = sorted({index.row() for index in self.recall_table.selectedIndexes()})
+        selected: list[dict[str, Any]] = []
+        for row in rows:
+            patient = dict(self.recall_patients[row])
+            combo = self.recall_template_combos.get(row)
+            key = str(combo.currentData() or patient.get("_TemplateKey") or "US") if combo else str(patient.get("_TemplateKey") or "US")
+            patient["_TemplateKey"] = key
+            patient["_TemplateText"] = self.config.recall_templates.get(key) or DEFAULT_RECALL_TEMPLATE
+            selected.append(patient)
+        return selected
+
+    def preview_recall_selected(self) -> None:
+        self.save_settings(silent=True)
+        selected = self.selected_recall_patients()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select one recall patient.")
+            return
+        patient = selected[0]
+        message = render_message(self.config, patient, patient.get("_TemplateText") or DEFAULT_RECALL_TEMPLATE)
+        QMessageBox.information(
+            self,
+            "Recall SMS preview",
+            f"To: {patient_name(patient)}\nPhone: {patient.get('Phone', '')}\nSent count: {patient.get('RecallSentCount', 0)}\n\n{message}",
+        )
+
+    def send_selected_recall(self) -> None:
+        self.save_settings(silent=True)
+        selected = self.selected_recall_patients()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select at least one recall patient.")
+            return
+        over_limit = [patient_name(row) for row in selected if int(row.get("RecallSentCount") or 0) >= 2]
+        if over_limit:
+            confirm = QMessageBox.question(
+                self,
+                "Recall already sent",
+                "Some selected patients already have 2 or more recall messages logged.\n\nContinue anyway?",
+            )
+            if confirm != QMessageBox.Yes:
+                return
+        self.start_send(selected)
 
     def render_appointments(self) -> None:
         self.row_template_combos = {}
@@ -1137,7 +1658,7 @@ class SmsReminderWindow(QMainWindow):
             for col, value in enumerate(values):
                 if col == 8:
                     combo = QComboBox()
-                    self.populate_template_combo(combo, self.config.default_template_key)
+                    self.populate_template_combo(combo, template_key_for_language(self.config, row.get("Language")))
                     self.appointment_table.setCellWidget(row_index, col, combo)
                     self.row_template_combos[row_index] = combo
                     continue
@@ -1174,10 +1695,32 @@ class SmsReminderWindow(QMainWindow):
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
 
+    def populate_recall_template_combo(self, combo: QComboBox, selected_key: str | None = None) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.setObjectName("TemplateCombo")
+        combo.setFixedHeight(34)
+        combo.setMinimumWidth(168)
+        combo.setIconSize(QSize(30, 20))
+        combo.setToolTip("Choose recall SMS template")
+        for key in sorted(self.config.recall_templates):
+            country = str(self.config.recall_template_countries.get(key) or infer_template_country(key)).upper()
+            combo.addItem(template_icon(country), template_label(key), key)
+            combo.setItemData(combo.count() - 1, template_label(key), Qt.ToolTipRole)
+        selected = selected_key or "US"
+        index = combo.findData(selected)
+        if index < 0:
+            index = combo.findData("US")
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
     def refresh_table_template_combos(self) -> None:
         for combo in self.row_template_combos.values():
             current = str(combo.currentData() or self.config.default_template_key)
             self.populate_template_combo(combo, current)
+        for combo in getattr(self, "recall_template_combos", {}).values():
+            current = str(combo.currentData() or "US")
+            self.populate_recall_template_combo(combo, current)
 
     def appointment_with_template(self, row_index: int) -> dict[str, Any]:
         appointment = dict(self.appointments[row_index])
@@ -1199,7 +1742,9 @@ class SmsReminderWindow(QMainWindow):
                     display_time(appointment.get("AptDateTime")),
                     patient_name(appointment),
                     appointment.get("Phone"),
+                    appointment.get("PhoneSource"),
                     appointment.get("Email"),
+                    appointment.get("Language"),
                     appointment.get("AptNum"),
                     appointment.get("PatNum"),
                     appointment.get("ReminderStatus") or "not sent",
@@ -1226,11 +1771,66 @@ class SmsReminderWindow(QMainWindow):
             return
         appointment = selected[0]
         message = render_message(self.config, appointment, appointment.get("_TemplateText") or default_template(self.config))
-        QMessageBox.information(
-            self,
-            "SMS preview",
-            f"To: {patient_name(appointment)}\nPhone: {appointment.get('Phone', '')}\n\n{message}",
-        )
+        dialog = QDialog(self)
+        dialog.setWindowTitle("SMS preview and activity")
+        dialog.resize(920, 680)
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.setContentsMargins(20, 18, 20, 20)
+        dialog_layout.setSpacing(14)
+
+        title = QLabel("SMS preview")
+        title.setObjectName("HeroTitle")
+        dialog_layout.addWidget(title)
+
+        preview_card = self.card()
+        preview_layout = QVBoxLayout(preview_card)
+        preview_layout.setContentsMargins(18, 16, 18, 18)
+        preview_title = QLabel(f"To: {patient_name(appointment)}  |  Phone: {appointment.get('Phone', '')}")
+        preview_title.setObjectName("SectionTitle")
+        preview_text = QPlainTextEdit()
+        preview_text.setPlainText(message)
+        preview_text.setReadOnly(True)
+        preview_text.setMinimumHeight(120)
+        preview_layout.addWidget(preview_title)
+        preview_layout.addWidget(preview_text)
+        dialog_layout.addWidget(preview_card)
+
+        info_row = QHBoxLayout()
+        default_card = self.card()
+        default_layout = QVBoxLayout(default_card)
+        default_layout.setContentsMargins(18, 16, 18, 18)
+        default_title = QLabel("Default template")
+        default_title.setObjectName("SectionTitle")
+        default_text = QPlainTextEdit()
+        default_text.setPlainText(default_template(self.config))
+        default_text.setReadOnly(True)
+        default_text.setMinimumHeight(180)
+        default_layout.addWidget(default_title)
+        default_layout.addWidget(default_text)
+
+        activity_card = self.card()
+        activity_layout = QVBoxLayout(activity_card)
+        activity_layout.setContentsMargins(18, 16, 18, 18)
+        activity_title = QLabel("Activity")
+        activity_title.setObjectName("SectionTitle")
+        activity_text = QPlainTextEdit()
+        activity_text.setPlainText("\n".join(self.activity_messages[-200:]))
+        activity_text.setReadOnly(True)
+        activity_text.setMinimumHeight(180)
+        activity_layout.addWidget(activity_title)
+        activity_layout.addWidget(activity_text)
+
+        info_row.addWidget(default_card)
+        info_row.addWidget(activity_card)
+        dialog_layout.addLayout(info_row, 1)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        close_row.addWidget(close_button)
+        dialog_layout.addLayout(close_row)
+        dialog.exec()
 
     def open_phone_link(self) -> None:
         try:
@@ -1289,16 +1889,27 @@ class SmsReminderWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             QMessageBox.information(self, "Sending", "A send job is already running.")
             return
+        sms_count = sum(
+            len([
+                target for target in appointment.get("PhoneTargets", [])
+                if digits_only(target.get("phone", "")) and target.get("status") not in {"sent", "dry-run"}
+            ]) or (1 if "PhoneTargets" not in appointment and digits_only(appointment.get("Phone", "")) else 0)
+            for appointment in appointments
+        )
+        if sms_count == 0:
+            QMessageBox.information(self, "Nothing to send", "There are no pending phone numbers for this selection.")
+            return
         if not self.config.dry_run:
             confirm = QMessageBox.question(
                 self,
                 "Send real SMS?",
-                f"Send {len(appointments)} real SMS messages through Phone Link?",
+                f"Send {sms_count} real SMS messages through Phone Link?",
             )
             if confirm != QMessageBox.Yes:
                 return
         self.save_settings()
         self.set_send_enabled(False)
+        self.active_send_kind = "recall" if appointments and appointments[0].get("_Recall") else "appointments"
         self.worker = SendWorker(self.config, appointments)
         self.worker.progress.connect(self.append_activity)
         self.worker.finished.connect(self.send_finished)
@@ -1310,14 +1921,23 @@ class SmsReminderWindow(QMainWindow):
         self.preview_button.setEnabled(enabled)
         self.open_phone_button.setEnabled(enabled)
         self.test_sms_button.setEnabled(enabled)
+        if hasattr(self, "send_recall_button"):
+            self.send_recall_button.setEnabled(enabled)
+        if hasattr(self, "preview_recall_button"):
+            self.preview_recall_button.setEnabled(enabled)
 
     def append_activity(self, message: str) -> None:
-        self.activity_log.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+        entry = f"[{datetime.now().strftime('%H:%M:%S')}] {message}"
+        self.activity_messages.append(entry)
+        self.activity_messages = self.activity_messages[-500:]
 
     def send_finished(self, sent: int, failed: int) -> None:
         self.set_send_enabled(True)
         self.append_activity(f"Done. Sent/dry-run: {sent}. Failed: {failed}.")
-        self.load_appointments()
+        if self.active_send_kind == "recall":
+            self.load_recall_patients()
+        else:
+            self.load_appointments()
 
     def load_logs(self) -> None:
         try:

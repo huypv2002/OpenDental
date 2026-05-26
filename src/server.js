@@ -19,8 +19,10 @@ import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
 import { exportAppointmentReport, parseAppointmentReportBody } from './reports.js';
 import {
+  getSmsRecallCandidates,
   getSmsReminderAppointments,
   getSmsReminderLogs,
+  logSmsRecallResult,
   logSmsReminderResult
 } from './smsReminders.js';
 import { getAvailableSlots, getAvailableSlotsRange, getReferenceData, parseSlotQuery, parseSlotRangeQuery } from './slots.js';
@@ -184,6 +186,24 @@ app.post('/api/reports/appointments/export', requireApiToken, async (req, res, n
 app.get('/api/sms-reminders/appointments', requireApiToken, async (req, res, next) => {
   try {
     const data = await getSmsReminderAppointments(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/sms-reminders/recall-candidates', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getSmsRecallCandidates(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/sms-reminders/recall-log', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await logSmsRecallResult(req.body ?? {});
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
