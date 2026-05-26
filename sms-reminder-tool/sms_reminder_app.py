@@ -412,7 +412,7 @@ class SmsReminderWindow(QMainWindow):
         self.scheduler_timer.start(60_000)
         self.update_dry_run_badge()
         if self.config.bridge_url and self.config.api_token:
-            self.load_appointments()
+            QTimer.singleShot(0, self.load_appointments)
         else:
             self.statusBar().showMessage("Set Bridge URL and API token in Settings before loading appointments.", 6000)
 
@@ -420,6 +420,24 @@ class SmsReminderWindow(QMainWindow):
         frame = QFrame()
         frame.setObjectName(object_name)
         return frame
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
+        super().resizeEvent(event)
+        self.update_loading_overlay_geometry()
+
+    def update_loading_overlay_geometry(self) -> None:
+        if not hasattr(self, "loading_overlay") or not hasattr(self, "appointment_table"):
+            return
+        self.loading_overlay.setGeometry(self.appointment_table.geometry())
+        self.loading_overlay.raise_()
+
+    def set_table_loading(self, is_loading: bool) -> None:
+        if not hasattr(self, "loading_overlay"):
+            return
+        self.update_loading_overlay_geometry()
+        self.loading_overlay.setVisible(is_loading)
+        if is_loading:
+            self.loading_overlay.raise_()
 
     def stat_card(self, label: str) -> tuple[QFrame, QLabel]:
         frame = self.card("StatCard")
@@ -527,9 +545,21 @@ class SmsReminderWindow(QMainWindow):
         self.appointment_table.verticalHeader().setVisible(False)
         self.appointment_table.setAlternatingRowColors(True)
         self.appointment_table.setShowGrid(False)
-        self.appointment_table.setColumnWidth(8, 190)
+        self.appointment_table.verticalHeader().setDefaultSectionSize(46)
+        self.appointment_table.verticalHeader().setMinimumSectionSize(44)
+        self.appointment_table.setColumnWidth(8, 230)
         self.appointment_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Fixed)
         table_layout.addWidget(self.appointment_table)
+        self.loading_overlay = QFrame(table_card)
+        self.loading_overlay.setObjectName("LoadingOverlay")
+        loading_layout = QVBoxLayout(self.loading_overlay)
+        loading_layout.setContentsMargins(0, 0, 0, 0)
+        loading_layout.setAlignment(Qt.AlignCenter)
+        loading_text = QLabel("Loading appointments...")
+        loading_text.setObjectName("LoadingText")
+        loading_text.setAlignment(Qt.AlignCenter)
+        loading_layout.addWidget(loading_text)
+        self.loading_overlay.hide()
         splitter.addWidget(table_card)
 
         bottom = QWidget()
@@ -842,6 +872,7 @@ class SmsReminderWindow(QMainWindow):
         self.load_worker.failed.connect(self.appointments_load_failed)
         self.load_worker.finished.connect(self.appointments_load_finished)
         self.statusBar().showMessage(f"Loading appointments for {display_date(target)}...", 4000)
+        self.set_table_loading(True)
         self.load_worker.start()
 
     def appointments_loaded(self, target: date, appointments: list[dict[str, Any]], logs: list[dict[str, Any]]) -> None:
@@ -858,6 +889,7 @@ class SmsReminderWindow(QMainWindow):
         QMessageBox.critical(self, "Load error", message)
 
     def appointments_load_finished(self) -> None:
+        self.set_table_loading(False)
         if self.queued_load:
             self.queued_load = False
             self.load_debounce.start(50)
@@ -897,8 +929,8 @@ class SmsReminderWindow(QMainWindow):
                 if col == 8:
                     combo = QComboBox()
                     combo.setObjectName("TemplateCombo")
-                    combo.setMinimumHeight(34)
-                    combo.setMinimumWidth(174)
+                    combo.setFixedHeight(30)
+                    combo.setMinimumWidth(212)
                     for key in sorted(self.config.sms_templates):
                         combo.addItem(template_label(key), key)
                     default_index = combo.findData(self.config.default_template_key)
@@ -1291,14 +1323,6 @@ QComboBox::drop-down, QDateEdit::drop-down, QTimeEdit::drop-down {
   border-bottom-right-radius: 10px;
   background: #f8fcff;
 }
-QComboBox::down-arrow, QDateEdit::down-arrow, QTimeEdit::down-arrow {
-  width: 0;
-  height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 7px solid #344054;
-  margin-right: 8px;
-}
 QComboBox QAbstractItemView {
   border: 1px solid #d5dfe8;
   border-radius: 8px;
@@ -1309,13 +1333,27 @@ QComboBox QAbstractItemView {
   outline: 0;
 }
 #TemplateCombo {
-  border-radius: 8px;
-  padding: 6px 30px 6px 10px;
-  min-height: 20px;
+  border-radius: 7px;
+  padding: 4px 30px 4px 10px;
+  min-height: 18px;
   background: #ffffff;
 }
 #TemplateCombo::drop-down {
   width: 26px;
+}
+#LoadingOverlay {
+  background: rgba(247, 251, 253, 218);
+  border: 1px solid #d8e7f0;
+  border-radius: 14px;
+}
+#LoadingText {
+  color: #1359d8;
+  background: #ffffff;
+  border: 1px solid #d8e7f0;
+  border-radius: 18px;
+  padding: 12px 22px;
+  font-size: 16px;
+  font-weight: 900;
 }
 QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
   border: 2px solid #23c7e8;
