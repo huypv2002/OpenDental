@@ -585,7 +585,7 @@ class SmsReminderWindow(QMainWindow):
         search_layout.setContentsMargins(18, 12, 18, 12)
         search_layout.addWidget(QLabel("Search"))
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Patient, phone, email, appointment #, procedure...")
+        self.search_edit.setPlaceholderText("Patient, phone, email, appointment #...")
         self.search_edit.textChanged.connect(self.apply_appointment_filter)
         search_layout.addWidget(self.search_edit)
         layout.addWidget(search_card)
@@ -595,9 +595,9 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.appointment_table = QTableWidget(0, 10)
+        self.appointment_table = QTableWidget(0, 9)
         self.appointment_table.setHorizontalHeaderLabels(
-            ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Template", "Procedure"]
+            ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Template"]
         )
         self.appointment_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.appointment_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -607,7 +607,7 @@ class SmsReminderWindow(QMainWindow):
         self.appointment_table.setShowGrid(False)
         self.appointment_table.verticalHeader().setDefaultSectionSize(46)
         self.appointment_table.verticalHeader().setMinimumSectionSize(44)
-        self.appointment_table.setColumnWidth(8, 230)
+        self.appointment_table.setColumnWidth(8, 260)
         self.appointment_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Fixed)
         table_layout.addWidget(self.appointment_table)
         self.loading_overlay = QFrame(table_card)
@@ -1040,7 +1040,6 @@ class SmsReminderWindow(QMainWindow):
                 row.get("PatNum", ""),
                 reminder,
                 "",
-                row.get("ProcDescript", ""),
             ]
             for col, value in enumerate(values):
                 if col == 8:
@@ -1095,7 +1094,6 @@ class SmsReminderWindow(QMainWindow):
                     appointment.get("PatNum"),
                     appointment.get("ReminderStatus") or "not sent",
                     self.config.default_template_key,
-                    appointment.get("ProcDescript"),
                 )
             ).lower()
             self.appointment_table.setRowHidden(row_index, bool(query and query not in haystack))
