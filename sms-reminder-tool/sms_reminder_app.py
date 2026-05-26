@@ -16,8 +16,8 @@ from urllib.parse import urljoin
 import pyperclip
 import requests
 from dotenv import load_dotenv
-from PySide6.QtCore import QDate, QSettings, QThread, QTime, QTimer, Signal, Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import QDate, QSize, QSettings, QThread, QTime, QTimer, Signal, Qt
+from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 
 
 APP_DIR = Path(__file__).resolve().parent
+FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
@@ -71,6 +72,12 @@ DEFAULT_SMS_TEMPLATES = {
         "vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. "
         "Thank you and have a great day anh/chị."
     ),
+}
+
+DEFAULT_TEMPLATE_COUNTRIES = {
+    "US": "US",
+    "ES": "ES",
+    "VI": "VI",
 }
 
 LEGACY_SMS_TEMPLATES = {
@@ -179,6 +186,7 @@ class AppConfig:
     scheduler_enabled: bool = True
     default_template_key: str = "US"
     sms_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SMS_TEMPLATES))
+    sms_template_countries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TEMPLATE_COUNTRIES))
     sms_template: str = (
         "Hi {first_name}, this is {clinic_name} reminding you of your appointment "
         "on {date} at {time}. Please call {clinic_phone} if you need to change anything."
@@ -194,15 +202,22 @@ class AppConfig:
             cfg = cls(**{**defaults, **known})
             if not cfg.sms_templates:
                 cfg.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
+            if not cfg.sms_template_countries:
+                cfg.sms_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
             if "sms_template" in raw and raw.get("sms_template") and not raw.get("sms_templates"):
                 cfg.sms_templates["US"] = str(raw["sms_template"])
+                cfg.sms_template_countries["US"] = "US"
             if cfg.scheduled_send_time == "09:00":
                 cfg.scheduled_send_time = "11:00"
             for key, legacy_text in LEGACY_SMS_TEMPLATES.items():
                 if cfg.sms_templates.get(key) == legacy_text:
                     cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
-            if cfg.default_template_key not in cfg.sms_templates:
-                cfg.default_template_key = next(iter(cfg.sms_templates), "US")
+            for key in cfg.sms_templates:
+                cfg.sms_template_countries.setdefault(key, infer_template_country(key))
+            if "US" not in cfg.sms_templates:
+                cfg.sms_templates["US"] = DEFAULT_SMS_TEMPLATES["US"]
+                cfg.sms_template_countries["US"] = "US"
+            cfg.default_template_key = "US"
             cfg.sms_template = default_template(cfg)
             return cfg
         if BRIDGE_ENV_PATH.exists():
@@ -412,6 +427,39 @@ def template_label(key: str) -> str:
     return labels.get(key, key)
 
 
+def infer_template_country(key: str) -> str:
+    normalized = key.upper().strip()
+    if normalized.startswith("VN"):
+        return "VI"
+    for country in ("US", "ES", "VI"):
+        if normalized == country or normalized.startswith(f"{country}_") or normalized.startswith(f"{country}-"):
+            return country
+    return normalized[:2] if len(normalized) >= 2 else normalized
+
+
+def template_country(config: AppConfig, key: str) -> str:
+    return str(config.sms_template_countries.get(key) or infer_template_country(key)).upper()
+
+
+def template_flag_path(key: str) -> Path | None:
+    flags = {
+        "US": "us.svg",
+        "ES": "es.svg",
+        "VI": "vn.svg",
+        "VN": "vn.svg",
+    }
+    file_name = flags.get(key.upper())
+    if not file_name:
+        return None
+    path = FLAGS_DIR / file_name
+    return path if path.exists() else None
+
+
+def template_icon(key_or_country: str) -> QIcon:
+    path = template_flag_path(key_or_country)
+    return QIcon(str(path)) if path else QIcon()
+
+
 def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str:
     apt_time = row.get("AptDateTime")
     first_name = str(row.get("FName") or "").strip() or "there"
@@ -610,7 +658,7 @@ class SmsReminderWindow(QMainWindow):
             5: 90,   # Apt #
             6: 90,   # Pat #
             7: 110,  # Reminder
-            8: 280,  # Template
+            8: 190,  # Template
         }
         for col, width in column_widths.items():
             self.appointment_table.setColumnWidth(col, width)
@@ -814,9 +862,15 @@ class SmsReminderWindow(QMainWindow):
         template_layout.setVerticalSpacing(14)
         self.template_select = QComboBox()
         self.template_name = QLineEdit()
+        self.template_country_select = QComboBox()
+        for country in ("US", "VI", "ES"):
+            self.template_country_select.addItem(template_icon(country), country, country)
+        self.template_country_select.setIconSize(QSize(30, 22))
         self.template_text = QTextEdit()
         self.template_text.setMinimumHeight(220)
         self.default_template_select = QComboBox()
+        self.default_template_select.setEnabled(False)
+        self.default_template_select.setToolTip("Default template is fixed to US.")
         self.add_template_button = QPushButton("Add template")
         self.save_template_button = QPushButton("Save template")
         self.save_template_button.setObjectName("PrimaryButton")
@@ -829,8 +883,10 @@ class SmsReminderWindow(QMainWindow):
         template_layout.addWidget(self.template_select, 0, 1)
         template_layout.addWidget(QLabel("Default template"), 0, 2)
         template_layout.addWidget(self.default_template_select, 0, 3)
-        template_layout.addWidget(QLabel("Template key / country"), 1, 0)
-        template_layout.addWidget(self.template_name, 1, 1, 1, 3)
+        template_layout.addWidget(QLabel("Template key"), 1, 0)
+        template_layout.addWidget(self.template_name, 1, 1)
+        template_layout.addWidget(QLabel("Country flag"), 1, 2)
+        template_layout.addWidget(self.template_country_select, 1, 3)
         template_layout.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
         template_layout.addWidget(self.template_text, 2, 1, 1, 3)
         helper = QLabel("Placeholders: {first_name}, {last_name}, {patient_name}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
@@ -883,12 +939,16 @@ class SmsReminderWindow(QMainWindow):
         self.default_template_select.blockSignals(True)
         self.template_select.clear()
         self.default_template_select.clear()
+        self.template_select.setIconSize(QSize(30, 22))
+        self.default_template_select.setIconSize(QSize(30, 22))
         for key in sorted(self.config.sms_templates):
             label = template_label(key)
-            self.template_select.addItem(label, key)
-            self.default_template_select.addItem(label, key)
+            icon = template_icon(template_country(self.config, key))
+            self.template_select.addItem(icon, label, key)
+            self.default_template_select.addItem(icon, label, key)
         select_index = max(0, self.template_select.findData(current))
-        default_index = max(0, self.default_template_select.findData(self.config.default_template_key))
+        self.config.default_template_key = "US"
+        default_index = max(0, self.default_template_select.findData("US"))
         self.template_select.setCurrentIndex(select_index)
         self.default_template_select.setCurrentIndex(default_index)
         self.template_select.blockSignals(False)
@@ -905,10 +965,14 @@ class SmsReminderWindow(QMainWindow):
     def load_template_into_editor(self) -> None:
         key = self.current_template_key()
         self.template_name.setText(key)
+        if hasattr(self, "template_country_select"):
+            country = template_country(self.config, key)
+            index = self.template_country_select.findData(country)
+            self.template_country_select.setCurrentIndex(index if index >= 0 else 0)
         self.template_text.setPlainText(self.config.sms_templates.get(key, ""))
 
     def add_template(self) -> None:
-        key, ok = QInputDialog.getText(self, "Add template", "Template key or country, for example FR:")
+        key, ok = QInputDialog.getText(self, "Add template", "Template key, for example US_REMINDER_2 or VI_FOLLOWUP:")
         if not ok:
             return
         key = key.strip().upper()
@@ -918,29 +982,37 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.information(self, "Template exists", "That template already exists.")
             return
         self.config.sms_templates[key] = default_template(self.config)
+        self.config.sms_template_countries[key] = infer_template_country(key)
+        self.config.save()
         self.refresh_template_controls()
         index = self.template_select.findData(key)
         if index >= 0:
             self.template_select.setCurrentIndex(index)
+        self.refresh_table_template_combos()
+        QMessageBox.information(self, "Template added", f"Template {key} was added successfully.")
 
     def save_template(self) -> None:
         old_key = self.current_template_key()
         new_key = self.template_name.text().strip().upper()
+        country = str(self.template_country_select.currentData() or infer_template_country(new_key)).upper()
         text = self.template_text.toPlainText().strip()
         if not new_key or not text:
             QMessageBox.warning(self, "Template required", "Template key and message are required.")
             return
         if old_key != new_key:
             self.config.sms_templates.pop(old_key, None)
+            self.config.sms_template_countries.pop(old_key, None)
         self.config.sms_templates[new_key] = text
-        if old_key == self.config.default_template_key:
-            self.config.default_template_key = new_key
+        self.config.sms_template_countries[new_key] = country
+        self.config.default_template_key = "US"
         self.config.sms_template = default_template(self.config)
         self.config.save()
         self.refresh_template_controls()
         index = self.template_select.findData(new_key)
         if index >= 0:
             self.template_select.setCurrentIndex(index)
+        self.refresh_table_template_combos()
+        QMessageBox.information(self, "Template saved", f"Template {new_key} was saved successfully.")
         self.statusBar().showMessage("Template saved.", 3000)
 
     def delete_template(self) -> None:
@@ -952,11 +1024,16 @@ class SmsReminderWindow(QMainWindow):
         if confirm != QMessageBox.Yes:
             return
         self.config.sms_templates.pop(key, None)
-        if self.config.default_template_key == key:
-            self.config.default_template_key = next(iter(self.config.sms_templates))
+        self.config.sms_template_countries.pop(key, None)
+        if "US" not in self.config.sms_templates:
+            self.config.sms_templates["US"] = DEFAULT_SMS_TEMPLATES["US"]
+            self.config.sms_template_countries["US"] = "US"
+        self.config.default_template_key = "US"
         self.config.sms_template = default_template(self.config)
         self.config.save()
         self.refresh_template_controls()
+        self.refresh_table_template_combos()
+        QMessageBox.information(self, "Template deleted", f"Template {key} was deleted successfully.")
         self.statusBar().showMessage("Template deleted.", 3000)
 
     def save_settings(self, silent: bool = False) -> None:
@@ -973,14 +1050,14 @@ class SmsReminderWindow(QMainWindow):
         self.config.scheduled_send_time = self.schedule_time.time().toString("HH:mm")
         self.config.appointment_statuses = statuses or [1]
         self.config.dry_run = self.dry_run.isChecked()
-        if hasattr(self, "default_template_select"):
-            self.config.default_template_key = str(self.default_template_select.currentData() or self.config.default_template_key)
+        self.config.default_template_key = "US"
         self.config.sms_template = default_template(self.config)
         self.config.save()
         self.repo = BridgeClient(self.config)
         self.update_dry_run_badge()
         self.update_monitoring_status()
         self.refresh_template_controls()
+        self.refresh_table_template_combos()
         if not silent:
             self.statusBar().showMessage("Settings saved.", 4000)
 
@@ -1060,13 +1137,7 @@ class SmsReminderWindow(QMainWindow):
             for col, value in enumerate(values):
                 if col == 8:
                     combo = QComboBox()
-                    combo.setObjectName("TemplateCombo")
-                    combo.setFixedHeight(30)
-                    combo.setMinimumWidth(212)
-                    for key in sorted(self.config.sms_templates):
-                        combo.addItem(template_label(key), key)
-                    default_index = combo.findData(self.config.default_template_key)
-                    combo.setCurrentIndex(default_index if default_index >= 0 else 0)
+                    self.populate_template_combo(combo, self.config.default_template_key)
                     self.appointment_table.setCellWidget(row_index, col, combo)
                     self.row_template_combos[row_index] = combo
                     continue
@@ -1084,6 +1155,29 @@ class SmsReminderWindow(QMainWindow):
         self.sent_stat.setText(str(sent_count))
         self.missing_phone_stat.setText(str(missing_phone_count))
         self.apply_appointment_filter()
+
+    def populate_template_combo(self, combo: QComboBox, selected_key: str | None = None) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.setObjectName("TemplateCombo")
+        combo.setFixedHeight(34)
+        combo.setMinimumWidth(168)
+        combo.setIconSize(QSize(30, 20))
+        combo.setToolTip("Choose SMS template")
+        for key in sorted(self.config.sms_templates):
+            combo.addItem(template_icon(template_country(self.config, key)), template_label(key), key)
+            combo.setItemData(combo.count() - 1, template_label(key), Qt.ToolTipRole)
+        selected = selected_key or self.config.default_template_key
+        index = combo.findData(selected)
+        if index < 0:
+            index = combo.findData(self.config.default_template_key)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
+    def refresh_table_template_combos(self) -> None:
+        for combo in self.row_template_combos.values():
+            current = str(combo.currentData() or self.config.default_template_key)
+            self.populate_template_combo(combo, current)
 
     def appointment_with_template(self, row_index: int) -> dict[str, Any]:
         appointment = dict(self.appointments[row_index])
@@ -1500,6 +1594,15 @@ QComboBox {
 QComboBox:focus {
   border: 2px solid #23c7e8;
 }
+QComboBox:disabled {
+  border-color: #d7dee6;
+  background: #eef3f7;
+  color: #7a8794;
+}
+QComboBox:disabled::drop-down {
+  background: #e6edf3;
+  border-left-color: #d7dee6;
+}
 QComboBox::drop-down, QDateEdit::drop-down, QTimeEdit::drop-down {
   subcontrol-origin: padding;
   subcontrol-position: top right;
@@ -1521,12 +1624,12 @@ QComboBox QAbstractItemView {
 }
 #TemplateCombo {
   border-radius: 7px;
-  padding: 4px 30px 4px 10px;
+  padding: 4px 26px 4px 8px;
   min-height: 18px;
   background: #ffffff;
 }
 #TemplateCombo::drop-down {
-  width: 26px;
+  width: 22px;
 }
 #LoadingOverlay {
   background: rgba(247, 251, 253, 218);

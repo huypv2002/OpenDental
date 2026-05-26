@@ -15,5 +15,10 @@
     "ES": "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo su cita de mañana, {weekday}, {date_full} a las {time_lower}. Gracias y que tenga un excelente día.",
     "VI": "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. Thank you and have a great day anh/chị."
   },
+  "sms_template_countries": {
+    "US": "US",
+    "ES": "ES",
+    "VI": "VI"
+  },
   "sms_template": "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. Thank you and have a great day."
 }
