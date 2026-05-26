@@ -57,12 +57,25 @@ CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Centra
 
 DEFAULT_SMS_TEMPLATES = {
     "US": (
-        "Hi {first_name}, this is {clinic_name} reminding you of your appointment "
-        "on {date} at {time}. Please call {clinic_phone} if you need to change anything."
+        "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you "
+        "of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. "
+        "Thank you and have a great day."
     ),
     "ES": (
         "Hola {first_name}, le recordamos su cita con {clinic_name} el {date} a las {time}. "
         "Llame al {clinic_phone} si necesita cambiar algo."
+    ),
+    "VI": (
+        "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị "
+        "vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. "
+        "Thank you and have a great day anh/chị."
+    ),
+}
+
+LEGACY_SMS_TEMPLATES = {
+    "US": (
+        "Hi {first_name}, this is {clinic_name} reminding you of your appointment "
+        "on {date} at {time}. Please call {clinic_phone} if you need to change anything."
     ),
     "VI": (
         "Xin chao {first_name}, {clinic_name} xin nhac lich hen cua ban vao {date} luc {time}. "
@@ -117,6 +130,36 @@ def display_time(value: datetime | str | None) -> str:
         return text
 
 
+def weekday_en(value: datetime | str | None) -> str:
+    try:
+        return parse_datetime(value).strftime("%A")
+    except ValueError:
+        return ""
+
+
+def weekday_vi(value: datetime | str | None) -> str:
+    labels = {
+        0: "Thứ 2",
+        1: "Thứ 3",
+        2: "Thứ 4",
+        3: "Thứ 5",
+        4: "Thứ 6",
+        5: "Thứ 7",
+        6: "Chủ nhật",
+    }
+    try:
+        return labels.get(parse_datetime(value).weekday(), "")
+    except ValueError:
+        return ""
+
+
+def display_date_short(value: datetime | str | None) -> str:
+    try:
+        return parse_datetime(value).strftime("%m/%d")
+    except ValueError:
+        return ""
+
+
 @dataclass
 class AppConfig:
     bridge_url: str = "http://127.0.0.1:3008"
@@ -124,7 +167,7 @@ class AppConfig:
     clinic_name: str = "LUK Dental"
     clinic_phone: str = "281-760-1357"
     reminder_days_ahead: int = 1
-    scheduled_send_time: str = "09:00"
+    scheduled_send_time: str = "11:00"
     appointment_statuses: list[int] = field(default_factory=lambda: [1])
     fallback_duration_minutes: int = 30
     dry_run: bool = True
@@ -148,8 +191,14 @@ class AppConfig:
                 cfg.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
             if "sms_template" in raw and raw.get("sms_template") and not raw.get("sms_templates"):
                 cfg.sms_templates["US"] = str(raw["sms_template"])
+            if cfg.scheduled_send_time == "09:00":
+                cfg.scheduled_send_time = "11:00"
+            for key, legacy_text in LEGACY_SMS_TEMPLATES.items():
+                if cfg.sms_templates.get(key) == legacy_text:
+                    cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
             if cfg.default_template_key not in cfg.sms_templates:
                 cfg.default_template_key = next(iter(cfg.sms_templates), "US")
+            cfg.sms_template = default_template(cfg)
             return cfg
         if BRIDGE_ENV_PATH.exists():
             load_dotenv(BRIDGE_ENV_PATH)
@@ -361,6 +410,7 @@ def template_label(key: str) -> str:
 def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str:
     apt_time = row.get("AptDateTime")
     first_name = str(row.get("FName") or "").strip() or "there"
+    formatted_time = display_time(apt_time)
     return template.format(
         clinic_name=config.clinic_name,
         clinic_phone=config.clinic_phone,
@@ -368,7 +418,12 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
         last_name=str(row.get("LName") or "").strip(),
         patient_name=patient_name(row),
         date=display_date(apt_time),
-        time=display_time(apt_time),
+        date_full=display_date(apt_time),
+        date_short=display_date_short(apt_time),
+        weekday=weekday_en(apt_time),
+        weekday_vi=weekday_vi(apt_time),
+        time=formatted_time,
+        time_lower=formatted_time.lower(),
         phone=row.get("Phone", ""),
         apt_num=row.get("AptNum", ""),
         pat_num=row.get("PatNum", ""),

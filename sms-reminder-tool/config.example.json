@@ -4,16 +4,16 @@
   "clinic_name": "LUK Dental",
   "clinic_phone": "281-760-1357",
   "reminder_days_ahead": 1,
-  "scheduled_send_time": "09:00",
+  "scheduled_send_time": "11:00",
   "appointment_statuses": [1],
   "fallback_duration_minutes": 30,
   "dry_run": true,
   "scheduler_enabled": true,
   "default_template_key": "US",
   "sms_templates": {
-    "US": "Hi {first_name}, this is {clinic_name} reminding you of your appointment on {date} at {time}. Please call {clinic_phone} if you need to change anything.",
+    "US": "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. Thank you and have a great day.",
     "ES": "Hola {first_name}, le recordamos su cita con {clinic_name} el {date} a las {time}. Llame al {clinic_phone} si necesita cambiar algo.",
-    "VI": "Xin chao {first_name}, {clinic_name} xin nhac lich hen cua ban vao {date} luc {time}. Vui long goi {clinic_phone} neu can thay doi."
+    "VI": "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. Thank you and have a great day anh/chị."
   },
-  "sms_template": "Hi {first_name}, this is {clinic_name} reminding you of your appointment on {date} at {time}. Please call {clinic_phone} if you need to change anything."
+  "sms_template": "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. Thank you and have a great day."
 }

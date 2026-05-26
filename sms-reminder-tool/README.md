@@ -15,6 +15,8 @@ PySide6 desktop tool for sending one-day appointment reminders from the Open Den
 - Dry-run mode for safe testing before real SMS.
 - Phone Link automation through `pywinauto` on Windows.
 
+Default reminder schedule: send at `11:00 AM` for appointments one day ahead.
+
 ## Install
 
 Run on a Windows 10/11 workstation where Phone Link is already signed in. The Open Dental bridge stays on the server.
@@ -68,7 +70,12 @@ Available placeholders:
 - `{last_name}`
 - `{patient_name}`
 - `{date}`
+- `{date_full}`
+- `{date_short}`
+- `{weekday}`
+- `{weekday_vi}`
 - `{time}`
+- `{time_lower}`
 - `{phone}`
 - `{apt_num}`
 - `{pat_num}`
@@ -76,7 +83,7 @@ Available placeholders:
 Example:
 
 ```text
-Hi {first_name}, this is {clinic_name} reminding you of your appointment on {date} at {time}. Please call {clinic_phone} if you need to change anything.
+Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. Thank you and have a great day.
 ```
 
 ## Phone Link Note
