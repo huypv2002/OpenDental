@@ -55,6 +55,7 @@ CONFIG_PATH = APP_DIR / "sms_config.json"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
 DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
+SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 DEFAULT_RECALL_TEMPLATES = {
     "US": (
         "Good morning {first_name}, this is Luk Dental. Your 6-month cleaning recall is due. "
@@ -78,19 +79,43 @@ DEFAULT_RECALL_TEMPLATE = DEFAULT_RECALL_TEMPLATES["US"]
 DEFAULT_SMS_TEMPLATES = {
     "US": (
         "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you "
-        "of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. "
+        "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
         "Thank you and have a great day."
     ),
     "ES": (
         "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
-        "su cita de mañana, {weekday}, {date_full} a las {time_lower}. "
+        "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
         "Gracias y que tenga un excelente día."
     ),
     "VI": (
         "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị "
-        "vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. "
+        "vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. "
         "Thank you and have a great day anh/chị."
     ),
+}
+
+OUTDATED_DEFAULT_SMS_TEMPLATES = {
+    "US": [
+        (
+            "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you "
+            "of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. "
+            "Thank you and have a great day."
+        ),
+    ],
+    "ES": [
+        (
+            "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
+            "su cita de mañana, {weekday}, {date_full} a las {time_lower}. "
+            "Gracias y que tenga un excelente día."
+        ),
+    ],
+    "VI": [
+        (
+            "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị "
+            "vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. "
+            "Thank you and have a great day anh/chị."
+        ),
+    ],
 }
 
 DEFAULT_TEMPLATE_COUNTRIES = {
@@ -250,6 +275,9 @@ class AppConfig:
             for key, legacy_text in LEGACY_SMS_TEMPLATES.items():
                 if cfg.sms_templates.get(key) == legacy_text:
                     cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
+            for key, outdated_texts in OUTDATED_DEFAULT_SMS_TEMPLATES.items():
+                if cfg.sms_templates.get(key) in outdated_texts:
+                    cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
             for key in cfg.sms_templates:
                 cfg.sms_template_countries.setdefault(key, infer_template_country(key))
             for key in cfg.recall_templates:
@@ -346,6 +374,7 @@ class BridgeClient:
                 "patNum": appointment["PatNum"],
                 "phone": phone or appointment.get("Phone", ""),
                 "reminderForDate": apt_time.date().isoformat(),
+                "reminderOffsetDays": reminder_offset_days(appointment),
                 "message": message,
                 "status": status,
                 "errorMessage": error,
@@ -547,12 +576,39 @@ class LoadRecallWorker(QThread):
             self.failed.emit(str(exc))
 
 
-def reminder_log_key(row: dict[str, Any], phone: str | None = None) -> tuple[str, str, str]:
+def reminder_log_key(row: dict[str, Any], phone: str | None = None) -> tuple[str, str, str, str]:
     try:
         reminder_date = parse_datetime(row.get("AptDateTime")).date().isoformat()
     except ValueError:
         reminder_date = str(row.get("ReminderForDate") or "")[:10]
-    return (str(row.get("AptNum") or ""), reminder_date, digits_only(phone or row.get("Phone", "")))
+    return (
+        str(row.get("AptNum") or ""),
+        reminder_date,
+        digits_only(phone or row.get("Phone", "")),
+        str(reminder_offset_days(row)),
+    )
+
+
+def reminder_offset_days(row: dict[str, Any]) -> int:
+    for key in ("_ReminderOffsetDays", "ReminderOffsetDays"):
+        try:
+            value = int(row.get(key))
+            if value >= 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    try:
+        return max(0, (parse_datetime(row.get("AptDateTime")).date() - date.today()).days)
+    except ValueError:
+        return 1
+
+
+def relative_day_labels(days: int) -> tuple[str, str, str]:
+    if days == 1:
+        return "tomorrow", "de mañana", "ngày mai"
+    if days <= 0:
+        return "today", "de hoy", "hôm nay"
+    return f"in {days} days", f"en {days} días", f"{days} ngày nữa"
 
 
 def patient_name(row: dict[str, Any]) -> str:
@@ -631,6 +687,7 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
     apt_time = row.get("AptDateTime")
     first_name = str(row.get("FName") or "").strip() or "there"
     formatted_time = display_time(apt_time)
+    relative_day, relative_day_es, relative_day_vi = relative_day_labels(reminder_offset_days(row))
     return template.format(
         clinic_name=config.clinic_name,
         clinic_phone=config.clinic_phone,
@@ -642,6 +699,9 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
         date_short=display_date_short(apt_time),
         weekday=weekday_en(apt_time),
         weekday_vi=weekday_vi(apt_time),
+        relative_day=relative_day,
+        relative_day_es=relative_day_es,
+        relative_day_vi=relative_day_vi,
         time=formatted_time,
         time_lower=formatted_time.lower(),
         phone=row.get("Phone", ""),
@@ -665,6 +725,8 @@ class SmsReminderWindow(QMainWindow):
         self.recall_load_worker: LoadRecallWorker | None = None
         self.queued_load = False
         self.send_after_load = False
+        self.monitor_send_queue: list[date] = []
+        self.monitor_batch_active = False
         self.monitoring_active = False
         self.row_template_combos: dict[int, QComboBox] = {}
         self.recall_template_combos: dict[int, QComboBox] = {}
@@ -1512,7 +1574,9 @@ class SmsReminderWindow(QMainWindow):
         self.statusBar().showMessage(f"Loaded {len(self.appointments)} appointments for {display_date(target)}.", 4000)
         if self.send_after_load:
             self.send_after_load = False
-            self.send_all_not_sent()
+            started = self.send_all_not_sent(silent=True, confirm_real=False)
+            if not started and self.monitor_batch_active:
+                self.process_next_monitor_target()
 
     def appointments_load_failed(self, _target: date, message: str) -> None:
         QMessageBox.critical(self, "Load error", message)
@@ -1548,6 +1612,7 @@ class SmsReminderWindow(QMainWindow):
                 fallback = appointment.get("Phone") or appointment.get("HomePhoneFormatted") or appointment.get("HmPhone")
                 phone_targets.append(("Phone", format_us_phone(str(fallback or ""))))
             row = dict(appointment)
+            row["_ReminderOffsetDays"] = reminder_offset_days(row)
             row_targets: list[dict[str, str]] = []
             for source, phone in phone_targets:
                 log = log_map.get(reminder_log_key(row, phone))
@@ -1995,21 +2060,25 @@ class SmsReminderWindow(QMainWindow):
             self.append_activity(f"TEST FAILED: {phone} -> {exc}")
             QMessageBox.critical(self, "Test SMS failed", str(exc))
 
-    def send_all_not_sent(self) -> None:
+    def send_all_not_sent(self, silent: bool = False, confirm_real: bool = True) -> bool:
         pending = [
             self.appointment_with_template(row_index)
             for row_index, row in enumerate(self.appointments)
             if row.get("ReminderStatus") not in {"sent", "dry-run"}
         ]
         if not pending:
-            QMessageBox.information(self, "Nothing to send", "There are no pending reminders for this date.")
-            return
-        self.start_send(pending)
+            if not silent:
+                QMessageBox.information(self, "Nothing to send", "There are no pending reminders for this date.")
+            else:
+                self.append_activity("No pending reminders for this target date.")
+            return False
+        return self.start_send(pending, confirm_real=confirm_real, silent=silent)
 
-    def start_send(self, appointments: list[dict[str, Any]]) -> None:
+    def start_send(self, appointments: list[dict[str, Any]], confirm_real: bool = True, silent: bool = False) -> bool:
         if self.worker and self.worker.isRunning():
-            QMessageBox.information(self, "Sending", "A send job is already running.")
-            return
+            if not silent:
+                QMessageBox.information(self, "Sending", "A send job is already running.")
+            return False
         sms_count = sum(
             len([
                 target for target in appointment.get("PhoneTargets", [])
@@ -2018,16 +2087,19 @@ class SmsReminderWindow(QMainWindow):
             for appointment in appointments
         )
         if sms_count == 0:
-            QMessageBox.information(self, "Nothing to send", "There are no pending phone numbers for this selection.")
-            return
-        if not self.config.dry_run:
+            if not silent:
+                QMessageBox.information(self, "Nothing to send", "There are no pending phone numbers for this selection.")
+            else:
+                self.append_activity("No pending phone numbers for this target date.")
+            return False
+        if not self.config.dry_run and confirm_real:
             confirm = QMessageBox.question(
                 self,
                 "Send real SMS?",
                 f"Send {sms_count} real SMS messages through Phone Link?",
             )
             if confirm != QMessageBox.Yes:
-                return
+                return False
         self.save_settings()
         self.set_send_enabled(False)
         self.active_send_kind = "recall" if appointments and appointments[0].get("_Recall") else "appointments"
@@ -2035,6 +2107,7 @@ class SmsReminderWindow(QMainWindow):
         self.worker.progress.connect(self.append_activity)
         self.worker.finished.connect(self.send_finished)
         self.worker.start()
+        return True
 
     def set_send_enabled(self, enabled: bool) -> None:
         self.send_selected_button.setEnabled(enabled)
@@ -2057,6 +2130,8 @@ class SmsReminderWindow(QMainWindow):
         self.append_activity(f"Done. Sent/dry-run: {sent}. Failed: {failed}.")
         if self.active_send_kind == "recall":
             self.load_recall_patients()
+        elif self.monitor_batch_active:
+            self.process_next_monitor_target()
         else:
             self.load_appointments()
 
@@ -2092,19 +2167,34 @@ class SmsReminderWindow(QMainWindow):
     def update_monitoring_status(self) -> None:
         if not hasattr(self, "monitor_status_value"):
             return
-        target_date = QDate.currentDate().addDays(self.config.reminder_days_ahead).toPython()
+        targets = self.monitor_target_dates()
         self.monitor_status_value.setText("Running" if self.monitoring_active else "Stopped")
         self.monitor_status_value.setProperty("running", "true" if self.monitoring_active else "false")
         self.monitor_status_value.style().unpolish(self.monitor_status_value)
         self.monitor_status_value.style().polish(self.monitor_status_value)
-        self.monitor_date_value.setText(f"{display_date(target_date)} ({self.config.reminder_days_ahead} day ahead)")
+        self.monitor_date_value.setText(
+            ", ".join(f"{display_date(target)} ({(target - date.today()).days} days ahead)" for target in targets)
+        )
         self.monitor_time_value.setText(self.config.scheduled_send_time)
         self.monitor_note_value.setText(
-            "When monitoring is running, the app loads the reminder target date and waits for the daily send time. "
-            "It sends only pending reminders and writes each result to the bridge log."
+            "When monitoring is running, the app waits for the daily send time. "
+            "At that time it sends pending SMS reminders for tomorrow's patients and patients with appointments 8 days away."
         )
         self.start_monitoring_button.setEnabled(not self.monitoring_active)
         self.stop_monitoring_button.setEnabled(self.monitoring_active)
+
+    def monitor_target_dates(self) -> list[date]:
+        today = QDate.currentDate()
+        offsets = [self.config.reminder_days_ahead, SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD]
+        targets: list[date] = []
+        seen: set[str] = set()
+        for offset in offsets:
+            target = today.addDays(offset).toPython()
+            key = target.isoformat()
+            if key not in seen:
+                targets.append(target)
+                seen.add(key)
+        return targets
 
     def start_monitoring(self) -> None:
         self.save_settings(silent=True)
@@ -2116,15 +2206,18 @@ class SmsReminderWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.tabs.widget(0))
         try:
             self.suppress_auto_load = True
-            self.date_edit.setDate(QDate.currentDate().addDays(self.config.reminder_days_ahead))
+            target = self.monitor_target_dates()[0]
+            self.date_edit.setDate(QDate(target.year, target.month, target.day))
         finally:
             self.suppress_auto_load = False
-        self.append_activity("Monitoring started. Loading reminder target appointments.")
+        self.append_activity("Monitoring started. Loading first reminder target appointments.")
         self.load_appointments()
 
     def stop_monitoring(self) -> None:
         self.monitoring_active = False
         self.send_after_load = False
+        self.monitor_send_queue = []
+        self.monitor_batch_active = False
         self.update_monitoring_status()
         self.append_activity("Monitoring stopped.")
         self.statusBar().showMessage("Monitoring stopped.", 4000)
@@ -2132,7 +2225,11 @@ class SmsReminderWindow(QMainWindow):
     def check_schedule(self) -> None:
         if not self.monitoring_active:
             return
+        if self.monitor_batch_active:
+            return
         if self.worker and self.worker.isRunning():
+            return
+        if self.load_worker and self.load_worker.isRunning():
             return
         now_key = datetime.now().strftime("%Y-%m-%d %H:%M")
         target_time = self.config.scheduled_send_time
@@ -2142,11 +2239,33 @@ class SmsReminderWindow(QMainWindow):
         if last_run == now_key:
             return
         self.settings.setValue("last_schedule_run", now_key)
+        self.start_monitoring_batch()
+
+    def start_monitoring_batch(self) -> None:
+        self.monitor_send_queue = self.monitor_target_dates()
+        self.monitor_batch_active = True
+        self.append_activity(
+            "Scheduled monitoring started for "
+            + ", ".join(display_date(target) for target in self.monitor_send_queue)
+            + "."
+        )
+        self.process_next_monitor_target()
+
+    def process_next_monitor_target(self) -> None:
+        if not self.monitor_batch_active:
+            return
+        if not self.monitor_send_queue:
+            self.monitor_batch_active = False
+            self.append_activity("Scheduled monitoring finished.")
+            self.statusBar().showMessage("Scheduled monitoring finished.", 5000)
+            return
+        target = self.monitor_send_queue.pop(0)
         try:
             self.suppress_auto_load = True
-            self.date_edit.setDate(QDate.currentDate().addDays(self.config.reminder_days_ahead))
+            self.date_edit.setDate(QDate(target.year, target.month, target.day))
         finally:
             self.suppress_auto_load = False
+        self.append_activity(f"Loading scheduled reminder target {display_date(target)}.")
         self.send_after_load = True
         self.load_appointments()
 

@@ -73,15 +73,29 @@ export async function ensureSmsReminderLogTable(connection = pool) {
       PatNum BIGINT NOT NULL,
       Phone VARCHAR(30) NOT NULL,
       ReminderForDate DATE NOT NULL,
+      ReminderOffsetDays INT NOT NULL DEFAULT 1,
       Message TEXT NOT NULL,
       Status VARCHAR(30) NOT NULL,
       SentAt DATETIME NULL,
       ErrorMessage TEXT NULL,
       CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (ReminderLogNum),
-      UNIQUE KEY uq_luk_sms_reminder (AptNum, ReminderForDate, Phone)
+      UNIQUE KEY uq_luk_sms_reminder (AptNum, ReminderForDate, Phone, ReminderOffsetDays)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  const [columns] = await connection.execute(
+    `
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = 'ReminderOffsetDays'
+    `,
+    [LOG_TABLE]
+  );
+  if (!columns.length) {
+    await connection.execute(`ALTER TABLE ${LOG_TABLE} ADD COLUMN ReminderOffsetDays INT NOT NULL DEFAULT 1 AFTER ReminderForDate`);
+  }
   const [indexes] = await connection.execute(
     `
       SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS Columns
@@ -92,13 +106,13 @@ export async function ensureSmsReminderLogTable(connection = pool) {
     `,
     [LOG_TABLE]
   );
-  if (indexes?.[0]?.Columns !== 'AptNum,ReminderForDate,Phone') {
+  if (indexes?.[0]?.Columns !== 'AptNum,ReminderForDate,Phone,ReminderOffsetDays') {
     try {
       await connection.execute(`ALTER TABLE ${LOG_TABLE} DROP INDEX uq_luk_sms_reminder`);
     } catch (_error) {
       // Fresh installs already have the desired phone-aware unique key.
     }
-    await connection.execute(`ALTER TABLE ${LOG_TABLE} ADD UNIQUE KEY uq_luk_sms_reminder (AptNum, ReminderForDate, Phone)`);
+    await connection.execute(`ALTER TABLE ${LOG_TABLE} ADD UNIQUE KEY uq_luk_sms_reminder (AptNum, ReminderForDate, Phone, ReminderOffsetDays)`);
   }
 }
 
@@ -282,6 +296,7 @@ export async function logSmsReminderResult(body) {
   const aptNum = Number.parseInt(String(body.aptNum ?? ''), 10);
   const patNum = Number.parseInt(String(body.patNum ?? ''), 10);
   const reminderForDate = parseDate(body.reminderForDate);
+  const reminderOffsetDays = Math.max(0, Number.parseInt(String(body.reminderOffsetDays ?? '1'), 10) || 1);
   const phone = String(body.phone ?? '').trim();
   const message = String(body.message ?? '');
   const status = String(body.status ?? '').trim();
@@ -297,8 +312,8 @@ export async function logSmsReminderResult(body) {
   await pool.execute(
     `
       INSERT INTO ${LOG_TABLE}
-        (AptNum, PatNum, Phone, ReminderForDate, Message, Status, SentAt, ErrorMessage)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (AptNum, PatNum, Phone, ReminderForDate, ReminderOffsetDays, Message, Status, SentAt, ErrorMessage)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         Phone = VALUES(Phone),
         Message = VALUES(Message),
@@ -306,10 +321,10 @@ export async function logSmsReminderResult(body) {
         SentAt = VALUES(SentAt),
         ErrorMessage = VALUES(ErrorMessage)
     `,
-    [aptNum, patNum, phone, reminderForDate, message, status, sentAt, errorMessage]
+    [aptNum, patNum, phone, reminderForDate, reminderOffsetDays, message, status, sentAt, errorMessage]
   );
 
-  return { aptNum, patNum, reminderForDate, status };
+  return { aptNum, patNum, reminderForDate, reminderOffsetDays, status };
 }
 
 export async function getSmsReminderLogs(query = {}) {
@@ -323,6 +338,7 @@ export async function getSmsReminderLogs(query = {}) {
         PatNum,
         Phone,
         DATE_FORMAT(ReminderForDate, '%Y-%m-%d') AS ReminderForDate,
+        ReminderOffsetDays,
         Status,
         DATE_FORMAT(SentAt, '%Y-%m-%d %H:%i:%s') AS SentAt,
         ErrorMessage,
