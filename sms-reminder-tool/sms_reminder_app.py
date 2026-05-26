@@ -424,6 +424,40 @@ class PhoneLinkSender:
         send_keys("{ENTER}")
         time.sleep(0.5)
 
+    def compose_sms(self, phone: str, message: str) -> None:
+        if platform.system() != "Windows":
+            raise RuntimeError("Phone Link automation only runs on Windows.")
+        if not digits_only(phone):
+            raise RuntimeError("Missing valid phone number.")
+
+        try:
+            from pywinauto import Desktop, Application
+            from pywinauto.keyboard import send_keys
+        except ImportError as exc:
+            raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
+
+        self.open_phone_link()
+        time.sleep(3)
+
+        desktop = Desktop(backend="uia")
+        window = desktop.window(title_re=".*(Phone Link|Liên kết Điện thoại|Messages).*")
+        if not window.exists(timeout=10):
+            app = Application(backend="uia").connect(title_re=".*Phone Link.*", timeout=10)
+            window = app.top_window()
+
+        window.set_focus()
+        send_keys("^n")
+        time.sleep(1)
+        pyperclip.copy(phone)
+        send_keys("^v")
+        send_keys("{ENTER}")
+        time.sleep(1.25)
+        send_keys("{TAB 2}")
+        time.sleep(0.5)
+        pyperclip.copy(message)
+        send_keys("^v")
+        time.sleep(0.5)
+
 
 class SendWorker(QThread):
     progress = Signal(str)
@@ -637,6 +671,7 @@ class SmsReminderWindow(QMainWindow):
         self.activity_messages: list[str] = []
         self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
+        self._restoring_column_widths: set[str] = set()
 
         self.setWindowTitle("LUK Dental SMS Reminder Tool")
         self.resize(1540, 920)
@@ -699,6 +734,30 @@ class SmsReminderWindow(QMainWindow):
         layout.addWidget(value)
         layout.addWidget(caption)
         return frame, value
+
+    def configure_resizable_columns(self, table: QTableWidget, settings_key: str, default_widths: dict[int, int]) -> None:
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(False)
+        saved = self.settings.value(settings_key, "")
+        widths = dict(default_widths)
+        if saved:
+            try:
+                loaded = json.loads(str(saved))
+                widths.update({int(key): int(value) for key, value in loaded.items()})
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+        self._restoring_column_widths.add(settings_key)
+        for col in range(table.columnCount()):
+            table.setColumnWidth(col, max(48, int(widths.get(col, 120))))
+        self._restoring_column_widths.discard(settings_key)
+        header.sectionResized.connect(lambda *_args, t=table, key=settings_key: self.save_column_widths(t, key))
+
+    def save_column_widths(self, table: QTableWidget, settings_key: str) -> None:
+        if settings_key in self._restoring_column_widths:
+            return
+        widths = {str(col): table.columnWidth(col) for col in range(table.columnCount())}
+        self.settings.setValue(settings_key, json.dumps(widths))
 
     def build_dashboard_tab(self) -> QWidget:
         page = QWidget()
@@ -786,8 +845,6 @@ class SmsReminderWindow(QMainWindow):
         self.appointment_table.setHorizontalHeaderLabels(
             ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Template"]
         )
-        header = self.appointment_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Interactive)
         column_widths = {
             0: 120,  # Status
             1: 110,  # Time
@@ -799,10 +856,7 @@ class SmsReminderWindow(QMainWindow):
             7: 110,  # Reminder
             8: 190,  # Template
         }
-        for col, width in column_widths.items():
-            self.appointment_table.setColumnWidth(col, width)
-        header.setSectionResizeMode(2, QHeaderView.Fixed)
-        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        self.configure_resizable_columns(self.appointment_table, "dashboard/appointment_column_widths", column_widths)
         self.appointment_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.appointment_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.appointment_table.verticalHeader().setVisible(False)
@@ -810,9 +864,6 @@ class SmsReminderWindow(QMainWindow):
         self.appointment_table.setShowGrid(False)
         self.appointment_table.verticalHeader().setDefaultSectionSize(46)
         self.appointment_table.verticalHeader().setMinimumSectionSize(44)
-        header.setSectionResizeMode(4, QHeaderView.Fixed)
-        header.setSectionResizeMode(7, QHeaderView.Fixed)
-        header.setSectionResizeMode(8, QHeaderView.Fixed)
         table_layout.addWidget(self.appointment_table)
         self.loading_overlay = QFrame(table_card)
         self.loading_overlay.setObjectName("LoadingOverlay")
@@ -987,14 +1038,14 @@ class SmsReminderWindow(QMainWindow):
         self.preview_recall_button.clicked.connect(self.preview_recall_selected)
         self.manage_recall_templates_button = QPushButton("Recall templates")
         self.manage_recall_templates_button.clicked.connect(self.open_recall_templates_popup)
-        self.send_recall_button = QPushButton("Send selected recall SMS")
-        self.send_recall_button.setObjectName("PrimaryButton")
-        self.send_recall_button.clicked.connect(self.send_selected_recall)
+        self.fill_recall_button = QPushButton("Fill selected template")
+        self.fill_recall_button.setObjectName("PrimaryButton")
+        self.fill_recall_button.clicked.connect(self.fill_selected_recall_template)
         controls.addStretch()
         controls.addWidget(self.load_recall_button)
         controls.addWidget(self.manage_recall_templates_button)
         controls.addWidget(self.preview_recall_button)
-        controls.addWidget(self.send_recall_button)
+        controls.addWidget(self.fill_recall_button)
         layout.addWidget(controls_card)
 
         table_card = self.card()
@@ -1002,22 +1053,24 @@ class SmsReminderWindow(QMainWindow):
         table_layout.setContentsMargins(0, 0, 0, 0)
         self.recall_table = QTableWidget(0, 10)
         self.recall_table.setHorizontalHeaderLabels(
-            ["Last treatment", "Patient", "Phone", "Email", "Language", "Codes", "Sent", "Last sent", "Pat #", "Template"]
+            ["Last code visit", "Patient", "Phone", "Email", "Language", "Codes", "Sent", "Last sent", "Pat #", "Template"]
         )
-        recall_header = self.recall_table.horizontalHeader()
-        recall_header.setSectionResizeMode(QHeaderView.Interactive)
-        self.recall_table.setColumnWidth(0, 130)
-        self.recall_table.setColumnWidth(2, 260)
-        self.recall_table.setColumnWidth(3, 150)
-        self.recall_table.setColumnWidth(4, 100)
-        self.recall_table.setColumnWidth(5, 140)
-        self.recall_table.setColumnWidth(6, 70)
-        self.recall_table.setColumnWidth(7, 140)
-        self.recall_table.setColumnWidth(8, 90)
-        self.recall_table.setColumnWidth(9, 190)
-        recall_header.setSectionResizeMode(1, QHeaderView.Stretch)
-        recall_header.setSectionResizeMode(3, QHeaderView.Fixed)
-        recall_header.setSectionResizeMode(9, QHeaderView.Fixed)
+        self.configure_resizable_columns(
+            self.recall_table,
+            "recall/patient_column_widths",
+            {
+                0: 130,
+                1: 190,
+                2: 300,
+                3: 150,
+                4: 100,
+                5: 140,
+                6: 70,
+                7: 140,
+                8: 90,
+                9: 190,
+            },
+        )
         self.recall_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.recall_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.recall_table.verticalHeader().setVisible(False)
@@ -1616,22 +1669,55 @@ class SmsReminderWindow(QMainWindow):
             f"To: {patient_name(patient)}\nPhone: {patient.get('Phone', '')}\nSent count: {patient.get('RecallSentCount', 0)}\n\n{message}",
         )
 
-    def send_selected_recall(self) -> None:
+    def fill_selected_recall_template(self) -> None:
         self.save_settings(silent=True)
         selected = self.selected_recall_patients()
         if not selected:
-            QMessageBox.information(self, "No selection", "Please select at least one recall patient.")
+            QMessageBox.information(self, "No selection", "Please select one recall patient.")
             return
-        over_limit = [patient_name(row) for row in selected if int(row.get("RecallSentCount") or 0) >= 2]
-        if over_limit:
+        if len(selected) != 1:
+            QMessageBox.information(self, "One patient only", "Please select one patient at a time for manual recall SMS.")
+            return
+        patient = selected[0]
+        if int(patient.get("RecallSentCount") or 0) >= 2:
             confirm = QMessageBox.question(
                 self,
                 "Recall already sent",
-                "Some selected patients already have 2 or more recall messages logged.\n\nContinue anyway?",
+                "This patient already has 2 or more recall messages logged.\n\nContinue filling the SMS anyway?",
             )
             if confirm != QMessageBox.Yes:
                 return
-        self.start_send(selected)
+        targets = [
+            target for target in patient.get("PhoneTargets", [])
+            if digits_only(target.get("phone", ""))
+        ]
+        if not targets:
+            QMessageBox.warning(self, "Missing phone", "This patient does not have a valid phone number.")
+            return
+        target = targets[0]
+        if len(targets) > 1:
+            options = [f"{item.get('source')}: {item.get('phone')}" for item in targets]
+            chosen, ok = QInputDialog.getItem(self, "Choose phone", "Send to:", options, 0, False)
+            if not ok:
+                return
+            index = options.index(chosen)
+            target = targets[index]
+        message = render_message(self.config, patient, patient.get("_TemplateText") or DEFAULT_RECALL_TEMPLATE)
+        try:
+            PhoneLinkSender(dry_run=False).compose_sms(target.get("phone", ""), message)
+            self.append_activity(f"FILLED RECALL: {patient_name(patient)} {target.get('source')} -> {target.get('phone')}")
+            mark_sent = QMessageBox.question(
+                self,
+                "Template filled",
+                "The recall SMS was filled in Phone Link.\n\n"
+                "After you review and click Send manually in Phone Link, mark this recall as sent?",
+            )
+            if mark_sent == QMessageBox.Yes:
+                self.repo.log_recall_result(patient, message, "sent", phone=target.get("phone", ""))
+                self.append_activity(f"MARKED SENT: {patient_name(patient)} {target.get('source')} -> {target.get('phone')}")
+                self.load_recall_patients()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Phone Link error", str(exc))
 
     def render_appointments(self) -> None:
         self.row_template_combos = {}
@@ -1921,8 +2007,8 @@ class SmsReminderWindow(QMainWindow):
         self.preview_button.setEnabled(enabled)
         self.open_phone_button.setEnabled(enabled)
         self.test_sms_button.setEnabled(enabled)
-        if hasattr(self, "send_recall_button"):
-            self.send_recall_button.setEnabled(enabled)
+        if hasattr(self, "fill_recall_button"):
+            self.fill_recall_button.setEnabled(enabled)
         if hasattr(self, "preview_recall_button"):
             self.preview_recall_button.setEnabled(enabled)
 
