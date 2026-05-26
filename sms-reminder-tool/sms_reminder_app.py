@@ -62,8 +62,9 @@ DEFAULT_SMS_TEMPLATES = {
         "Thank you and have a great day."
     ),
     "ES": (
-        "Hola {first_name}, le recordamos su cita con {clinic_name} el {date} a las {time}. "
-        "Llame al {clinic_phone} si necesita cambiar algo."
+        "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
+        "su cita de mañana, {weekday}, {date_full} a las {time_lower}. "
+        "Gracias y que tenga un excelente día."
     ),
     "VI": (
         "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị "
@@ -80,6 +81,10 @@ LEGACY_SMS_TEMPLATES = {
     "VI": (
         "Xin chao {first_name}, {clinic_name} xin nhac lich hen cua ban vao {date} luc {time}. "
         "Vui long goi {clinic_phone} neu can thay doi."
+    ),
+    "ES": (
+        "Hola {first_name}, le recordamos su cita con {clinic_name} el {date} a las {time}. "
+        "Llame al {clinic_phone} si necesita cambiar algo."
     ),
 }
 
