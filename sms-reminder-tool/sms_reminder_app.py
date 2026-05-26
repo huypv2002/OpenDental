@@ -866,9 +866,9 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.appointment_table = QTableWidget(0, 9)
+        self.appointment_table = QTableWidget(0, 11)
         self.appointment_table.setHorizontalHeaderLabels(
-            ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Template"]
+            ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Sent", "Last sent", "Template"]
         )
         column_widths = {
             0: 120,  # Status
@@ -879,7 +879,9 @@ class SmsReminderWindow(QMainWindow):
             5: 90,   # Apt #
             6: 90,   # Pat #
             7: 110,  # Reminder
-            8: 190,  # Template
+            8: 70,   # Sent
+            9: 140,  # Last sent
+            10: 190, # Template
         }
         self.configure_resizable_columns(self.appointment_table, "dashboard/appointment_column_widths", column_widths)
         self.appointment_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -1576,6 +1578,10 @@ class SmsReminderWindow(QMainWindow):
                 row["ReminderStatus"] = "failed"
             else:
                 row["ReminderStatus"] = ""
+            sent_targets = [target for target in row_targets if target.get("status") == "sent"]
+            sent_times = [target.get("sent_at", "") for target in sent_targets if target.get("sent_at")]
+            row["ReminderSentCount"] = len(sent_targets)
+            row["ReminderLastSentAt"] = max(sent_times) if sent_times else ""
             row["ReminderSentAt"] = ", ".join(target.get("sent_at", "") for target in row_targets if target.get("sent_at"))
             row["ReminderError"] = "; ".join(target.get("error", "") for target in row_targets if target.get("error"))
             expanded.append(row)
@@ -1764,17 +1770,19 @@ class SmsReminderWindow(QMainWindow):
                 row.get("AptNum", ""),
                 row.get("PatNum", ""),
                 reminder,
+                row.get("ReminderSentCount", 0),
+                row.get("ReminderLastSentAt", ""),
                 "",
             ]
             for col, value in enumerate(values):
-                if col == 8:
+                if col == 10:
                     combo = QComboBox()
                     self.populate_template_combo(combo, template_key_for_language(self.config, row.get("Language")))
                     self.appointment_table.setCellWidget(row_index, col, combo)
                     self.row_template_combos[row_index] = combo
                     continue
                 item = QTableWidgetItem(str(value or ""))
-                if col in {5, 6}:
+                if col in {5, 6, 8}:
                     item.setTextAlignment(Qt.AlignCenter)
                 if reminder in {"sent", "dry-run"}:
                     item.setForeground(QColor("#7a8794"))
@@ -1859,6 +1867,8 @@ class SmsReminderWindow(QMainWindow):
                     appointment.get("AptNum"),
                     appointment.get("PatNum"),
                     appointment.get("ReminderStatus") or "not sent",
+                    appointment.get("ReminderSentCount"),
+                    appointment.get("ReminderLastSentAt"),
                     self.config.default_template_key,
                 )
             ).lower()
