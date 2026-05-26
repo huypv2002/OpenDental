@@ -320,6 +320,25 @@ class SendWorker(QThread):
         self.finished.emit(sent, failed)
 
 
+class LoadAppointmentsWorker(QThread):
+    loaded = Signal(object, list, list)
+    failed = Signal(object, str)
+
+    def __init__(self, config: AppConfig, target_date: date):
+        super().__init__()
+        self.config = config
+        self.target_date = target_date
+
+    def run(self) -> None:
+        try:
+            repo = BridgeClient(self.config)
+            appointments = repo.fetch_appointments(self.target_date)
+            logs = repo.fetch_recent_logs()
+            self.loaded.emit(self.target_date, appointments, logs)
+        except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
+            self.failed.emit(self.target_date, str(exc))
+
+
 def patient_name(row: dict[str, Any]) -> str:
     return " ".join(str(row.get(key) or "").strip() for key in ("FName", "LName")).strip() or f"Patient #{row.get('PatNum', '')}"
 
@@ -363,6 +382,9 @@ class SmsReminderWindow(QMainWindow):
         self.repo = BridgeClient(self.config)
         self.appointments: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
+        self.load_worker: LoadAppointmentsWorker | None = None
+        self.queued_load = False
+        self.send_after_load = False
         self.row_template_combos: dict[int, QComboBox] = {}
         self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
@@ -379,6 +401,11 @@ class SmsReminderWindow(QMainWindow):
         self.tabs.addTab(self.build_templates_tab(), "Templates")
         self.tabs.addTab(self.build_settings_tab(), "Settings")
         self.tabs.addTab(self.build_logs_tab(), "Logs")
+
+        self.load_debounce = QTimer(self)
+        self.load_debounce.setSingleShot(True)
+        self.load_debounce.setInterval(250)
+        self.load_debounce.timeout.connect(self.load_appointments)
 
         self.scheduler_timer = QTimer(self)
         self.scheduler_timer.timeout.connect(self.check_schedule)
@@ -451,6 +478,8 @@ class SmsReminderWindow(QMainWindow):
         self.date_edit = QDateEdit(QDate.currentDate().addDays(self.config.reminder_days_ahead))
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("MM/dd/yyyy")
+        self.date_edit.setMinimumWidth(150)
+        self.date_edit.setMinimumHeight(42)
         self.date_edit.dateChanged.connect(self.load_appointments_for_selected_date)
         self.send_selected_button = QPushButton("Send selected")
         self.send_selected_button.clicked.connect(self.send_selected)
@@ -498,6 +527,8 @@ class SmsReminderWindow(QMainWindow):
         self.appointment_table.verticalHeader().setVisible(False)
         self.appointment_table.setAlternatingRowColors(True)
         self.appointment_table.setShowGrid(False)
+        self.appointment_table.setColumnWidth(8, 190)
+        self.appointment_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Fixed)
         table_layout.addWidget(self.appointment_table)
         splitter.addWidget(table_card)
 
@@ -765,7 +796,7 @@ class SmsReminderWindow(QMainWindow):
         self.refresh_template_controls()
         self.statusBar().showMessage("Template deleted.", 3000)
 
-    def save_settings(self) -> None:
+    def save_settings(self, silent: bool = False) -> None:
         try:
             statuses = [int(part.strip()) for part in self.statuses.text().split(",") if part.strip()]
         except ValueError:
@@ -787,7 +818,8 @@ class SmsReminderWindow(QMainWindow):
         self.repo = BridgeClient(self.config)
         self.update_dry_run_badge()
         self.refresh_template_controls()
-        self.statusBar().showMessage("Settings saved.", 4000)
+        if not silent:
+            self.statusBar().showMessage("Settings saved.", 4000)
 
     def test_bridge_connection(self) -> None:
         self.save_settings()
@@ -798,25 +830,45 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.critical(self, "Bridge error", str(exc))
 
     def load_appointments(self) -> None:
-        self.save_settings()
+        self.save_settings(silent=True)
         target = self.date_edit.date().toPython()
-        try:
-            self.appointments = self.repo.fetch_appointments(target)
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Load error", str(exc))
+        if self.load_worker and self.load_worker.isRunning():
+            self.queued_load = True
+            self.statusBar().showMessage("Finishing current load before refreshing selected date...", 3000)
             return
+        config_snapshot = AppConfig(**asdict(self.config))
+        self.load_worker = LoadAppointmentsWorker(config_snapshot, target)
+        self.load_worker.loaded.connect(self.appointments_loaded)
+        self.load_worker.failed.connect(self.appointments_load_failed)
+        self.load_worker.finished.connect(self.appointments_load_finished)
+        self.statusBar().showMessage(f"Loading appointments for {display_date(target)}...", 4000)
+        self.load_worker.start()
+
+    def appointments_loaded(self, target: date, appointments: list[dict[str, Any]], logs: list[dict[str, Any]]) -> None:
+        self.appointments = appointments
         self.render_appointments()
-        self.load_logs()
+        self.render_logs(logs)
         self.update_dry_run_badge()
         self.statusBar().showMessage(f"Loaded {len(self.appointments)} appointments for {display_date(target)}.", 4000)
+        if self.send_after_load:
+            self.send_after_load = False
+            self.send_all_not_sent()
+
+    def appointments_load_failed(self, _target: date, message: str) -> None:
+        QMessageBox.critical(self, "Load error", message)
+
+    def appointments_load_finished(self) -> None:
+        if self.queued_load:
+            self.queued_load = False
+            self.load_debounce.start(50)
 
     def load_appointments_for_selected_date(self, *_args: Any) -> None:
         if self.suppress_auto_load:
             return
         if not self.config.bridge_url or not self.config.api_token:
             return
-        self.statusBar().showMessage("Loading appointments for selected date...", 3000)
-        self.load_appointments()
+        self.statusBar().showMessage("Preparing selected date...", 1200)
+        self.load_debounce.start()
 
     def render_appointments(self) -> None:
         self.row_template_combos = {}
@@ -844,6 +896,9 @@ class SmsReminderWindow(QMainWindow):
             for col, value in enumerate(values):
                 if col == 8:
                     combo = QComboBox()
+                    combo.setObjectName("TemplateCombo")
+                    combo.setMinimumHeight(34)
+                    combo.setMinimumWidth(174)
                     for key in sorted(self.config.sms_templates):
                         combo.addItem(template_label(key), key)
                     default_index = combo.findData(self.config.default_template_key)
@@ -1012,6 +1067,9 @@ class SmsReminderWindow(QMainWindow):
             logs = self.repo.fetch_recent_logs()
         except Exception:
             return
+        self.render_logs(logs)
+
+    def render_logs(self, logs: list[dict[str, Any]]) -> None:
         self.logs_table.setRowCount(len(logs))
         for row_index, row in enumerate(logs):
             values = [
@@ -1051,8 +1109,8 @@ class SmsReminderWindow(QMainWindow):
             self.date_edit.setDate(QDate.currentDate().addDays(self.config.reminder_days_ahead))
         finally:
             self.suppress_auto_load = False
+        self.send_after_load = True
         self.load_appointments()
-        self.send_all_not_sent()
 
 
 def status_label(status: Any) -> str:
@@ -1082,6 +1140,9 @@ QMainWindow, QWidget {
 }
 QMainWindow {
   background: #f7fbfd;
+}
+QLabel {
+  background: transparent;
 }
 #AppTabs::pane {
   border: 0;
@@ -1202,18 +1263,59 @@ QPushButton:pressed {
 QLineEdit, QSpinBox, QDateEdit, QTimeEdit, QTextEdit, QPlainTextEdit {
   border: 1px solid #d5dfe8;
   border-radius: 10px;
-  padding: 10px;
+  min-height: 22px;
+  padding: 10px 12px;
   background: #ffffff;
+  color: #202833;
   selection-background-color: #155bd8;
+  selection-color: #ffffff;
 }
 QComboBox {
   border: 1px solid #d5dfe8;
   border-radius: 10px;
-  padding: 9px 12px;
+  min-height: 22px;
+  padding: 9px 36px 9px 12px;
   background: #ffffff;
+  color: #202833;
 }
 QComboBox:focus {
   border: 2px solid #23c7e8;
+}
+QComboBox::drop-down, QDateEdit::drop-down, QTimeEdit::drop-down {
+  subcontrol-origin: padding;
+  subcontrol-position: top right;
+  width: 30px;
+  border: 0;
+  border-left: 1px solid #edf3f7;
+  border-top-right-radius: 10px;
+  border-bottom-right-radius: 10px;
+  background: #f8fcff;
+}
+QComboBox::down-arrow, QDateEdit::down-arrow, QTimeEdit::down-arrow {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid #344054;
+  margin-right: 8px;
+}
+QComboBox QAbstractItemView {
+  border: 1px solid #d5dfe8;
+  border-radius: 8px;
+  background: #ffffff;
+  selection-background-color: #e4f2ff;
+  selection-color: #1359d8;
+  padding: 6px;
+  outline: 0;
+}
+#TemplateCombo {
+  border-radius: 8px;
+  padding: 6px 30px 6px 10px;
+  min-height: 20px;
+  background: #ffffff;
+}
+#TemplateCombo::drop-down {
+  width: 26px;
 }
 QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
   border: 2px solid #23c7e8;
