@@ -21,6 +21,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDateEdit,
     QFormLayout,
     QFrame,
@@ -52,6 +53,22 @@ APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "sms_config.json"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
+
+
+DEFAULT_SMS_TEMPLATES = {
+    "US": (
+        "Hi {first_name}, this is {clinic_name} reminding you of your appointment "
+        "on {date} at {time}. Please call {clinic_phone} if you need to change anything."
+    ),
+    "ES": (
+        "Hola {first_name}, le recordamos su cita con {clinic_name} el {date} a las {time}. "
+        "Llame al {clinic_phone} si necesita cambiar algo."
+    ),
+    "VI": (
+        "Xin chao {first_name}, {clinic_name} xin nhac lich hen cua ban vao {date} luc {time}. "
+        "Vui long goi {clinic_phone} neu can thay doi."
+    ),
+}
 
 
 def digits_only(value: str) -> str:
@@ -111,6 +128,9 @@ class AppConfig:
     appointment_statuses: list[int] = field(default_factory=lambda: [1])
     fallback_duration_minutes: int = 30
     dry_run: bool = True
+    scheduler_enabled: bool = True
+    default_template_key: str = "US"
+    sms_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SMS_TEMPLATES))
     sms_template: str = (
         "Hi {first_name}, this is {clinic_name} reminding you of your appointment "
         "on {date} at {time}. Please call {clinic_phone} if you need to change anything."
@@ -123,7 +143,14 @@ class AppConfig:
                 raw = json.load(file)
             defaults = asdict(cls())
             known = {key: value for key, value in raw.items() if key in defaults}
-            return cls(**{**defaults, **known})
+            cfg = cls(**{**defaults, **known})
+            if not cfg.sms_templates:
+                cfg.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
+            if "sms_template" in raw and raw.get("sms_template") and not raw.get("sms_templates"):
+                cfg.sms_templates["US"] = str(raw["sms_template"])
+            if cfg.default_template_key not in cfg.sms_templates:
+                cfg.default_template_key = next(iter(cfg.sms_templates), "US")
+            return cfg
         if BRIDGE_ENV_PATH.exists():
             load_dotenv(BRIDGE_ENV_PATH)
         defaults = cls()
@@ -261,11 +288,10 @@ class SendWorker(QThread):
     progress = Signal(str)
     finished = Signal(int, int)
 
-    def __init__(self, config: AppConfig, appointments: list[dict[str, Any]], template: str):
+    def __init__(self, config: AppConfig, appointments: list[dict[str, Any]]):
         super().__init__()
         self.config = config
         self.appointments = appointments
-        self.template = template
 
     def run(self) -> None:
         repo = BridgeClient(self.config)
@@ -273,7 +299,7 @@ class SendWorker(QThread):
         sent = 0
         failed = 0
         for appointment in self.appointments:
-            message = render_message(self.config, appointment, self.template)
+            message = render_message(self.config, appointment, appointment.get("_TemplateText") or default_template(self.config))
             patient = patient_name(appointment)
             phone = appointment.get("Phone", "")
             if not digits_only(phone):
@@ -296,6 +322,21 @@ class SendWorker(QThread):
 
 def patient_name(row: dict[str, Any]) -> str:
     return " ".join(str(row.get(key) or "").strip() for key in ("FName", "LName")).strip() or f"Patient #{row.get('PatNum', '')}"
+
+
+def default_template(config: AppConfig) -> str:
+    if config.default_template_key in config.sms_templates:
+        return config.sms_templates[config.default_template_key]
+    return next(iter(config.sms_templates.values()), config.sms_template)
+
+
+def template_label(key: str) -> str:
+    labels = {
+        "US": "US - English",
+        "ES": "Spanish",
+        "VI": "Vietnamese",
+    }
+    return labels.get(key, key)
 
 
 def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str:
@@ -322,10 +363,12 @@ class SmsReminderWindow(QMainWindow):
         self.repo = BridgeClient(self.config)
         self.appointments: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
+        self.row_template_combos: dict[int, QComboBox] = {}
+        self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
 
         self.setWindowTitle("LUK Dental SMS Reminder Tool")
-        self.resize(1320, 840)
+        self.resize(1540, 920)
         self.setStyleSheet(APP_STYLES)
 
         self.tabs = QTabWidget()
@@ -333,6 +376,7 @@ class SmsReminderWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
         self.setStatusBar(QStatusBar())
         self.tabs.addTab(self.build_dashboard_tab(), "Dashboard")
+        self.tabs.addTab(self.build_templates_tab(), "Templates")
         self.tabs.addTab(self.build_settings_tab(), "Settings")
         self.tabs.addTab(self.build_logs_tab(), "Logs")
 
@@ -407,15 +451,13 @@ class SmsReminderWindow(QMainWindow):
         self.date_edit = QDateEdit(QDate.currentDate().addDays(self.config.reminder_days_ahead))
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("MM/dd/yyyy")
-        self.load_button = QPushButton("Load appointments")
-        self.load_button.clicked.connect(self.load_appointments)
+        self.date_edit.dateChanged.connect(self.load_appointments_for_selected_date)
         self.send_selected_button = QPushButton("Send selected")
         self.send_selected_button.clicked.connect(self.send_selected)
         self.send_all_button = QPushButton("Send all not sent")
         self.send_all_button.setObjectName("PrimaryButton")
         self.send_all_button.clicked.connect(self.send_all_not_sent)
         controls.addWidget(self.date_edit)
-        controls.addWidget(self.load_button)
         controls.addStretch()
         controls.addWidget(QLabel(CLINIC_TIME_ZONE_NOTE))
         self.preview_button = QPushButton("Preview selected")
@@ -446,9 +488,9 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.appointment_table = QTableWidget(0, 9)
+        self.appointment_table = QTableWidget(0, 10)
         self.appointment_table.setHorizontalHeaderLabels(
-            ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Procedure"]
+            ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Template", "Procedure"]
         )
         self.appointment_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.appointment_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -466,11 +508,12 @@ class SmsReminderWindow(QMainWindow):
         template_card = self.card()
         template_layout = QVBoxLayout(template_card)
         template_layout.setContentsMargins(18, 16, 18, 18)
-        template_title = QLabel("SMS template")
+        template_title = QLabel("Default SMS template preview")
         template_title.setObjectName("SectionTitle")
         self.template_edit = QTextEdit()
-        self.template_edit.setPlainText(self.config.sms_template)
+        self.template_edit.setPlainText(default_template(self.config))
         self.template_edit.setMinimumHeight(110)
+        self.template_edit.setReadOnly(True)
         template_layout.addWidget(template_title)
         template_layout.addWidget(self.template_edit)
         activity_card = self.card()
@@ -521,6 +564,8 @@ class SmsReminderWindow(QMainWindow):
         self.days_ahead.setValue(self.config.reminder_days_ahead)
         self.schedule_time = QTimeEdit(QTime.fromString(self.config.scheduled_send_time, "HH:mm"))
         self.schedule_time.setDisplayFormat("HH:mm")
+        self.scheduler_enabled = QCheckBox("Run daily schedule automatically while this app is open")
+        self.scheduler_enabled.setChecked(self.config.scheduler_enabled)
         self.dry_run = QCheckBox("Dry run only, do not send real SMS")
         self.dry_run.setChecked(self.config.dry_run)
         self.statuses = QLineEdit(",".join(str(item) for item in self.config.appointment_statuses))
@@ -529,6 +574,7 @@ class SmsReminderWindow(QMainWindow):
         sms_form.addRow("Reminder days ahead", self.days_ahead)
         sms_form.addRow("Daily send time", self.schedule_time)
         sms_form.addRow("Appointment statuses", self.statuses)
+        sms_form.addRow("", self.scheduler_enabled)
         sms_form.addRow("", self.dry_run)
 
         buttons = QHBoxLayout()
@@ -545,6 +591,67 @@ class SmsReminderWindow(QMainWindow):
         layout.addWidget(sms_box)
         layout.addLayout(buttons)
         layout.addStretch()
+        return page
+
+    def build_templates_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(16)
+
+        hero = self.card("HeroCard")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(24, 22, 24, 22)
+        eyebrow = QLabel("MESSAGE LIBRARY")
+        eyebrow.setObjectName("Eyebrow")
+        title = QLabel("SMS templates")
+        title.setObjectName("HeroTitle")
+        subtitle = QLabel("Manage country/language templates. Each appointment can choose a template before sending.")
+        subtitle.setObjectName("HeroSubtitle")
+        hero_layout.addWidget(eyebrow)
+        hero_layout.addWidget(title)
+        hero_layout.addWidget(subtitle)
+        layout.addWidget(hero)
+
+        template_card = self.card()
+        template_layout = QGridLayout(template_card)
+        template_layout.setContentsMargins(22, 20, 22, 22)
+        template_layout.setHorizontalSpacing(14)
+        template_layout.setVerticalSpacing(14)
+        self.template_select = QComboBox()
+        self.template_name = QLineEdit()
+        self.template_text = QTextEdit()
+        self.template_text.setMinimumHeight(220)
+        self.default_template_select = QComboBox()
+        self.add_template_button = QPushButton("Add template")
+        self.save_template_button = QPushButton("Save template")
+        self.save_template_button.setObjectName("PrimaryButton")
+        self.delete_template_button = QPushButton("Delete template")
+        self.template_select.currentTextChanged.connect(self.load_template_into_editor)
+        self.add_template_button.clicked.connect(self.add_template)
+        self.save_template_button.clicked.connect(self.save_template)
+        self.delete_template_button.clicked.connect(self.delete_template)
+        template_layout.addWidget(QLabel("Edit template"), 0, 0)
+        template_layout.addWidget(self.template_select, 0, 1)
+        template_layout.addWidget(QLabel("Default template"), 0, 2)
+        template_layout.addWidget(self.default_template_select, 0, 3)
+        template_layout.addWidget(QLabel("Template key / country"), 1, 0)
+        template_layout.addWidget(self.template_name, 1, 1, 1, 3)
+        template_layout.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
+        template_layout.addWidget(self.template_text, 2, 1, 1, 3)
+        helper = QLabel("Placeholders: {first_name}, {last_name}, {patient_name}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
+        helper.setObjectName("Muted")
+        helper.setWordWrap(True)
+        template_layout.addWidget(helper, 3, 1, 1, 3)
+        template_actions = QHBoxLayout()
+        template_actions.addStretch()
+        template_actions.addWidget(self.add_template_button)
+        template_actions.addWidget(self.delete_template_button)
+        template_actions.addWidget(self.save_template_button)
+        template_layout.addLayout(template_actions, 4, 1, 1, 3)
+        layout.addWidget(template_card)
+        layout.addStretch()
+        self.refresh_template_controls()
         return page
 
     def build_logs_tab(self) -> QWidget:
@@ -574,6 +681,90 @@ class SmsReminderWindow(QMainWindow):
         layout.addWidget(logs_card)
         return page
 
+    def refresh_template_controls(self) -> None:
+        if not hasattr(self, "template_select"):
+            return
+        current = self.template_select.currentData() or self.config.default_template_key
+        self.template_select.blockSignals(True)
+        self.default_template_select.blockSignals(True)
+        self.template_select.clear()
+        self.default_template_select.clear()
+        for key in sorted(self.config.sms_templates):
+            label = template_label(key)
+            self.template_select.addItem(label, key)
+            self.default_template_select.addItem(label, key)
+        select_index = max(0, self.template_select.findData(current))
+        default_index = max(0, self.default_template_select.findData(self.config.default_template_key))
+        self.template_select.setCurrentIndex(select_index)
+        self.default_template_select.setCurrentIndex(default_index)
+        self.template_select.blockSignals(False)
+        self.default_template_select.blockSignals(False)
+        self.load_template_into_editor()
+        if hasattr(self, "template_edit"):
+            self.template_edit.setPlainText(default_template(self.config))
+
+    def current_template_key(self) -> str:
+        if not hasattr(self, "template_select"):
+            return self.config.default_template_key
+        return str(self.template_select.currentData() or self.template_select.currentText() or self.config.default_template_key).strip()
+
+    def load_template_into_editor(self) -> None:
+        key = self.current_template_key()
+        self.template_name.setText(key)
+        self.template_text.setPlainText(self.config.sms_templates.get(key, ""))
+
+    def add_template(self) -> None:
+        key, ok = QInputDialog.getText(self, "Add template", "Template key or country, for example FR:")
+        if not ok:
+            return
+        key = key.strip().upper()
+        if not key:
+            return
+        if key in self.config.sms_templates:
+            QMessageBox.information(self, "Template exists", "That template already exists.")
+            return
+        self.config.sms_templates[key] = default_template(self.config)
+        self.refresh_template_controls()
+        index = self.template_select.findData(key)
+        if index >= 0:
+            self.template_select.setCurrentIndex(index)
+
+    def save_template(self) -> None:
+        old_key = self.current_template_key()
+        new_key = self.template_name.text().strip().upper()
+        text = self.template_text.toPlainText().strip()
+        if not new_key or not text:
+            QMessageBox.warning(self, "Template required", "Template key and message are required.")
+            return
+        if old_key != new_key:
+            self.config.sms_templates.pop(old_key, None)
+        self.config.sms_templates[new_key] = text
+        if old_key == self.config.default_template_key:
+            self.config.default_template_key = new_key
+        self.config.sms_template = default_template(self.config)
+        self.config.save()
+        self.refresh_template_controls()
+        index = self.template_select.findData(new_key)
+        if index >= 0:
+            self.template_select.setCurrentIndex(index)
+        self.statusBar().showMessage("Template saved.", 3000)
+
+    def delete_template(self) -> None:
+        key = self.current_template_key()
+        if len(self.config.sms_templates) <= 1:
+            QMessageBox.warning(self, "Cannot delete", "At least one template is required.")
+            return
+        confirm = QMessageBox.question(self, "Delete template?", f"Delete template {key}?")
+        if confirm != QMessageBox.Yes:
+            return
+        self.config.sms_templates.pop(key, None)
+        if self.config.default_template_key == key:
+            self.config.default_template_key = next(iter(self.config.sms_templates))
+        self.config.sms_template = default_template(self.config)
+        self.config.save()
+        self.refresh_template_controls()
+        self.statusBar().showMessage("Template deleted.", 3000)
+
     def save_settings(self) -> None:
         try:
             statuses = [int(part.strip()) for part in self.statuses.text().split(",") if part.strip()]
@@ -587,11 +778,15 @@ class SmsReminderWindow(QMainWindow):
         self.config.reminder_days_ahead = self.days_ahead.value()
         self.config.scheduled_send_time = self.schedule_time.time().toString("HH:mm")
         self.config.appointment_statuses = statuses or [1]
+        self.config.scheduler_enabled = self.scheduler_enabled.isChecked()
         self.config.dry_run = self.dry_run.isChecked()
-        self.config.sms_template = self.template_edit.toPlainText().strip() or AppConfig().sms_template
+        if hasattr(self, "default_template_select"):
+            self.config.default_template_key = str(self.default_template_select.currentData() or self.config.default_template_key)
+        self.config.sms_template = default_template(self.config)
         self.config.save()
         self.repo = BridgeClient(self.config)
         self.update_dry_run_badge()
+        self.refresh_template_controls()
         self.statusBar().showMessage("Settings saved.", 4000)
 
     def test_bridge_connection(self) -> None:
@@ -615,7 +810,15 @@ class SmsReminderWindow(QMainWindow):
         self.update_dry_run_badge()
         self.statusBar().showMessage(f"Loaded {len(self.appointments)} appointments for {display_date(target)}.", 4000)
 
+    def load_appointments_for_selected_date(self) -> None:
+        if self.suppress_auto_load:
+            return
+        if not self.config.bridge_url or not self.config.api_token:
+            return
+        self.load_appointments()
+
     def render_appointments(self) -> None:
+        self.row_template_combos = {}
         self.appointment_table.setRowCount(len(self.appointments))
         sent_count = 0
         missing_phone_count = 0
@@ -634,9 +837,19 @@ class SmsReminderWindow(QMainWindow):
                 row.get("AptNum", ""),
                 row.get("PatNum", ""),
                 reminder,
+                "",
                 row.get("ProcDescript", ""),
             ]
             for col, value in enumerate(values):
+                if col == 8:
+                    combo = QComboBox()
+                    for key in sorted(self.config.sms_templates):
+                        combo.addItem(template_label(key), key)
+                    default_index = combo.findData(self.config.default_template_key)
+                    combo.setCurrentIndex(default_index if default_index >= 0 else 0)
+                    self.appointment_table.setCellWidget(row_index, col, combo)
+                    self.row_template_combos[row_index] = combo
+                    continue
                 item = QTableWidgetItem(str(value or ""))
                 if col in {5, 6}:
                     item.setTextAlignment(Qt.AlignCenter)
@@ -651,6 +864,14 @@ class SmsReminderWindow(QMainWindow):
         self.sent_stat.setText(str(sent_count))
         self.missing_phone_stat.setText(str(missing_phone_count))
         self.apply_appointment_filter()
+
+    def appointment_with_template(self, row_index: int) -> dict[str, Any]:
+        appointment = dict(self.appointments[row_index])
+        combo = self.row_template_combos.get(row_index)
+        key = str(combo.currentData() or self.config.default_template_key) if combo else self.config.default_template_key
+        appointment["_TemplateKey"] = key
+        appointment["_TemplateText"] = self.config.sms_templates.get(key) or default_template(self.config)
+        return appointment
 
     def apply_appointment_filter(self) -> None:
         if not hasattr(self, "appointment_table"):
@@ -668,6 +889,7 @@ class SmsReminderWindow(QMainWindow):
                     appointment.get("AptNum"),
                     appointment.get("PatNum"),
                     appointment.get("ReminderStatus") or "not sent",
+                    self.config.default_template_key,
                     appointment.get("ProcDescript"),
                 )
             ).lower()
@@ -675,7 +897,7 @@ class SmsReminderWindow(QMainWindow):
 
     def selected_appointments(self) -> list[dict[str, Any]]:
         rows = sorted({index.row() for index in self.appointment_table.selectedIndexes()})
-        return [self.appointments[row] for row in rows]
+        return [self.appointment_with_template(row) for row in rows]
 
     def send_selected(self) -> None:
         selected = self.selected_appointments()
@@ -690,7 +912,7 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.information(self, "No selection", "Please select one appointment to preview.")
             return
         appointment = selected[0]
-        message = render_message(self.config, appointment, self.template_edit.toPlainText())
+        message = render_message(self.config, appointment, appointment.get("_TemplateText") or default_template(self.config))
         QMessageBox.information(
             self,
             "SMS preview",
@@ -740,7 +962,11 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.critical(self, "Test SMS failed", str(exc))
 
     def send_all_not_sent(self) -> None:
-        pending = [row for row in self.appointments if row.get("ReminderStatus") not in {"sent", "dry-run"}]
+        pending = [
+            self.appointment_with_template(row_index)
+            for row_index, row in enumerate(self.appointments)
+            if row.get("ReminderStatus") not in {"sent", "dry-run"}
+        ]
         if not pending:
             QMessageBox.information(self, "Nothing to send", "There are no pending reminders for this date.")
             return
@@ -760,7 +986,7 @@ class SmsReminderWindow(QMainWindow):
                 return
         self.save_settings()
         self.set_send_enabled(False)
-        self.worker = SendWorker(self.config, appointments, self.template_edit.toPlainText())
+        self.worker = SendWorker(self.config, appointments)
         self.worker.progress.connect(self.append_activity)
         self.worker.finished.connect(self.send_finished)
         self.worker.start()
@@ -771,7 +997,6 @@ class SmsReminderWindow(QMainWindow):
         self.preview_button.setEnabled(enabled)
         self.open_phone_button.setEnabled(enabled)
         self.test_sms_button.setEnabled(enabled)
-        self.load_button.setEnabled(enabled)
 
     def append_activity(self, message: str) -> None:
         self.activity_log.appendPlainText(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
@@ -808,6 +1033,8 @@ class SmsReminderWindow(QMainWindow):
         self.dry_run_badge.style().polish(self.dry_run_badge)
 
     def check_schedule(self) -> None:
+        if not self.config.scheduler_enabled:
+            return
         if self.worker and self.worker.isRunning():
             return
         now_key = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -818,7 +1045,11 @@ class SmsReminderWindow(QMainWindow):
         if last_run == now_key:
             return
         self.settings.setValue("last_schedule_run", now_key)
-        self.date_edit.setDate(QDate.currentDate().addDays(self.config.reminder_days_ahead))
+        try:
+            self.suppress_auto_load = True
+            self.date_edit.setDate(QDate.currentDate().addDays(self.config.reminder_days_ahead))
+        finally:
+            self.suppress_auto_load = False
         self.load_appointments()
         self.send_all_not_sent()
 
@@ -843,13 +1074,13 @@ def status_label(status: Any) -> str:
 
 APP_STYLES = """
 QMainWindow, QWidget {
-  background: #f4fbff;
-  color: #252a31;
+  background: #f7fbfd;
+  color: #202833;
   font-family: "Google Sans", "Segoe UI", Arial, sans-serif;
   font-size: 14px;
 }
 QMainWindow {
-  background: #f4fbff;
+  background: #f7fbfd;
 }
 #AppTabs::pane {
   border: 0;
@@ -860,11 +1091,11 @@ QTabWidget::tab-bar {
 }
 QTabBar {
   background: #ffffff;
-  border-bottom: 1px solid #dce8ef;
+  border-bottom: 1px solid #e5edf3;
 }
 QTabBar::tab {
   background: transparent;
-  color: #657382;
+  color: #617181;
   padding: 16px 24px 14px 24px;
   font-weight: 700;
   border: 0;
@@ -875,13 +1106,13 @@ QTabBar::tab:selected {
   border-bottom: 4px solid #23c7e8;
 }
 #HeroCard {
-  border: 1px solid #d8edf7;
-  border-radius: 18px;
-  background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffffff, stop:0.62 #f8fdff, stop:1 #e7f9ff);
+  border: 1px solid #e2edf3;
+  border-radius: 14px;
+  background: #ffffff;
 }
 #Card, #StatCard, QGroupBox {
-  border: 1px solid #dce8ef;
-  border-radius: 16px;
+  border: 1px solid #e2edf3;
+  border-radius: 14px;
   background: #ffffff;
 }
 QGroupBox {
@@ -933,7 +1164,7 @@ QGroupBox::title {
   font-weight: 700;
 }
 QPushButton {
-  border: 1px solid #d3dde7;
+  border: 1px solid #d8e2ea;
   border-radius: 20px;
   padding: 10px 20px;
   background: #ffffff;
@@ -969,17 +1200,26 @@ QPushButton:pressed {
 }
 QLineEdit, QSpinBox, QDateEdit, QTimeEdit, QTextEdit, QPlainTextEdit {
   border: 1px solid #d5dfe8;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 10px;
   background: #ffffff;
   selection-background-color: #155bd8;
+}
+QComboBox {
+  border: 1px solid #d5dfe8;
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: #ffffff;
+}
+QComboBox:focus {
+  border: 2px solid #23c7e8;
 }
 QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
   border: 2px solid #23c7e8;
 }
 QTableWidget {
   border: 0;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #ffffff;
   alternate-background-color: #f8fcff;
   selection-background-color: #e4f2ff;

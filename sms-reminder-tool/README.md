@@ -7,8 +7,10 @@ PySide6 desktop tool for sending one-day appointment reminders from the Open Den
 - Load Open Dental appointments by reminder date through the bridge API.
 - Show patient name, appointment time, phone, email, appointment number, and reminder status.
 - Send selected reminders or all pending reminders.
+- Auto-load appointments when the reminder date changes.
 - Daily scheduler based on the configured send time.
-- SMS template with placeholders.
+- Dedicated template management tab with country/language templates.
+- Per-appointment template selection, defaulting to the configured template.
 - Bridge-managed reminder log to prevent duplicate sends.
 - Dry-run mode for safe testing before real SMS.
 - Phone Link automation through `pywinauto` on Windows.
@@ -42,10 +44,19 @@ The bridge server handles Open Dental database access and creates/updates the `l
 2. Open the app.
 3. Set the bridge URL and API token in `Settings`.
 4. Click `Test bridge connection`.
-5. Load tomorrow's appointments.
-6. Click `Send all not sent`.
-7. Confirm the logs show `dry-run`.
-8. Turn off dry run only after confirming Phone Link is ready.
+5. Choose the reminder date. The appointment list loads automatically.
+6. Review or change the `Template` column for each patient if needed.
+7. Click `Send all not sent`.
+8. Confirm the logs show `dry-run`.
+9. Turn off dry run only after confirming Phone Link is ready.
+
+## Sending Behavior
+
+Phone Link is controlled through Windows UI automation, so this app sends reminders one by one in order. It does not send multiple SMS messages in parallel. This keeps the Phone Link window stable and records each appointment result in the bridge log before moving to the next patient.
+
+## Template Management
+
+Use the `Templates` tab to add, edit, delete, and choose the default template. The dashboard also has a `Template` column so a staff member can choose the correct language/country template for each appointment before sending.
 
 ## SMS Template Placeholders
 
