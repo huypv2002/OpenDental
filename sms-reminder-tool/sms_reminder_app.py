@@ -810,11 +810,12 @@ class SmsReminderWindow(QMainWindow):
         self.update_dry_run_badge()
         self.statusBar().showMessage(f"Loaded {len(self.appointments)} appointments for {display_date(target)}.", 4000)
 
-    def load_appointments_for_selected_date(self) -> None:
+    def load_appointments_for_selected_date(self, *_args: Any) -> None:
         if self.suppress_auto_load:
             return
         if not self.config.bridge_url or not self.config.api_token:
             return
+        self.statusBar().showMessage("Loading appointments for selected date...", 3000)
         self.load_appointments()
 
     def render_appointments(self) -> None:
