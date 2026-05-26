@@ -708,6 +708,7 @@ class SmsReminderWindow(QMainWindow):
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
         super().resizeEvent(event)
         self.update_loading_overlay_geometry()
+        self.fill_configured_tables()
 
     def update_loading_overlay_geometry(self) -> None:
         if not hasattr(self, "loading_overlay") or not hasattr(self, "appointment_table"):
@@ -752,12 +753,36 @@ class SmsReminderWindow(QMainWindow):
             table.setColumnWidth(col, max(48, int(widths.get(col, 120))))
         self._restoring_column_widths.discard(settings_key)
         header.sectionResized.connect(lambda *_args, t=table, key=settings_key: self.save_column_widths(t, key))
+        QTimer.singleShot(0, lambda t=table, key=settings_key: self.fill_table_width(t, key))
 
     def save_column_widths(self, table: QTableWidget, settings_key: str) -> None:
         if settings_key in self._restoring_column_widths:
             return
         widths = {str(col): table.columnWidth(col) for col in range(table.columnCount())}
         self.settings.setValue(settings_key, json.dumps(widths))
+
+    def fill_configured_tables(self) -> None:
+        if hasattr(self, "appointment_table"):
+            self.fill_table_width(self.appointment_table, "dashboard/appointment_column_widths")
+        if hasattr(self, "recall_table"):
+            self.fill_table_width(self.recall_table, "recall/patient_column_widths")
+
+    def fill_table_width(self, table: QTableWidget, settings_key: str) -> None:
+        viewport_width = table.viewport().width()
+        if viewport_width <= 0 or table.columnCount() == 0:
+            return
+        widths = [table.columnWidth(col) for col in range(table.columnCount())]
+        total_width = sum(widths)
+        extra = viewport_width - total_width - 2
+        if extra <= 0 or total_width <= 0:
+            return
+        self._restoring_column_widths.add(settings_key)
+        remaining = extra
+        for col, width in enumerate(widths):
+            add = remaining if col == len(widths) - 1 else int(extra * (width / total_width))
+            table.setColumnWidth(col, width + add)
+            remaining -= add
+        self._restoring_column_widths.discard(settings_key)
 
     def build_dashboard_tab(self) -> QWidget:
         page = QWidget()
