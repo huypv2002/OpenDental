@@ -76,6 +76,38 @@ DEFAULT_RECALL_TEMPLATES = {
 DEFAULT_RECALL_TEMPLATE = DEFAULT_RECALL_TEMPLATES["US"]
 
 
+class WindowsAwakeGuard:
+    ES_CONTINUOUS = 0x80000000
+    ES_SYSTEM_REQUIRED = 0x00000001
+    ES_DISPLAY_REQUIRED = 0x00000002
+
+    def __init__(self):
+        self.active = False
+
+    def enable(self) -> None:
+        if platform.system() != "Windows":
+            return
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetThreadExecutionState(
+                self.ES_CONTINUOUS | self.ES_SYSTEM_REQUIRED | self.ES_DISPLAY_REQUIRED
+            )
+            self.active = True
+        except Exception:
+            self.active = False
+
+    def disable(self) -> None:
+        if platform.system() != "Windows" or not self.active:
+            return
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetThreadExecutionState(self.ES_CONTINUOUS)
+        finally:
+            self.active = False
+
+
 def clinic_now() -> datetime:
     return datetime.now()
 
@@ -760,6 +792,7 @@ class SmsReminderWindow(QMainWindow):
         self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
         self._restoring_column_widths: set[str] = set()
+        self.awake_guard = WindowsAwakeGuard()
 
         self.setWindowTitle("LUK Dental SMS Reminder Tool")
         self.resize(1540, 920)
@@ -2269,6 +2302,7 @@ class SmsReminderWindow(QMainWindow):
         if not self.config.bridge_url or not self.config.api_token:
             QMessageBox.warning(self, "Bridge settings required", "Please set Bridge URL and API token in Settings first.")
             return
+        self.awake_guard.enable()
         self.reset_schedule_marker_for_manual_start()
         self.monitoring_active = True
         self.update_monitoring_status()
@@ -2305,9 +2339,14 @@ class SmsReminderWindow(QMainWindow):
         self.monitor_batch_active = False
         self.monitor_batch_failed = False
         self.active_schedule_key = ""
+        self.awake_guard.disable()
         self.update_monitoring_status()
         self.append_activity("Monitoring stopped.")
         self.statusBar().showMessage("Monitoring stopped.", 4000)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override name
+        self.awake_guard.disable()
+        super().closeEvent(event)
 
     def check_schedule(self) -> None:
         if not self.monitoring_active:
