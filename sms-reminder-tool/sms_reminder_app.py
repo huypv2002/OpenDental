@@ -2102,7 +2102,10 @@ class SmsReminderWindow(QMainWindow):
             result = self.repo.clear_dry_run_logs()
             reminder_count = int(result.get("reminderDryRunDeleted") or 0)
             recall_count = int(result.get("recallDryRunDeleted") or 0)
+            self.settings.remove("last_successful_schedule_run")
+            self.active_schedule_key = ""
             self.append_activity(f"Cleared dry-run logs: reminders={reminder_count}, recall={recall_count}.")
+            self.append_activity("Reset today's schedule marker so monitoring can run again.")
             QMessageBox.information(
                 self,
                 "Dry-run logs cleared",
@@ -2260,6 +2263,7 @@ class SmsReminderWindow(QMainWindow):
         if not self.config.bridge_url or not self.config.api_token:
             QMessageBox.warning(self, "Bridge settings required", "Please set Bridge URL and API token in Settings first.")
             return
+        self.reset_schedule_marker_for_manual_start()
         self.monitoring_active = True
         self.update_monitoring_status()
         self.tabs.setCurrentWidget(self.tabs.widget(0))
@@ -2271,6 +2275,22 @@ class SmsReminderWindow(QMainWindow):
             self.suppress_auto_load = False
         self.append_activity("Monitoring started. Loading first reminder target appointments.")
         self.load_appointments()
+
+    def reset_schedule_marker_for_manual_start(self) -> None:
+        now = clinic_now()
+        target_time = self.config.scheduled_send_time
+        try:
+            schedule_hour, schedule_minute = [int(part) for part in target_time.split(":", 1)]
+        except ValueError:
+            return
+        scheduled_today = now.replace(hour=schedule_hour, minute=schedule_minute, second=0, microsecond=0)
+        if now < scheduled_today:
+            return
+        now_key = f"{now.strftime('%Y-%m-%d')} {target_time}"
+        if self.settings.value("last_successful_schedule_run", "") == now_key:
+            self.settings.remove("last_successful_schedule_run")
+            self.active_schedule_key = ""
+            self.append_activity("Manual monitoring start reset today's completed marker; sent logs still prevent duplicate SMS.")
 
     def stop_monitoring(self) -> None:
         self.monitoring_active = False
