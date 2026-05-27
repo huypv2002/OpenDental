@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 import pyperclip
 import requests
@@ -54,6 +55,7 @@ FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
+CLINIC_TIME_ZONE = ZoneInfo("America/Chicago")
 DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
 SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 DEFAULT_RECALL_TEMPLATES = {
@@ -74,6 +76,19 @@ DEFAULT_RECALL_TEMPLATES = {
     ),
 }
 DEFAULT_RECALL_TEMPLATE = DEFAULT_RECALL_TEMPLATES["US"]
+
+
+def clinic_now() -> datetime:
+    return datetime.now(CLINIC_TIME_ZONE)
+
+
+def clinic_today() -> date:
+    return clinic_now().date()
+
+
+def clinic_qdate(days_ahead: int = 0) -> QDate:
+    today = clinic_today()
+    return QDate(today.year, today.month, today.day).addDays(days_ahead)
 
 
 DEFAULT_SMS_TEMPLATES = {
@@ -727,6 +742,8 @@ class SmsReminderWindow(QMainWindow):
         self.send_after_load = False
         self.monitor_send_queue: list[date] = []
         self.monitor_batch_active = False
+        self.monitor_batch_failed = False
+        self.active_schedule_key = ""
         self.monitoring_active = False
         self.row_template_combos: dict[int, QComboBox] = {}
         self.recall_template_combos: dict[int, QComboBox] = {}
@@ -888,7 +905,7 @@ class SmsReminderWindow(QMainWindow):
         controls.setContentsMargins(18, 14, 18, 14)
         controls.setSpacing(12)
         controls.addWidget(QLabel("Reminder date"))
-        self.date_edit = QDateEdit(QDate.currentDate().addDays(self.config.reminder_days_ahead))
+        self.date_edit = QDateEdit(clinic_qdate(self.config.reminder_days_ahead))
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("MM/dd/yyyy")
         self.date_edit.setMinimumWidth(150)
@@ -1579,6 +1596,12 @@ class SmsReminderWindow(QMainWindow):
                 self.process_next_monitor_target()
 
     def appointments_load_failed(self, _target: date, message: str) -> None:
+        if self.monitor_batch_active:
+            self.monitor_batch_failed = True
+            self.send_after_load = False
+            self.append_activity(f"Scheduled load failed: {message}")
+            self.process_next_monitor_target()
+            return
         QMessageBox.critical(self, "Load error", message)
 
     def appointments_load_finished(self) -> None:
@@ -1586,6 +1609,9 @@ class SmsReminderWindow(QMainWindow):
         if self.queued_load:
             self.queued_load = False
             self.load_debounce.start(50)
+            return
+        if self.monitoring_active and not self.monitor_batch_active:
+            QTimer.singleShot(0, self.check_schedule)
 
     def load_appointments_for_selected_date(self, *_args: Any) -> None:
         if self.suppress_auto_load:
@@ -2121,13 +2147,15 @@ class SmsReminderWindow(QMainWindow):
             self.preview_recall_button.setEnabled(enabled)
 
     def append_activity(self, message: str) -> None:
-        entry = f"[{datetime.now().strftime('%H:%M:%S')}] {message}"
+        entry = f"[{clinic_now().strftime('%H:%M:%S')}] {message}"
         self.activity_messages.append(entry)
         self.activity_messages = self.activity_messages[-500:]
 
     def send_finished(self, sent: int, failed: int) -> None:
         self.set_send_enabled(True)
         self.append_activity(f"Done. Sent/dry-run: {sent}. Failed: {failed}.")
+        if self.monitor_batch_active and failed:
+            self.monitor_batch_failed = True
         if self.active_send_kind == "recall":
             self.load_recall_patients()
         elif self.monitor_batch_active:
@@ -2173,7 +2201,7 @@ class SmsReminderWindow(QMainWindow):
         self.monitor_status_value.style().unpolish(self.monitor_status_value)
         self.monitor_status_value.style().polish(self.monitor_status_value)
         self.monitor_date_value.setText(
-            ", ".join(f"{display_date(target)} ({(target - date.today()).days} days ahead)" for target in targets)
+            ", ".join(f"{display_date(target)} ({(target - clinic_today()).days} days ahead)" for target in targets)
         )
         self.monitor_time_value.setText(self.config.scheduled_send_time)
         self.monitor_note_value.setText(
@@ -2184,7 +2212,7 @@ class SmsReminderWindow(QMainWindow):
         self.stop_monitoring_button.setEnabled(self.monitoring_active)
 
     def monitor_target_dates(self) -> list[date]:
-        today = QDate.currentDate()
+        today = clinic_qdate()
         offsets = [self.config.reminder_days_ahead, SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD]
         targets: list[date] = []
         seen: set[str] = set()
@@ -2218,6 +2246,8 @@ class SmsReminderWindow(QMainWindow):
         self.send_after_load = False
         self.monitor_send_queue = []
         self.monitor_batch_active = False
+        self.monitor_batch_failed = False
+        self.active_schedule_key = ""
         self.update_monitoring_status()
         self.append_activity("Monitoring stopped.")
         self.statusBar().showMessage("Monitoring stopped.", 4000)
@@ -2231,19 +2261,29 @@ class SmsReminderWindow(QMainWindow):
             return
         if self.load_worker and self.load_worker.isRunning():
             return
-        now_key = datetime.now().strftime("%Y-%m-%d %H:%M")
+        now = clinic_now()
         target_time = self.config.scheduled_send_time
-        if not now_key.endswith(f" {target_time}"):
+        try:
+            schedule_hour, schedule_minute = [int(part) for part in target_time.split(":", 1)]
+        except ValueError:
+            self.append_activity(f"Invalid scheduled send time: {target_time}")
             return
+        scheduled_today = now.replace(hour=schedule_hour, minute=schedule_minute, second=0, microsecond=0)
+        if now < scheduled_today:
+            return
+        now_key = f"{now.strftime('%Y-%m-%d')} {target_time}"
         last_run = self.settings.value("last_schedule_run", "")
         if last_run == now_key:
             return
-        self.settings.setValue("last_schedule_run", now_key)
+        if self.active_schedule_key == now_key:
+            return
+        self.active_schedule_key = now_key
         self.start_monitoring_batch()
 
     def start_monitoring_batch(self) -> None:
         self.monitor_send_queue = self.monitor_target_dates()
         self.monitor_batch_active = True
+        self.monitor_batch_failed = False
         self.append_activity(
             "Scheduled monitoring started for "
             + ", ".join(display_date(target) for target in self.monitor_send_queue)
@@ -2256,8 +2296,15 @@ class SmsReminderWindow(QMainWindow):
             return
         if not self.monitor_send_queue:
             self.monitor_batch_active = False
-            self.append_activity("Scheduled monitoring finished.")
-            self.statusBar().showMessage("Scheduled monitoring finished.", 5000)
+            if self.monitor_batch_failed:
+                self.append_activity("Scheduled monitoring finished with errors. It will retry on the next scheduler check.")
+                self.statusBar().showMessage("Scheduled monitoring finished with errors.", 5000)
+                self.active_schedule_key = ""
+            else:
+                if self.active_schedule_key:
+                    self.settings.setValue("last_schedule_run", self.active_schedule_key)
+                self.append_activity("Scheduled monitoring finished.")
+                self.statusBar().showMessage("Scheduled monitoring finished.", 5000)
             return
         target = self.monitor_send_queue.pop(0)
         try:
