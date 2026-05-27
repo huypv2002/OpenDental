@@ -291,6 +291,21 @@ export async function logSmsRecallResult(body) {
   return { patNum, phone, status };
 }
 
+export async function clearSmsDryRunLogs() {
+  await ensureSmsReminderLogTable();
+  await ensureSmsRecallLogTable();
+  const [reminderResult] = await pool.execute(
+    `DELETE FROM ${LOG_TABLE} WHERE Status = 'dry-run'`
+  );
+  const [recallResult] = await pool.execute(
+    `DELETE FROM ${RECALL_LOG_TABLE} WHERE Status = 'dry-run'`
+  );
+  return {
+    reminderDryRunDeleted: reminderResult.affectedRows ?? 0,
+    recallDryRunDeleted: recallResult.affectedRows ?? 0
+  };
+}
+
 export async function logSmsReminderResult(body) {
   await ensureSmsReminderLogTable();
   const aptNum = Number.parseInt(String(body.aptNum ?? ''), 10);

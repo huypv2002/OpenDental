@@ -12,7 +12,6 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
-from zoneinfo import ZoneInfo
 
 import pyperclip
 import requests
@@ -55,7 +54,6 @@ FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
-CLINIC_TIME_ZONE = ZoneInfo("America/Chicago")
 DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
 SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 DEFAULT_RECALL_TEMPLATES = {
@@ -79,7 +77,7 @@ DEFAULT_RECALL_TEMPLATE = DEFAULT_RECALL_TEMPLATES["US"]
 
 
 def clinic_now() -> datetime:
-    return datetime.now(CLINIC_TIME_ZONE)
+    return datetime.now()
 
 
 def clinic_today() -> date:
@@ -248,7 +246,7 @@ class AppConfig:
     scheduled_send_time: str = "11:00"
     appointment_statuses: list[int] = field(default_factory=lambda: [1])
     fallback_duration_minutes: int = 30
-    dry_run: bool = True
+    dry_run: bool = False
     scheduler_enabled: bool = True
     default_template_key: str = "US"
     sms_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SMS_TEMPLATES))
@@ -271,6 +269,7 @@ class AppConfig:
             defaults = asdict(cls())
             known = {key: value for key, value in raw.items() if key in defaults}
             cfg = cls(**{**defaults, **known})
+            cfg.dry_run = False
             if not cfg.sms_templates:
                 cfg.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
             if not cfg.sms_template_countries:
@@ -315,6 +314,7 @@ class AppConfig:
             api_token=os.getenv("API_TOKEN", defaults.api_token),
             clinic_name=os.getenv("CLINIC_NAME", defaults.clinic_name),
         )
+        cfg.dry_run = False
         cfg.save()
         return cfg
 
@@ -414,6 +414,9 @@ class BridgeClient:
     def fetch_recent_logs(self, limit: int = 200) -> list[dict[str, Any]]:
         data = self.request("GET", "/api/sms-reminders/logs", params={"limit": limit})
         return data.get("logs") or []
+
+    def clear_dry_run_logs(self) -> dict[str, Any]:
+        return self.request("POST", "/api/sms-reminders/clear-dry-run")
 
 
 class PhoneLinkSender:
@@ -925,9 +928,12 @@ class SmsReminderWindow(QMainWindow):
         self.open_phone_button.clicked.connect(self.open_phone_link)
         self.test_sms_button = QPushButton("Send test SMS now")
         self.test_sms_button.clicked.connect(self.send_test_sms_now)
+        self.clear_dry_run_button = QPushButton("Clear dry-run logs")
+        self.clear_dry_run_button.clicked.connect(self.clear_dry_run_logs)
         controls.addWidget(self.preview_button)
         controls.addWidget(self.open_phone_button)
         controls.addWidget(self.test_sms_button)
+        controls.addWidget(self.clear_dry_run_button)
         controls.addWidget(self.send_selected_button)
         controls.addWidget(self.send_all_button)
         layout.addWidget(controls_card)
@@ -1016,15 +1022,13 @@ class SmsReminderWindow(QMainWindow):
         self.days_ahead.setValue(self.config.reminder_days_ahead)
         self.schedule_time = QTimeEdit(QTime.fromString(self.config.scheduled_send_time, "HH:mm"))
         self.schedule_time.setDisplayFormat("HH:mm")
-        self.dry_run = QCheckBox("Dry run only, do not send real SMS")
-        self.dry_run.setChecked(self.config.dry_run)
         self.statuses = QLineEdit(",".join(str(item) for item in self.config.appointment_statuses))
         sms_form.addRow("Clinic name", self.clinic_name)
         sms_form.addRow("Clinic phone", self.clinic_phone)
         sms_form.addRow("Reminder days ahead", self.days_ahead)
         sms_form.addRow("Daily send time", self.schedule_time)
         sms_form.addRow("Appointment statuses", self.statuses)
-        sms_form.addRow("", self.dry_run)
+        sms_form.addRow("Send mode", QLabel("REAL SMS only. Dry-run mode is disabled."))
 
         buttons = QHBoxLayout()
         self.test_bridge_button = QPushButton("Test bridge connection")
@@ -1542,7 +1546,7 @@ class SmsReminderWindow(QMainWindow):
         self.config.reminder_days_ahead = self.days_ahead.value()
         self.config.scheduled_send_time = self.schedule_time.time().toString("HH:mm")
         self.config.appointment_statuses = statuses or [1]
-        self.config.dry_run = self.dry_run.isChecked()
+        self.config.dry_run = False
         if hasattr(self, "recall_codes"):
             self.config.recall_codes = self.recall_codes.text().strip() or DEFAULT_RECALL_CODES
         if hasattr(self, "recall_months"):
@@ -2086,6 +2090,31 @@ class SmsReminderWindow(QMainWindow):
             self.append_activity(f"TEST FAILED: {phone} -> {exc}")
             QMessageBox.critical(self, "Test SMS failed", str(exc))
 
+    def clear_dry_run_logs(self) -> None:
+        confirm = QMessageBox.question(
+            self,
+            "Clear dry-run logs?",
+            "This removes dry-run reminder logs from the bridge database so those appointments can be sent as real SMS.\n\nContinue?",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        try:
+            result = self.repo.clear_dry_run_logs()
+            reminder_count = int(result.get("reminderDryRunDeleted") or 0)
+            recall_count = int(result.get("recallDryRunDeleted") or 0)
+            self.append_activity(f"Cleared dry-run logs: reminders={reminder_count}, recall={recall_count}.")
+            QMessageBox.information(
+                self,
+                "Dry-run logs cleared",
+                f"Removed {reminder_count} appointment reminder dry-run log(s) and {recall_count} recall dry-run log(s).",
+            )
+            self.load_appointments()
+            if hasattr(self, "recall_table"):
+                self.load_recall_patients()
+        except Exception as exc:  # noqa: BLE001
+            self.append_activity(f"Clear dry-run failed: {exc}")
+            QMessageBox.critical(self, "Clear dry-run failed", str(exc))
+
     def send_all_not_sent(self, silent: bool = False, confirm_real: bool = True) -> bool:
         pending = [
             self.appointment_with_template(row_index)
@@ -2141,6 +2170,8 @@ class SmsReminderWindow(QMainWindow):
         self.preview_button.setEnabled(enabled)
         self.open_phone_button.setEnabled(enabled)
         self.test_sms_button.setEnabled(enabled)
+        if hasattr(self, "clear_dry_run_button"):
+            self.clear_dry_run_button.setEnabled(enabled)
         if hasattr(self, "fill_recall_button"):
             self.fill_recall_button.setEnabled(enabled)
         if hasattr(self, "preview_recall_button"):

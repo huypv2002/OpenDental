@@ -19,6 +19,7 @@ import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
 import { exportAppointmentReport, parseAppointmentReportBody } from './reports.js';
 import {
+  clearSmsDryRunLogs,
   getSmsRecallCandidates,
   getSmsReminderAppointments,
   getSmsReminderLogs,
@@ -213,6 +214,15 @@ app.post('/api/sms-reminders/recall-log', requireApiToken, async (req, res, next
 app.post('/api/sms-reminders/log', requireApiToken, async (req, res, next) => {
   try {
     const data = await logSmsReminderResult(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/sms-reminders/clear-dry-run', requireApiToken, async (_req, res, next) => {
+  try {
+    const data = await clearSmsDryRunLogs();
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
