@@ -2272,7 +2272,7 @@ class SmsReminderWindow(QMainWindow):
         if now < scheduled_today:
             return
         now_key = f"{now.strftime('%Y-%m-%d')} {target_time}"
-        last_run = self.settings.value("last_schedule_run", "")
+        last_run = self.settings.value("last_successful_schedule_run", "")
         if last_run == now_key:
             return
         if self.active_schedule_key == now_key:
@@ -2302,7 +2302,7 @@ class SmsReminderWindow(QMainWindow):
                 self.active_schedule_key = ""
             else:
                 if self.active_schedule_key:
-                    self.settings.setValue("last_schedule_run", self.active_schedule_key)
+                    self.settings.setValue("last_successful_schedule_run", self.active_schedule_key)
                 self.append_activity("Scheduled monitoring finished.")
                 self.statusBar().showMessage("Scheduled monitoring finished.", 5000)
             return
