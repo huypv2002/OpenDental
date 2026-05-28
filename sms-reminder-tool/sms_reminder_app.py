@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -56,6 +56,7 @@ BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
 DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
 SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
+SCHEDULE_SEND_GRACE_MINUTES = 30
 DEFAULT_RECALL_TEMPLATES = {
     "US": (
         "Good morning {first_name}, this is Luk Dental. Your 6-month cleaning recall is due. "
@@ -2246,7 +2247,8 @@ class SmsReminderWindow(QMainWindow):
         self.monitor_time_value.setText(self.config.scheduled_send_time)
         self.monitor_note_value.setText(
             "When monitoring is running, the app waits for the daily send time. "
-            "At that time it sends pending SMS reminders for tomorrow's patients and patients with appointments 8 days away."
+            "At that time it sends pending SMS reminders for tomorrow's patients and patients with appointments 8 days away. "
+            f"It will only send within {SCHEDULE_SEND_GRACE_MINUTES} minutes after the configured time."
         )
         self.start_monitoring_button.setEnabled(not self.monitoring_active)
         self.stop_monitoring_button.setEnabled(self.monitoring_active)
@@ -2269,7 +2271,6 @@ class SmsReminderWindow(QMainWindow):
         if not self.config.bridge_url or not self.config.api_token:
             QMessageBox.warning(self, "Bridge settings required", "Please set Bridge URL and API token in Settings first.")
             return
-        self.reset_schedule_marker_for_manual_start()
         self.monitoring_active = True
         self.update_monitoring_status()
         self.tabs.setCurrentWidget(self.tabs.widget(0))
@@ -2283,6 +2284,9 @@ class SmsReminderWindow(QMainWindow):
         self.load_appointments()
 
     def reset_schedule_marker_for_manual_start(self) -> None:
+        # Kept for older settings migrations/debugging. Monitoring start should not clear
+        # today's completed marker automatically, otherwise restarting the tool after
+        # the send time can trigger duplicate SMS.
         now = clinic_now()
         target_time = self.config.scheduled_send_time
         try:
@@ -2290,7 +2294,7 @@ class SmsReminderWindow(QMainWindow):
         except ValueError:
             return
         scheduled_today = now.replace(hour=schedule_hour, minute=schedule_minute, second=0, microsecond=0)
-        if now < scheduled_today:
+        if now < scheduled_today or now > scheduled_today + timedelta(minutes=SCHEDULE_SEND_GRACE_MINUTES):
             return
         now_key = f"{now.strftime('%Y-%m-%d')} {target_time}"
         if self.settings.value("last_successful_schedule_run", "") == now_key:
@@ -2327,6 +2331,9 @@ class SmsReminderWindow(QMainWindow):
             return
         scheduled_today = now.replace(hour=schedule_hour, minute=schedule_minute, second=0, microsecond=0)
         if now < scheduled_today:
+            return
+        send_window_ends = scheduled_today + timedelta(minutes=SCHEDULE_SEND_GRACE_MINUTES)
+        if now > send_window_ends:
             return
         now_key = f"{now.strftime('%Y-%m-%d')} {target_time}"
         last_run = self.settings.value("last_successful_schedule_run", "")
