@@ -310,6 +310,7 @@ class AppConfig:
     recall_template: str = DEFAULT_RECALL_TEMPLATE
     recall_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_RECALL_TEMPLATES))
     recall_template_countries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TEMPLATE_COUNTRIES))
+    template_schema_version: int = 2
     sms_template: str = (
         "Hi {first_name}, this is {clinic_name} reminding you of your appointment "
         "on {date} at {time}. Please call {clinic_phone} if you need to change anything."
@@ -338,17 +339,31 @@ class AppConfig:
             if "sms_template" in raw and raw.get("sms_template") and not raw.get("sms_templates"):
                 cfg.sms_templates["US"] = str(raw["sms_template"])
                 cfg.sms_template_countries["US"] = "US"
+            migrated = False
             if cfg.scheduled_send_time == "09:00":
                 cfg.scheduled_send_time = "11:00"
+                migrated = True
             for key, legacy_text in LEGACY_SMS_TEMPLATES.items():
                 if cfg.sms_templates.get(key) == legacy_text:
                     cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
+                    migrated = True
             for key, outdated_texts in OUTDATED_DEFAULT_SMS_TEMPLATES.items():
                 if cfg.sms_templates.get(key) in outdated_texts:
                     cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
+                    migrated = True
             for key, outdated_texts in OUTDATED_DEFAULT_RECALL_TEMPLATES.items():
                 if cfg.recall_templates.get(key) in outdated_texts:
                     cfg.recall_templates[key] = DEFAULT_RECALL_TEMPLATES[key]
+                    migrated = True
+            if int(raw.get("template_schema_version") or 0) < 2:
+                for key, text in DEFAULT_SMS_TEMPLATES.items():
+                    cfg.sms_templates[key] = text
+                    cfg.sms_template_countries[key] = DEFAULT_TEMPLATE_COUNTRIES[key]
+                for key, text in DEFAULT_RECALL_TEMPLATES.items():
+                    cfg.recall_templates[key] = text
+                    cfg.recall_template_countries[key] = DEFAULT_TEMPLATE_COUNTRIES[key]
+                cfg.template_schema_version = 2
+                migrated = True
             for key in cfg.sms_templates:
                 cfg.sms_template_countries.setdefault(key, infer_template_country(key))
             for key in cfg.recall_templates:
@@ -356,12 +371,16 @@ class AppConfig:
             if "US" not in cfg.sms_templates:
                 cfg.sms_templates["US"] = DEFAULT_SMS_TEMPLATES["US"]
                 cfg.sms_template_countries["US"] = "US"
+                migrated = True
             if "US" not in cfg.recall_templates:
                 cfg.recall_templates["US"] = DEFAULT_RECALL_TEMPLATES["US"]
                 cfg.recall_template_countries["US"] = "US"
+                migrated = True
             cfg.default_template_key = "US"
             cfg.sms_template = default_template(cfg)
             cfg.recall_template = cfg.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            if migrated:
+                cfg.save()
             return cfg
         if BRIDGE_ENV_PATH.exists():
             load_dotenv(BRIDGE_ENV_PATH)
