@@ -12,14 +12,33 @@ set "LOCK_TIME=11:05"
 
 set "TASK_PREFIX=LUK Dental SMS"
 set "THIS_FILE=%~f0"
+set "AUTOLOGON_EXE=%~dp0Autologon64.exe"
 
 echo Creating LUK Dental SMS scheduled tasks...
 echo.
 echo IMPORTANT:
-echo - Auto-login is not stored in this script for security.
-echo - Configure Windows auto-login separately if the machine must restart unattended.
+echo - This setup needs Microsoft Sysinternals Autologon64.exe in this folder.
+echo - The password is NOT saved in this .bat file.
+echo - Autologon stores it using Windows/Sysinternals secure storage.
 echo - Phone Link SMS automation needs an unlocked desktop session after restart.
 echo.
+
+if not exist "%AUTOLOGON_EXE%" (
+  echo Missing: %AUTOLOGON_EXE%
+  echo.
+  echo Download Microsoft Sysinternals Autologon:
+  echo https://learn.microsoft.com/sysinternals/downloads/autologon
+  echo.
+  echo Extract Autologon64.exe into this same sms-reminder-tool folder, then run scheduler-on.bat again as Administrator.
+  pause
+  exit /b 1
+)
+
+set /p "AUTO_USER=Windows username for auto-login: "
+set /p "AUTO_DOMAIN=Computer/domain name [press Enter for %COMPUTERNAME%]: "
+if "%AUTO_DOMAIN%"=="" set "AUTO_DOMAIN=%COMPUTERNAME%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$password = Read-Host 'Windows password for auto-login' -AsSecureString; $plain = [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)); Start-Process -FilePath '%AUTOLOGON_EXE%' -ArgumentList @('%AUTO_USER%','%AUTO_DOMAIN%',$plain) -Wait; $plain = $null"
+if errorlevel 1 goto :error
 
 schtasks /Create /TN "%TASK_PREFIX% - Daily Restart" /SC DAILY /ST %RESTART_TIME% /TR "shutdown.exe /r /t 0" /RL HIGHEST /F
 if errorlevel 1 goto :error
