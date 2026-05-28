@@ -736,16 +736,7 @@ def patient_salutation(row: dict[str, Any], country: str = "US") -> str:
     country = country.upper()
 
     if country in {"VI", "VN"}:
-        if age is not None and age < 18:
-            title = "em"
-        elif age is not None and age < 45:
-            title = "bạn"
-        elif gender == "male":
-            title = "chú"
-        elif gender == "female":
-            title = "cô"
-        else:
-            title = "cô/chú"
+        title = vietnamese_title(row)
         return f"{title} {first_name}".strip()
 
     if country == "ES":
@@ -769,7 +760,7 @@ def patient_salutation(row: dict[str, Any], country: str = "US") -> str:
 def vietnamese_title(row: dict[str, Any]) -> str:
     age = patient_age(row)
     gender = patient_gender(row)
-    if age is not None and age < 18:
+    if age is not None and age <= 25:
         return "em"
     if age is not None and age < 45:
         return "bạn"
