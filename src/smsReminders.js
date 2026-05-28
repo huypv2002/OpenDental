@@ -158,6 +158,7 @@ export async function getSmsReminderAppointments(query) {
         p.WkPhone,
         p.Email,
         p.Language,
+        p.Gender,
         DATE_FORMAT(p.Birthdate, '%Y-%m-%d') AS Birthdate
       FROM appointment a
       INNER JOIN patient p ON p.PatNum = a.PatNum
@@ -205,6 +206,7 @@ export async function getSmsRecallCandidates(query = {}) {
         p.WkPhone,
         p.Email,
         p.Language,
+        p.Gender,
         DATE_FORMAT(MAX(pl.ProcDate), '%Y-%m-%d') AS LastProcDate,
         GROUP_CONCAT(DISTINCT pc.ProcCode ORDER BY pc.ProcCode SEPARATOR ', ') AS ProcedureCodes,
         COALESCE(rl.RecallSentCount, 0) AS RecallSentCount,
@@ -233,6 +235,7 @@ export async function getSmsRecallCandidates(query = {}) {
         p.WkPhone,
         p.Email,
         p.Language,
+        p.Gender,
         rl.RecallSentCount,
         rl.LastRecallSentAt
       HAVING MAX(pl.ProcDate) <= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
@@ -303,6 +306,39 @@ export async function clearSmsDryRunLogs() {
   return {
     reminderDryRunDeleted: reminderResult.affectedRows ?? 0,
     recallDryRunDeleted: recallResult.affectedRows ?? 0
+  };
+}
+
+export async function resetSmsReminderLog(body) {
+  await ensureSmsReminderLogTable();
+  const aptNum = Number.parseInt(String(body.aptNum ?? ''), 10);
+  const reminderForDate = parseDate(body.reminderForDate);
+  const reminderOffsetDays = Math.max(0, Number.parseInt(String(body.reminderOffsetDays ?? '1'), 10) || 1);
+  const phone = String(body.phone ?? '').trim();
+
+  if (!Number.isInteger(aptNum) || !phone) {
+    const error = new Error('aptNum, reminderForDate, and phone are required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const [result] = await pool.execute(
+    `
+      DELETE FROM ${LOG_TABLE}
+      WHERE AptNum = ?
+        AND ReminderForDate = ?
+        AND ReminderOffsetDays = ?
+        AND Phone = ?
+    `,
+    [aptNum, reminderForDate, reminderOffsetDays, phone]
+  );
+
+  return {
+    aptNum,
+    reminderForDate,
+    reminderOffsetDays,
+    phone,
+    deleted: result.affectedRows ?? 0
   };
 }
 

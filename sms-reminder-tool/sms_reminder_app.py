@@ -59,22 +59,45 @@ SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 SCHEDULE_SEND_GRACE_MINUTES = 30
 DEFAULT_RECALL_TEMPLATES = {
     "US": (
-        "Good morning {first_name}, this is Luk Dental. Your 6-month cleaning recall is due. "
+        "Good morning {salutation}, this is Luk Dental. Your 6-month cleaning recall is due. "
         "Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ "
         "to schedule your appointment. Thank you and have a great day."
     ),
     "ES": (
-        "Buenos días {first_name}, le habla Luk Dental. Ya llegó el momento de su limpieza "
+        "Buenos días {salutation}, le habla Luk Dental. Ya llegó el momento de su limpieza "
         "de 6 meses. Por favor llame al {clinic_phone} o haga su cita en "
         "https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día."
     ),
     "VI": (
-        "Good morning anh/chị {first_name}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng "
-        "của anh/chị đã đến. Anh/chị vui lòng gọi {clinic_phone} hoặc đặt lịch tại "
+        "Good morning {salutation}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng "
+        "của {salutation} đã đến. {salutation} vui lòng gọi {clinic_phone} hoặc đặt lịch tại "
         "https://lukdental.us/dental-appointment/. Thank you and have a great day."
     ),
 }
 DEFAULT_RECALL_TEMPLATE = DEFAULT_RECALL_TEMPLATES["US"]
+OUTDATED_DEFAULT_RECALL_TEMPLATES = {
+    "US": [
+        (
+            "Good morning {first_name}, this is Luk Dental. Your 6-month cleaning recall is due. "
+            "Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ "
+            "to schedule your appointment. Thank you and have a great day."
+        ),
+    ],
+    "ES": [
+        (
+            "Buenos días {first_name}, le habla Luk Dental. Ya llegó el momento de su limpieza "
+            "de 6 meses. Por favor llame al {clinic_phone} o haga su cita en "
+            "https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día."
+        ),
+    ],
+    "VI": [
+        (
+            "Good morning anh/chị {first_name}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng "
+            "của anh/chị đã đến. Anh/chị vui lòng gọi {clinic_phone} hoặc đặt lịch tại "
+            "https://lukdental.us/dental-appointment/. Thank you and have a great day."
+        ),
+    ],
+}
 
 
 def clinic_now() -> datetime:
@@ -92,19 +115,19 @@ def clinic_qdate(days_ahead: int = 0) -> QDate:
 
 DEFAULT_SMS_TEMPLATES = {
     "US": (
-        "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you "
+        "Good morning {salutation}, I'm Nhan Nguyen from Luk Dental. I just remind you "
         "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
         "Thank you and have a great day."
     ),
     "ES": (
-        "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
+        "Buenos días {salutation}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
         "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
         "Gracias y que tenga un excelente día."
     ),
     "VI": (
-        "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị "
+        "Good morning {salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {salutation} "
         "vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. "
-        "Thank you and have a great day anh/chị."
+        "Thank you and have a great day."
     ),
 }
 
@@ -112,11 +135,26 @@ OUTDATED_DEFAULT_SMS_TEMPLATES = {
     "US": [
         (
             "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you "
+            "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
+            "Thank you and have a great day."
+        ),
+        (
+            "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you "
+            "of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. "
+            "Thank you and have a great day."
+        ),
+        (
+            "Good morning {salutation}, I'm Nhan Nguyen from Luk Dental. I just remind you "
             "of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. "
             "Thank you and have a great day."
         ),
     ],
     "ES": [
+        (
+            "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
+            "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
+            "Gracias y que tenga un excelente día."
+        ),
         (
             "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
             "su cita de mañana, {weekday}, {date_full} a las {time_lower}. "
@@ -126,8 +164,18 @@ OUTDATED_DEFAULT_SMS_TEMPLATES = {
     "VI": [
         (
             "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị "
+            "vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. "
+            "Thank you and have a great day anh/chị."
+        ),
+        (
+            "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị "
             "vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. "
             "Thank you and have a great day anh/chị."
+        ),
+        (
+            "Good morning {salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {salutation} "
+            "vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. "
+            "Thank you and have a great day."
         ),
     ],
 }
@@ -293,6 +341,9 @@ class AppConfig:
             for key, outdated_texts in OUTDATED_DEFAULT_SMS_TEMPLATES.items():
                 if cfg.sms_templates.get(key) in outdated_texts:
                     cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
+            for key, outdated_texts in OUTDATED_DEFAULT_RECALL_TEMPLATES.items():
+                if cfg.recall_templates.get(key) in outdated_texts:
+                    cfg.recall_templates[key] = DEFAULT_RECALL_TEMPLATES[key]
             for key in cfg.sms_templates:
                 cfg.sms_template_countries.setdefault(key, infer_template_country(key))
             for key in cfg.recall_templates:
@@ -418,6 +469,19 @@ class BridgeClient:
 
     def clear_dry_run_logs(self) -> dict[str, Any]:
         return self.request("POST", "/api/sms-reminders/clear-dry-run")
+
+    def reset_reminder_log(self, appointment: dict[str, Any], phone: str) -> dict[str, Any]:
+        apt_time = parse_datetime(appointment.get("AptDateTime"))
+        return self.request(
+            "POST",
+            "/api/sms-reminders/reset-log",
+            json={
+                "aptNum": appointment["AptNum"],
+                "phone": phone,
+                "reminderForDate": apt_time.date().isoformat(),
+                "reminderOffsetDays": reminder_offset_days(appointment),
+            },
+        )
 
 
 class PhoneLinkSender:
@@ -640,6 +704,63 @@ def patient_name(row: dict[str, Any]) -> str:
     return " ".join(str(row.get(key) or "").strip() for key in ("FName", "LName")).strip() or f"Patient #{row.get('PatNum', '')}"
 
 
+def patient_age(row: dict[str, Any]) -> int | None:
+    try:
+        birthdate = datetime.fromisoformat(str(row.get("Birthdate"))[:10]).date()
+    except (TypeError, ValueError):
+        return None
+    today = clinic_today()
+    return today.year - birthdate.year - ((today.month, today.day) < (birthdate.month, birthdate.day))
+
+
+def patient_gender(row: dict[str, Any]) -> str:
+    raw = str(row.get("Gender") or "").strip().lower()
+    if raw in {"0", "male", "m"}:
+        return "male"
+    if raw in {"1", "female", "f"}:
+        return "female"
+    return "unknown"
+
+
+def patient_salutation(row: dict[str, Any], country: str = "US") -> str:
+    first_name = str(row.get("FName") or "").strip()
+    last_name = str(row.get("LName") or "").strip()
+    fallback = first_name or patient_name(row)
+    age = patient_age(row)
+    gender = patient_gender(row)
+    country = country.upper()
+
+    if country in {"VI", "VN"}:
+        if age is not None and age < 18:
+            title = "em"
+        elif age is not None and age < 45:
+            title = "bạn"
+        elif gender == "male":
+            title = "chú"
+        elif gender == "female":
+            title = "cô"
+        else:
+            title = "cô/chú"
+        return f"{title} {first_name}".strip()
+
+    if country == "ES":
+        if age is not None and age < 18:
+            return fallback
+        if gender == "male":
+            return f"Sr. {last_name or first_name}".strip()
+        if gender == "female":
+            return f"Sra. {last_name or first_name}".strip()
+        return fallback
+
+    if age is not None and age < 18:
+        return fallback
+    if gender == "male":
+        return f"Mr. {last_name or first_name}".strip()
+    if gender == "female":
+        return f"Ms. {last_name or first_name}".strip()
+    return fallback
+
+
 def default_template(config: AppConfig) -> str:
     if config.default_template_key in config.sms_templates:
         return config.sms_templates[config.default_template_key]
@@ -713,12 +834,15 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
     first_name = str(row.get("FName") or "").strip() or "there"
     formatted_time = display_time(apt_time)
     relative_day, relative_day_es, relative_day_vi = relative_day_labels(reminder_offset_days(row))
+    country = str(row.get("_TemplateCountry") or template_country(config, row.get("_TemplateKey") or config.default_template_key)).upper()
     return template.format(
         clinic_name=config.clinic_name,
         clinic_phone=config.clinic_phone,
         first_name=first_name,
         last_name=str(row.get("LName") or "").strip(),
         patient_name=patient_name(row),
+        salutation=patient_salutation(row, country),
+        age=patient_age(row) or "",
         date=display_date(apt_time),
         date_full=display_date(apt_time),
         date_short=display_date_short(apt_time),
@@ -937,10 +1061,13 @@ class SmsReminderWindow(QMainWindow):
         self.test_sms_button.clicked.connect(self.send_test_sms_now)
         self.clear_dry_run_button = QPushButton("Clear dry-run logs")
         self.clear_dry_run_button.clicked.connect(self.clear_dry_run_logs)
+        self.reset_selected_button = QPushButton("Reset selected to not sent")
+        self.reset_selected_button.clicked.connect(self.reset_selected_to_not_sent)
         controls.addWidget(self.preview_button)
         controls.addWidget(self.open_phone_button)
         controls.addWidget(self.test_sms_button)
         controls.addWidget(self.clear_dry_run_button)
+        controls.addWidget(self.reset_selected_button)
         controls.addWidget(self.send_selected_button)
         controls.addWidget(self.send_all_button)
         layout.addWidget(controls_card)
@@ -1252,7 +1379,7 @@ class SmsReminderWindow(QMainWindow):
         template_layout.addWidget(self.template_country_select, 1, 3)
         template_layout.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
         template_layout.addWidget(self.template_text, 2, 1, 1, 3)
-        helper = QLabel("Placeholders: {first_name}, {last_name}, {patient_name}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
+        helper = QLabel("Placeholders: {salutation}, {first_name}, {last_name}, {patient_name}, {age}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
         helper.setObjectName("Muted")
         helper.setWordWrap(True)
         template_layout.addWidget(helper, 3, 1, 1, 3)
@@ -1515,7 +1642,7 @@ class SmsReminderWindow(QMainWindow):
         form.addWidget(country_select, 1, 3)
         form.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
         form.addWidget(text, 2, 1, 1, 3)
-        helper = QLabel("Placeholders: {first_name}, {last_name}, {patient_name}, {last_proc_date}, {procedure_codes}, {clinic_phone}")
+        helper = QLabel("Placeholders: {salutation}, {first_name}, {last_name}, {patient_name}, {age}, {last_proc_date}, {procedure_codes}, {clinic_phone}")
         helper.setObjectName("Muted")
         helper.setWordWrap(True)
         form.addWidget(helper, 3, 1, 1, 3)
@@ -1785,6 +1912,7 @@ class SmsReminderWindow(QMainWindow):
             key = str(combo.currentData() or patient.get("_TemplateKey") or "US") if combo else str(patient.get("_TemplateKey") or "US")
             patient["_TemplateKey"] = key
             patient["_TemplateText"] = self.config.recall_templates.get(key) or DEFAULT_RECALL_TEMPLATE
+            patient["_TemplateCountry"] = str(self.config.recall_template_countries.get(key) or infer_template_country(key)).upper()
             selected.append(patient)
         return selected
 
@@ -1949,6 +2077,7 @@ class SmsReminderWindow(QMainWindow):
         key = str(combo.currentData() or self.config.default_template_key) if combo else self.config.default_template_key
         appointment["_TemplateKey"] = key
         appointment["_TemplateText"] = self.config.sms_templates.get(key) or default_template(self.config)
+        appointment["_TemplateCountry"] = template_country(self.config, key)
         return appointment
 
     def apply_appointment_filter(self) -> None:
@@ -1977,8 +2106,16 @@ class SmsReminderWindow(QMainWindow):
             self.appointment_table.setRowHidden(row_index, bool(query and query not in haystack))
 
     def selected_appointments(self) -> list[dict[str, Any]]:
-        rows = sorted({index.row() for index in self.appointment_table.selectedIndexes()})
-        return [self.appointment_with_template(row) for row in rows]
+        rows = {index.row() for index in self.appointment_table.selectedIndexes()}
+        current_row = self.appointment_table.currentRow()
+        if current_row >= 0:
+            rows.add(current_row)
+        focus_widget = QApplication.focusWidget()
+        for row, combo in self.row_template_combos.items():
+            if focus_widget is combo or (focus_widget and combo.isAncestorOf(focus_widget)):
+                rows.add(row)
+        rows = {row for row in rows if 0 <= row < len(self.appointments) and not self.appointment_table.isRowHidden(row)}
+        return [self.appointment_with_template(row) for row in sorted(rows)]
 
     def send_selected(self) -> None:
         selected = self.selected_appointments()
@@ -1986,6 +2123,39 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.information(self, "No selection", "Please select at least one appointment.")
             return
         self.start_send(selected)
+
+    def reset_selected_to_not_sent(self) -> None:
+        selected = self.selected_appointments()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select at least one appointment to reset.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Reset selected SMS status?",
+            "This will remove sent/failed SMS logs for the selected appointment row(s), so they can be sent again.\n\nContinue?",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        reset_count = 0
+        try:
+            for appointment in selected:
+                targets = [
+                    target for target in appointment.get("PhoneTargets", [])
+                    if digits_only(target.get("phone", "")) and target.get("status")
+                ]
+                if not targets and digits_only(appointment.get("Phone", "")):
+                    targets = [{"phone": appointment.get("Phone", "")}]
+                for target in targets:
+                    result = self.repo.reset_reminder_log(appointment, target.get("phone", ""))
+                    reset_count += int(result.get("deleted") or 0)
+            self.settings.remove("last_successful_schedule_run")
+            self.active_schedule_key = ""
+            self.append_activity(f"Reset selected SMS logs: {reset_count} row(s).")
+            QMessageBox.information(self, "Reset complete", f"Reset {reset_count} SMS log row(s).")
+            self.load_appointments()
+        except Exception as exc:  # noqa: BLE001
+            self.append_activity(f"Reset selected failed: {exc}")
+            QMessageBox.critical(self, "Reset failed", str(exc))
 
     def preview_selected(self) -> None:
         selected = self.selected_appointments()
@@ -2182,6 +2352,8 @@ class SmsReminderWindow(QMainWindow):
         self.test_sms_button.setEnabled(enabled)
         if hasattr(self, "clear_dry_run_button"):
             self.clear_dry_run_button.setEnabled(enabled)
+        if hasattr(self, "reset_selected_button"):
+            self.reset_selected_button.setEnabled(enabled)
         if hasattr(self, "fill_recall_button"):
             self.fill_recall_button.setEnabled(enabled)
         if hasattr(self, "preview_recall_button"):

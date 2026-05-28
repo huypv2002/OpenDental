@@ -24,7 +24,8 @@ import {
   getSmsReminderAppointments,
   getSmsReminderLogs,
   logSmsRecallResult,
-  logSmsReminderResult
+  logSmsReminderResult,
+  resetSmsReminderLog
 } from './smsReminders.js';
 import { getAvailableSlots, getAvailableSlotsRange, getReferenceData, parseSlotQuery, parseSlotRangeQuery } from './slots.js';
 
@@ -223,6 +224,15 @@ app.post('/api/sms-reminders/log', requireApiToken, async (req, res, next) => {
 app.post('/api/sms-reminders/clear-dry-run', requireApiToken, async (_req, res, next) => {
   try {
     const data = await clearSmsDryRunLogs();
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/sms-reminders/reset-log', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await resetSmsReminderLog(req.body ?? {});
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
