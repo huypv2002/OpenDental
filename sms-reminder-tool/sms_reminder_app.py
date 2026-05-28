@@ -69,8 +69,8 @@ DEFAULT_RECALL_TEMPLATES = {
         "https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día."
     ),
     "VI": (
-        "Good morning {salutation}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng "
-        "của {salutation} đã đến. {salutation} vui lòng gọi {clinic_phone} hoặc đặt lịch tại "
+        "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng "
+        "của {vi_title} đã đến. {vi_title_cap} vui lòng gọi {clinic_phone} hoặc đặt lịch tại "
         "https://lukdental.us/dental-appointment/. Thank you and have a great day."
     ),
 }
@@ -125,7 +125,7 @@ DEFAULT_SMS_TEMPLATES = {
         "Gracias y que tenga un excelente día."
     ),
     "VI": (
-        "Good morning {salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {salutation} "
+        "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {vi_title} "
         "vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. "
         "Thank you and have a great day."
     ),
@@ -175,6 +175,11 @@ OUTDATED_DEFAULT_SMS_TEMPLATES = {
         (
             "Good morning {salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {salutation} "
             "vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. "
+            "Thank you and have a great day."
+        ),
+        (
+            "Good morning {salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {salutation} "
+            "vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. "
             "Thank you and have a great day."
         ),
     ],
@@ -761,6 +766,25 @@ def patient_salutation(row: dict[str, Any], country: str = "US") -> str:
     return fallback
 
 
+def vietnamese_title(row: dict[str, Any]) -> str:
+    age = patient_age(row)
+    gender = patient_gender(row)
+    if age is not None and age < 18:
+        return "em"
+    if age is not None and age < 45:
+        return "bạn"
+    if gender == "male":
+        return "chú"
+    if gender == "female":
+        return "cô"
+    return "cô/chú"
+
+
+def vietnamese_salutation(row: dict[str, Any]) -> str:
+    first_name = str(row.get("FName") or "").strip()
+    return f"{vietnamese_title(row)} {first_name}".strip()
+
+
 def default_template(config: AppConfig) -> str:
     if config.default_template_key in config.sms_templates:
         return config.sms_templates[config.default_template_key]
@@ -842,6 +866,9 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
         last_name=str(row.get("LName") or "").strip(),
         patient_name=patient_name(row),
         salutation=patient_salutation(row, country),
+        vi_title=vietnamese_title(row),
+        vi_title_cap=vietnamese_title(row).capitalize(),
+        vi_salutation=vietnamese_salutation(row),
         age=patient_age(row) or "",
         date=display_date(apt_time),
         date_full=display_date(apt_time),
@@ -1379,7 +1406,7 @@ class SmsReminderWindow(QMainWindow):
         template_layout.addWidget(self.template_country_select, 1, 3)
         template_layout.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
         template_layout.addWidget(self.template_text, 2, 1, 1, 3)
-        helper = QLabel("Placeholders: {salutation}, {first_name}, {last_name}, {patient_name}, {age}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
+        helper = QLabel("Placeholders: {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {age}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
         helper.setObjectName("Muted")
         helper.setWordWrap(True)
         template_layout.addWidget(helper, 3, 1, 1, 3)
@@ -1642,7 +1669,7 @@ class SmsReminderWindow(QMainWindow):
         form.addWidget(country_select, 1, 3)
         form.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
         form.addWidget(text, 2, 1, 1, 3)
-        helper = QLabel("Placeholders: {salutation}, {first_name}, {last_name}, {patient_name}, {age}, {last_proc_date}, {procedure_codes}, {clinic_phone}")
+        helper = QLabel("Placeholders: {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {age}, {last_proc_date}, {procedure_codes}, {clinic_phone}")
         helper.setObjectName("Muted")
         helper.setWordWrap(True)
         form.addWidget(helper, 3, 1, 1, 3)
