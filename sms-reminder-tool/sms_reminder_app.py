@@ -946,6 +946,8 @@ class SmsReminderWindow(QMainWindow):
         self.update_dry_run_badge()
         self.update_monitoring_status()
         self.statusBar().showMessage("Open Monitoring and click Start Monitoring to begin automatic reminders.", 6000)
+        if self.config.bridge_url and self.config.api_token:
+            QTimer.singleShot(300, self.load_appointments)
 
     def card(self, object_name: str = "Card") -> QFrame:
         frame = QFrame()
