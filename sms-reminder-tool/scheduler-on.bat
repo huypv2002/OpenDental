@@ -16,6 +16,7 @@ set "LOCK_TIME=11:05"
 set "TASK_PREFIX=LUK Dental SMS"
 set "THIS_FILE=%~f0"
 set "AUTOLOGON_EXE=%~dp0Autologon64.exe"
+set "SETUP_SCRIPT=%~dp0setup-scheduler-tasks.ps1"
 
 echo Creating LUK Dental SMS scheduled tasks...
 echo.
@@ -46,30 +47,34 @@ if not exist "%AUTOLOGON_EXE%" (
   exit /b 1
 )
 
+if not exist "%SETUP_SCRIPT%" (
+  echo Missing: %SETUP_SCRIPT%
+  echo Please make sure setup-scheduler-tasks.ps1 is in this same folder.
+  pause
+  exit /b 1
+)
+
 set /p "AUTO_USER=Windows username for auto-login [press Enter for %USERNAME%]: "
 if "%AUTO_USER%"=="" set "AUTO_USER=%USERNAME%"
 set /p "AUTO_DOMAIN=Computer/domain name [press Enter for %COMPUTERNAME%]: "
 if "%AUTO_DOMAIN%"=="" set "AUTO_DOMAIN=%COMPUTERNAME%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$password = Read-Host 'Windows PASSWORD for auto-login (not PIN)' -AsSecureString; $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($password); try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringUni($bstr); if ([string]::IsNullOrWhiteSpace('%AUTO_USER%')) { throw 'Windows username is required.' }; if ([string]::IsNullOrEmpty($plain)) { throw 'Windows password is required. PIN is not supported for auto-login.' }; Start-Process -FilePath '%AUTOLOGON_EXE%' -ArgumentList @('%AUTO_USER%','%AUTO_DOMAIN%',$plain) -Wait } finally { if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) } }"
+
+rem Remove old tasks before recreating them.
+schtasks /Delete /TN "%TASK_PREFIX% - Screen Off" /F >nul 2>nul
+schtasks /Delete /TN "%TASK_PREFIX% - Start Monitoring" /F >nul 2>nul
+schtasks /Delete /TN "%TASK_PREFIX% - Lock Screen" /F >nul 2>nul
+
+schtasks /Create /TN "%TASK_PREFIX% - Enable Auto Login" /SC DAILY /ST %ENABLE_LOGIN_TIME% /TR "\"%THIS_FILE%\" enable-login" /RU SYSTEM /RL HIGHEST /F
+if errorlevel 1 goto :error
+
+schtasks /Create /TN "%TASK_PREFIX% - Daily Restart" /SC DAILY /ST %RESTART_TIME% /TR "shutdown.exe /r /t 0" /RU SYSTEM /RL HIGHEST /F
+if errorlevel 1 goto :error
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SETUP_SCRIPT%" -AutoUser "%AUTO_USER%" -AutoDomain "%AUTO_DOMAIN%" -AutologonExe "%AUTOLOGON_EXE%" -TaskPrefix "%TASK_PREFIX%" -ThisFile "%THIS_FILE%" -StartToolTime "%START_TOOL_TIME%" -LockTime "%LOCK_TIME%"
 if errorlevel 1 goto :error
 
 rem Keep the credential stored by Autologon, but require login outside the morning automation window.
 reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 0 /f >nul
-if errorlevel 1 goto :error
-
-rem Remove old non-restart screen-off task if it exists.
-schtasks /Delete /TN "%TASK_PREFIX% - Screen Off" /F >nul 2>nul
-
-schtasks /Create /TN "%TASK_PREFIX% - Enable Auto Login" /SC DAILY /ST %ENABLE_LOGIN_TIME% /TR "\"%THIS_FILE%\" enable-login" /RL HIGHEST /F
-if errorlevel 1 goto :error
-
-schtasks /Create /TN "%TASK_PREFIX% - Daily Restart" /SC DAILY /ST %RESTART_TIME% /TR "shutdown.exe /r /t 0" /RL HIGHEST /F
-if errorlevel 1 goto :error
-
-schtasks /Create /TN "%TASK_PREFIX% - Start Monitoring" /SC DAILY /ST %START_TOOL_TIME% /TR "\"%THIS_FILE%\" run" /RL HIGHEST /F
-if errorlevel 1 goto :error
-
-schtasks /Create /TN "%TASK_PREFIX% - Lock Screen" /SC DAILY /ST %LOCK_TIME% /TR "\"%THIS_FILE%\" lock" /RL HIGHEST /F
 if errorlevel 1 goto :error
 
 echo.
@@ -91,8 +96,14 @@ exit /b 1
 :run
 rem Scheduler entrypoint: open Phone Link, then open tool and auto Start Monitoring.
 rem Keep one SMS tool instance only. This avoids duplicate monitoring batches.
+set "RUN_LOG=%~dp0scheduler-run.log"
+echo [%date% %time%] Start Monitoring task started. >> "%RUN_LOG%"
+whoami >> "%RUN_LOG%" 2>&1
+echo Working folder: %CD% >> "%RUN_LOG%"
+
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*sms_reminder_app.py*' } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }" >nul 2>nul
 
+echo [%date% %time%] Opening Phone Link. >> "%RUN_LOG%"
 start "" explorer.exe shell:AppsFolder\Microsoft.YourPhone_8wekyb3d8bbwe!App
 timeout /t 15 /nobreak >nul
 
@@ -102,22 +113,32 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 call ".venv\Scripts\activate.bat"
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt >> "%RUN_LOG%" 2>&1
 
 if not exist "sms_config.json" (
   copy "config.example.json" "sms_config.json" >nul
 )
 
-python sms_reminder_app.py --start-monitoring
+echo [%date% %time%] Starting SMS reminder app. >> "%RUN_LOG%"
+python sms_reminder_app.py --start-monitoring >> "%RUN_LOG%" 2>&1
+echo [%date% %time%] SMS reminder app exited with code %errorlevel%. >> "%RUN_LOG%"
 exit /b %errorlevel%
 
 :enable_login
 rem Enable auto-login shortly before the daily restart.
+set "RUN_LOG=%~dp0scheduler-run.log"
+echo [%date% %time%] Enable Auto Login task started. >> "%RUN_LOG%"
+whoami >> "%RUN_LOG%" 2>&1
 reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 1 /f >nul
+echo [%date% %time%] Enable Auto Login exited with code %errorlevel%. >> "%RUN_LOG%"
 exit /b %errorlevel%
 
 :lock
 rem Disable auto-login after the SMS window, then lock the desktop.
+set "RUN_LOG=%~dp0scheduler-run.log"
+echo [%date% %time%] Lock Screen task started. >> "%RUN_LOG%"
+whoami >> "%RUN_LOG%" 2>&1
 reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 0 /f >nul
 rundll32.exe user32.dll,LockWorkStation
+echo [%date% %time%] Lock Screen command sent. >> "%RUN_LOG%"
 exit /b 0
