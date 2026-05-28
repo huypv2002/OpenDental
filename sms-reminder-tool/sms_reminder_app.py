@@ -739,17 +739,7 @@ def patient_salutation(row: dict[str, Any], country: str = "US") -> str:
         title = vietnamese_title(row)
         return f"{title} {first_name}".strip()
 
-    if country == "ES":
-        if age is not None and age < 18:
-            return fallback
-        if gender == "male":
-            return f"Sr. {last_name or first_name}".strip()
-        if gender == "female":
-            return f"Sra. {last_name or first_name}".strip()
-        return fallback
-
-    if age is not None and age < 18:
-        return fallback
+    # Non-Vietnamese templates use only Mr./Ms. and do not vary by age.
     if gender == "male":
         return f"Mr. {last_name or first_name}".strip()
     if gender == "female":
@@ -762,8 +752,14 @@ def vietnamese_title(row: dict[str, Any]) -> str:
     gender = patient_gender(row)
     if age is not None and age <= 25:
         return "em"
-    if age is not None and age < 45:
+    if age is not None and age <= 45:
         return "bạn"
+    if age is not None and age <= 60:
+        if gender == "male":
+            return "anh"
+        if gender == "female":
+            return "chị"
+        return "anh/chị"
     if gender == "male":
         return "chú"
     if gender == "female":
