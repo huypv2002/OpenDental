@@ -739,9 +739,9 @@ def patient_age(row: dict[str, Any]) -> int | None:
 
 def patient_gender(row: dict[str, Any]) -> str:
     raw = str(row.get("Gender") or "").strip().lower()
-    if raw in {"1", "male", "m"}:
+    if raw in {"0", "male", "m"}:
         return "male"
-    if raw in {"2", "female", "f"}:
+    if raw in {"1", "female", "f"}:
         return "female"
     return "unknown"
 

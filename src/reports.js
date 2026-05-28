@@ -100,9 +100,9 @@ function statusLabel(status) {
 
 function genderLabel(gender) {
   const labels = {
-    0: 'Unknown',
-    1: 'Male',
-    2: 'Female',
+    0: 'Male',
+    1: 'Female',
+    2: 'Unknown',
     3: 'Other'
   };
   return labels[Number(gender)] ?? String(gender ?? '');
