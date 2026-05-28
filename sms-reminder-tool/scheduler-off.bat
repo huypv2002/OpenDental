@@ -1,0 +1,13 @@
+@echo off
+setlocal
+
+rem Run this file as Administrator.
+set "TASK_PREFIX=LUK Dental SMS"
+
+echo Removing LUK Dental SMS scheduled tasks...
+schtasks /Delete /TN "%TASK_PREFIX% - Daily Restart" /F >nul 2>nul
+schtasks /Delete /TN "%TASK_PREFIX% - Start Monitoring" /F >nul 2>nul
+schtasks /Delete /TN "%TASK_PREFIX% - Lock Screen" /F >nul 2>nul
+
+echo Done. The scheduler tasks are now off.
+pause

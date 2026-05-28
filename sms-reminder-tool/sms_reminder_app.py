@@ -2650,6 +2650,8 @@ def main() -> int:
     app.setFont(font)
     window = SmsReminderWindow()
     window.show()
+    if "--start-monitoring" in sys.argv:
+        QTimer.singleShot(1500, window.start_monitoring)
     return app.exec()
 
 
