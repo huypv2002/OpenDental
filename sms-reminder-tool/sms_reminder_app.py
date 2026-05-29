@@ -126,6 +126,7 @@ def is_managed_appointment_template_variant(key: str, text: str) -> bool:
                 or "i would like to remind for" in normalized_text
                 or "remind for your appointment" in normalized_text
                 or "{salutation}" in normalized_text
+                or "{first_name}" in normalized_text
                 or "tommorrow" in normalized_text
                 or "appointment today" in normalized_text
                 or "appointment tomorrow" in normalized_text
@@ -142,12 +143,12 @@ def is_managed_appointment_template_variant(key: str, text: str) -> bool:
 
 DEFAULT_SMS_TEMPLATES = {
     "US": (
-        "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you "
+        "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you "
         "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
         "Thank you and have a great day."
     ),
     "ES": (
-        "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
+        "Buenos días {formal_first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
         "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
         "Gracias y que tenga un excelente día."
     ),
@@ -195,10 +196,20 @@ OUTDATED_DEFAULT_SMS_TEMPLATES = {
             "for your appointment today, {weekday}, {date_full} at {time_lower}. "
             "Thank you and have a great day."
         ),
+        (
+            "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you "
+            "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
+            "Thank you and have a great day."
+        ),
     ],
     "ES": [
         (
             "Buenos días {salutation}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
+            "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
+            "Gracias y que tenga un excelente día."
+        ),
+        (
+            "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
             "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
             "Gracias y que tenga un excelente día."
         ),
@@ -814,6 +825,17 @@ def patient_salutation(row: dict[str, Any], country: str = "US") -> str:
     return fallback
 
 
+def patient_formal_first_name(row: dict[str, Any]) -> str:
+    first_name = str(row.get("FName") or "").strip()
+    fallback = first_name or patient_name(row)
+    gender = patient_gender(row)
+    if gender == "male":
+        return f"Mr. {fallback}".strip()
+    if gender == "female":
+        return f"Ms. {fallback}".strip()
+    return fallback
+
+
 def vietnamese_title(row: dict[str, Any]) -> str:
     age = patient_age(row)
     gender = patient_gender(row)
@@ -917,6 +939,7 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
         clinic_name=config.clinic_name,
         clinic_phone=config.clinic_phone,
         first_name=first_name,
+        formal_first_name=patient_formal_first_name(row),
         last_name=str(row.get("LName") or "").strip(),
         patient_name=patient_name(row),
         salutation=patient_salutation(row, country),
@@ -1462,7 +1485,7 @@ class SmsReminderWindow(QMainWindow):
         template_layout.addWidget(self.template_country_select, 1, 3)
         template_layout.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
         template_layout.addWidget(self.template_text, 2, 1, 1, 3)
-        helper = QLabel("Placeholders: {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {age}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
+        helper = QLabel("Placeholders: {formal_first_name}, {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {age}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
         helper.setObjectName("Muted")
         helper.setWordWrap(True)
         template_layout.addWidget(helper, 3, 1, 1, 3)

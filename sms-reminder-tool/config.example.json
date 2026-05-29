@@ -11,8 +11,8 @@
   "scheduler_enabled": true,
   "default_template_key": "US",
   "sms_templates": {
-    "US": "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day.",
-    "ES": "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. Gracias y que tenga un excelente día.",
+    "US": "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day.",
+    "ES": "Buenos días {formal_first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. Gracias y que tenga un excelente día.",
     "VI": "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {vi_title} vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. Thank you and have a great day."
   },
   "sms_template_countries": {
@@ -20,5 +20,5 @@
     "ES": "ES",
     "VI": "VI"
   },
-  "sms_template": "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day."
+  "sms_template": "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day."
 }
