@@ -14,6 +14,13 @@ import {
   verifyAppointmentForChange,
   verifyAppointmentsForCancel
 } from './appointments.js';
+import {
+  deleteAdminAppointment,
+  listAdminAppointments,
+  listAdminPatients,
+  saveAdminAppointment,
+  saveAdminPatient
+} from './admin.js';
 import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
@@ -243,6 +250,46 @@ app.get('/api/sms-reminders/logs', requireApiToken, async (req, res, next) => {
   try {
     const data = await getSmsReminderLogs(req.query);
     res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/appointments', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await listAdminAppointments(req.query) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/appointments/save', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await saveAdminAppointment(req.body ?? {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/appointments/delete', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await deleteAdminAppointment(req.body ?? {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/patients', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await listAdminPatients(req.query) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/patients/save', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await saveAdminPatient(req.body ?? {}) });
   } catch (error) {
     next(error);
   }
