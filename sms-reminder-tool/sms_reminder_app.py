@@ -113,14 +113,37 @@ def clinic_qdate(days_ahead: int = 0) -> QDate:
     return QDate(today.year, today.month, today.day).addDays(days_ahead)
 
 
+def is_managed_appointment_template_variant(key: str, text: str) -> bool:
+    normalized_key = key.upper().strip()
+    normalized_text = " ".join(str(text or "").lower().split())
+    if normalized_key == "US":
+        return (
+            "nhan nguyen from luk dental" in normalized_text
+            and "appointment" in normalized_text
+            and (
+                "i just remind" in normalized_text
+                or "i would like to remind for" in normalized_text
+                or "{salutation}" in normalized_text
+                or "tommorrow" in normalized_text
+            )
+        )
+    if normalized_key == "ES":
+        return (
+            "soy nhan nguyen de luk dental" in normalized_text
+            and "cita" in normalized_text
+            and ("{salutation}" in normalized_text or "de mañana" in normalized_text)
+        )
+    return False
+
+
 DEFAULT_SMS_TEMPLATES = {
     "US": (
-        "Good morning {salutation}, I'm Nhan Nguyen from Luk Dental. I just remind you "
+        "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you "
         "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
         "Thank you and have a great day."
     ),
     "ES": (
-        "Buenos días {salutation}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
+        "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
         "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
         "Gracias y que tenga un excelente día."
     ),
@@ -134,7 +157,17 @@ DEFAULT_SMS_TEMPLATES = {
 OUTDATED_DEFAULT_SMS_TEMPLATES = {
     "US": [
         (
+            "Good morning {salutation}, I'm Nhan Nguyen from Luk Dental. I just remind you "
+            "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
+            "Thank you and have a great day."
+        ),
+        (
             "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you "
+            "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
+            "Thank you and have a great day."
+        ),
+        (
+            "Good morning {salutation}, I'm Nhan Nguyen from Luk Dental. I would like to remind you "
             "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
             "Thank you and have a great day."
         ),
@@ -151,7 +184,7 @@ OUTDATED_DEFAULT_SMS_TEMPLATES = {
     ],
     "ES": [
         (
-            "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
+            "Buenos días {salutation}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
             "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
             "Gracias y que tenga un excelente día."
         ),
@@ -348,7 +381,7 @@ class AppConfig:
                     cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
                     migrated = True
             for key, outdated_texts in OUTDATED_DEFAULT_SMS_TEMPLATES.items():
-                if cfg.sms_templates.get(key) in outdated_texts:
+                if cfg.sms_templates.get(key) in outdated_texts or is_managed_appointment_template_variant(key, cfg.sms_templates.get(key, "")):
                     cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
                     migrated = True
             for key, outdated_texts in OUTDATED_DEFAULT_RECALL_TEMPLATES.items():
@@ -711,7 +744,7 @@ def reminder_offset_days(row: dict[str, Any]) -> int:
         except (TypeError, ValueError):
             pass
     try:
-        return max(0, (parse_datetime(row.get("AptDateTime")).date() - date.today()).days)
+        return max(0, (parse_datetime(row.get("AptDateTime")).date() - clinic_today()).days)
     except ValueError:
         return 1
 
