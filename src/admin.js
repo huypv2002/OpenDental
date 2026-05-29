@@ -97,12 +97,42 @@ function parseAppointment(body = {}) {
 }
 
 export async function listAdminAppointments(query = {}) {
-  const date = dateValue(query.date ?? new Date().toISOString().slice(0, 10));
+  const date = query.date ? dateValue(query.date) : '';
+  const patNum = intValue(query.patNum);
+  const q = text(query.q || query.query);
+  const limit = Math.max(1, Math.min(intValue(query.limit, 100), 300));
   const statuses = text(query.statuses || config.booking.busyAptStatuses.join(','))
     .split(',')
     .map((item) => intValue(item, NaN))
     .filter(Number.isInteger);
-  const placeholders = statuses.map(() => '?').join(',') || '1';
+  const where = [];
+  const values = [];
+  if (date) {
+    where.push('a.AptDateTime >= ? AND a.AptDateTime < DATE_ADD(?, INTERVAL 1 DAY)');
+    values.push(`${date} 00:00:00`, `${date} 00:00:00`);
+  }
+  if (patNum) {
+    where.push('a.PatNum = ?');
+    values.push(patNum);
+  }
+  if (statuses.length) {
+    where.push(`a.AptStatus IN (${statuses.map(() => '?').join(',')})`);
+    values.push(...statuses);
+  }
+  if (q) {
+    const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+    where.push(`(
+      p.FName LIKE ? ESCAPE '\\\\'
+      OR p.LName LIKE ? ESCAPE '\\\\'
+      OR p.WirelessPhone LIKE ? ESCAPE '\\\\'
+      OR p.Email LIKE ? ESCAPE '\\\\'
+      OR a.ProcDescript LIKE ? ESCAPE '\\\\'
+      OR CAST(a.AptNum AS CHAR) LIKE ? ESCAPE '\\\\'
+      OR CAST(a.PatNum AS CHAR) LIKE ? ESCAPE '\\\\'
+    )`);
+    values.push(like, like, like, like, like, like, like);
+  }
+  values.push(limit);
   const [rows] = await pool.execute(
     `
       SELECT
@@ -112,12 +142,11 @@ export async function listAdminAppointments(query = {}) {
         DATE_FORMAT(p.Birthdate, '%Y-%m-%d') AS Birthdate, p.Language
       FROM appointment a
       INNER JOIN patient p ON p.PatNum = a.PatNum
-      WHERE a.AptDateTime >= ?
-        AND a.AptDateTime < DATE_ADD(?, INTERVAL 1 DAY)
-        AND a.AptStatus IN (${placeholders})
-      ORDER BY a.AptDateTime, p.LName, p.FName
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY ${patNum ? 'a.AptDateTime DESC' : 'a.AptDateTime, p.LName, p.FName'}
+      LIMIT ?
     `,
-    [`${date} 00:00:00`, `${date} 00:00:00`, ...statuses]
+    values
   );
   return { date, appointments: rows.map((row) => ({ ...row, Phone: normalizePhone(row.WirelessPhone || row.HmPhone || row.WkPhone || '') })) };
 }
