@@ -118,13 +118,17 @@ def is_managed_appointment_template_variant(key: str, text: str) -> bool:
     normalized_text = " ".join(str(text or "").lower().split())
     if normalized_key == "US":
         return (
-            "nhan nguyen from luk dental" in normalized_text
+            "luk dental" in normalized_text
             and "appointment" in normalized_text
             and (
                 "i just remind" in normalized_text
+                or "i send a notification" in normalized_text
                 or "i would like to remind for" in normalized_text
+                or "remind for your appointment" in normalized_text
                 or "{salutation}" in normalized_text
                 or "tommorrow" in normalized_text
+                or "appointment today" in normalized_text
+                or "appointment tomorrow" in normalized_text
             )
         )
     if normalized_key == "ES":
@@ -179,6 +183,16 @@ OUTDATED_DEFAULT_SMS_TEMPLATES = {
         (
             "Good morning {salutation}, I'm Nhan Nguyen from Luk Dental. I just remind you "
             "of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. "
+            "Thank you and have a great day."
+        ),
+        (
+            "Good morning {salutation}, I send a notification from Luk Dental. I  would like to remind "
+            "for your appointment today, {weekday}, {date_full} at {time_lower}. "
+            "Thank you and have a great day."
+        ),
+        (
+            "Good morning {salutation}, I send a notification from Luk Dental. I would like to remind "
+            "for your appointment today, {weekday}, {date_full} at {time_lower}. "
             "Thank you and have a great day."
         ),
     ],
