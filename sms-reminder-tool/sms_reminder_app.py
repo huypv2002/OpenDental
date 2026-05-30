@@ -1883,6 +1883,7 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.critical(self, "Bridge error", str(exc))
 
     def load_appointments(self) -> None:
+        self.load_templates_from_bridge()
         self.save_settings(silent=True)
         target = self.date_edit.date().toPython()
         if self.load_worker and self.load_worker.isRunning():
