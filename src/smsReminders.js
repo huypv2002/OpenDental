@@ -407,6 +407,52 @@ export async function getSmsReminderLogs(query = {}) {
 
 const TEMPLATE_TABLE = 'luk_sms_templates';
 
+const DEFAULT_SMS_TEMPLATE_ROWS = [
+  { key: 'US', category: 'appointment', country: 'US', text: "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day." },
+  { key: 'ES', category: 'appointment', country: 'ES', text: "Buenos días {formal_first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. Gracias y que tenga un excelente día." },
+  { key: 'VI', category: 'appointment', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {vi_title} vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. Thank you and have a great day." },
+  { key: 'US', category: 'recall', country: 'US', text: "Good morning {salutation}, this is Luk Dental. Your 6-month cleaning recall is due. Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ to schedule your appointment. Thank you and have a great day." },
+  { key: 'ES', category: 'recall', country: 'ES', text: "Buenos días {salutation}, le habla Luk Dental. Ya llegó el momento de su limpieza de 6 meses. Por favor llame al {clinic_phone} o haga su cita en https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día." },
+  { key: 'VI', category: 'recall', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng của {vi_title} đã đến. {vi_title_cap} vui lòng gọi {clinic_phone} hoặc đặt lịch tại https://lukdental.us/dental-appointment/. Thank you and have a great day." },
+];
+
+function isManagedAppointmentTemplateVariant(key, text) {
+  const normalizedKey = String(key ?? '').trim().toUpperCase();
+  const normalizedText = String(text ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (normalizedKey === 'US') {
+    return normalizedText.includes('luk dental')
+      && normalizedText.includes('appointment')
+      && (
+        normalizedText.includes('i just remind')
+        || normalizedText.includes('i send a notification')
+        || normalizedText.includes('i would like to remind for')
+        || normalizedText.includes('remind for your appointment')
+        || normalizedText.includes('{salutation}')
+        || normalizedText.includes('{first_name}')
+        || normalizedText.includes('tommorrow')
+        || normalizedText.includes('appointment today')
+        || normalizedText.includes('appointment tomorrow')
+      );
+  }
+  if (normalizedKey === 'ES') {
+    return normalizedText.includes('luk dental')
+      && normalizedText.includes('cita')
+      && (
+        normalizedText.includes('{salutation}')
+        || normalizedText.includes('{first_name}')
+        || normalizedText.includes('de mañana')
+        || normalizedText.includes('envío una notificación')
+      );
+  }
+  return false;
+}
+
+function shouldUpdateManagedTemplate(row, defaultRow) {
+  if (!row) return false;
+  if (defaultRow.category !== 'appointment') return false;
+  return isManagedAppointmentTemplateVariant(defaultRow.key, row.TemplateText);
+}
+
 function parseTemplateBody(body) {
   const key = String(body.templateKey ?? '').trim().toUpperCase();
   const category = ['appointment', 'recall'].includes(String(body.category ?? '').toLowerCase())
@@ -504,23 +550,33 @@ export async function deleteSmsTemplate(body) {
 
 export async function initDefaultSmsTemplates() {
   await ensureSmsTemplatesTable();
-  const [existing] = await pool.execute(`SELECT COUNT(*) AS cnt FROM ${TEMPLATE_TABLE}`);
-  if (existing[0].cnt > 0) return { initialized: false, reason: 'templates already exist' };
-
-  const defaults = [
-    { key: 'US', category: 'appointment', country: 'US', text: "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day." },
-    { key: 'ES', category: 'appointment', country: 'ES', text: "Buenos días {salutation}, soy Nhan Nguyen de Luk Dental. Le recuerdo su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. Gracias y que tenga un excelente día." },
-    { key: 'VI', category: 'appointment', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {vi_title} vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. Thank you and have a great day." },
-    { key: 'US', category: 'recall', country: 'US', text: "Good morning {salutation}, this is Luk Dental. Your 6-month cleaning recall is due. Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ to schedule your appointment. Thank you and have a great day." },
-    { key: 'ES', category: 'recall', country: 'ES', text: "Buenos días {salutation}, le habla Luk Dental. Ya llegó el momento de su limpieza de 6 meses. Por favor llame al {clinic_phone} o haga su cita en https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día." },
-    { key: 'VI', category: 'recall', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng của {vi_title} đã đến. {vi_title_cap} vui lòng gọi {clinic_phone} hoặc đặt lịch tại https://lukdental.us/dental-appointment/. Thank you and have a great day." },
-  ];
-
-  for (const t of defaults) {
-    await pool.execute(
-      `INSERT INTO ${TEMPLATE_TABLE} (TemplateKey, Category, Country, TemplateText) VALUES (?, ?, ?, ?)`,
-      [t.key, t.category, t.country, t.text]
+  let inserted = 0;
+  let migrated = 0;
+  for (const t of DEFAULT_SMS_TEMPLATE_ROWS) {
+    const [rows] = await pool.execute(
+      `SELECT TemplateKey, Category, Country, TemplateText FROM ${TEMPLATE_TABLE} WHERE TemplateKey = ? AND Category = ? LIMIT 1`,
+      [t.key, t.category]
     );
+    const existing = rows[0];
+    if (!existing) {
+      await pool.execute(
+        `INSERT INTO ${TEMPLATE_TABLE} (TemplateKey, Category, Country, TemplateText) VALUES (?, ?, ?, ?)`,
+        [t.key, t.category, t.country, t.text]
+      );
+      inserted += 1;
+    } else if (shouldUpdateManagedTemplate(existing, t)) {
+      await pool.execute(
+        `UPDATE ${TEMPLATE_TABLE} SET Country = ?, TemplateText = ? WHERE TemplateKey = ? AND Category = ?`,
+        [t.country, t.text, t.key, t.category]
+      );
+      migrated += 1;
+    }
   }
-  return { initialized: true, count: defaults.length };
+  return {
+    initialized: inserted > 0 || migrated > 0,
+    count: inserted + migrated,
+    inserted,
+    migrated,
+    reason: inserted || migrated ? 'templates inserted or migrated' : 'templates already exist',
+  };
 }

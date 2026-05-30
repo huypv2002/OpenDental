@@ -1061,13 +1061,35 @@ class SmsReminderWindow(QMainWindow):
 
     def load_templates_from_bridge(self) -> None:
         try:
+            local_sms_templates = dict(self.config.sms_templates or {})
+            local_sms_countries = dict(self.config.sms_template_countries or {})
+            local_recall_templates = dict(self.config.recall_templates or {})
+            local_recall_countries = dict(self.config.recall_template_countries or {})
             data = self.repo.fetch_templates()
             tmpl = data.get("templates") or data or {}
             countries = data.get("countries") or {}
-            self.config.sms_templates = tmpl.get("appointment") or dict(DEFAULT_SMS_TEMPLATES)
-            self.config.sms_template_countries = countries.get("appointment") or dict(DEFAULT_TEMPLATE_COUNTRIES)
-            self.config.recall_templates = tmpl.get("recall") or dict(DEFAULT_RECALL_TEMPLATES)
-            self.config.recall_template_countries = countries.get("recall") or dict(DEFAULT_TEMPLATE_COUNTRIES)
+            bridge_sms_templates = tmpl.get("appointment") or {}
+            bridge_sms_countries = countries.get("appointment") or {}
+            bridge_recall_templates = tmpl.get("recall") or {}
+            bridge_recall_countries = countries.get("recall") or {}
+
+            for key, text in local_sms_templates.items():
+                if key not in bridge_sms_templates and text:
+                    country = str(local_sms_countries.get(key) or infer_template_country(key)).upper()
+                    self.repo.save_template(key, "appointment", country, text)
+                    bridge_sms_templates[key] = text
+                    bridge_sms_countries[key] = country
+            for key, text in local_recall_templates.items():
+                if key not in bridge_recall_templates and text:
+                    country = str(local_recall_countries.get(key) or infer_template_country(key)).upper()
+                    self.repo.save_template(key, "recall", country, text)
+                    bridge_recall_templates[key] = text
+                    bridge_recall_countries[key] = country
+
+            self.config.sms_templates = bridge_sms_templates or dict(DEFAULT_SMS_TEMPLATES)
+            self.config.sms_template_countries = bridge_sms_countries or dict(DEFAULT_TEMPLATE_COUNTRIES)
+            self.config.recall_templates = bridge_recall_templates or dict(DEFAULT_RECALL_TEMPLATES)
+            self.config.recall_template_countries = bridge_recall_countries or dict(DEFAULT_TEMPLATE_COUNTRIES)
             if not self.config.sms_templates:
                 self.config.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
                 self.config.sms_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
@@ -1686,8 +1708,8 @@ class SmsReminderWindow(QMainWindow):
 
     def delete_template(self) -> None:
         key = self.current_template_key()
-        if len(self.config.sms_templates) <= 1:
-            QMessageBox.warning(self, "Cannot delete", "At least one template is required.")
+        if len(self.config.sms_templates) <= 1 or key == "US":
+            QMessageBox.warning(self, "Cannot delete", "The default US appointment template must remain available.")
             return
         confirm = QMessageBox.question(self, "Delete template?", f"Delete template {key}?")
         if confirm != QMessageBox.Yes:
@@ -1812,9 +1834,12 @@ class SmsReminderWindow(QMainWindow):
             confirm = QMessageBox.question(dialog, "Delete recall template?", f"Delete recall template {key}?")
             if confirm != QMessageBox.Yes:
                 return
-            self.config.recall_templates.pop(key, None)
-            self.config.recall_template_countries.pop(key, None)
-            self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            try:
+                self.repo.delete_template(key, "recall")
+                self.load_templates_from_bridge()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Failed to delete recall template", str(exc))
+                return
             self.config.save()
             refresh("US")
             self.refresh_table_template_combos()

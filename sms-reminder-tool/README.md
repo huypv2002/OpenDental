@@ -60,7 +60,9 @@ Phone Link is controlled through Windows UI automation, so this app sends remind
 
 ## Template Management
 
-Use the `Templates` tab to add, edit, delete, and choose the default template. The dashboard also has a `Template` column so a staff member can choose the correct language/country template for each appointment before sending.
+Use the `Templates` tab to add, edit, and delete templates. Templates are stored in the bridge database table `luk_sms_templates`, so multiple workstations share the same template list. The local `sms_config.json` keeps only workstation settings such as bridge URL, token, schedule time, and reminder statuses.
+
+The dashboard also has a `Template` column so a staff member can choose the correct language/country template for each appointment before sending.
 
 ## SMS Template Placeholders
 
