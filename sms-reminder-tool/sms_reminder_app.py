@@ -453,7 +453,11 @@ class AppConfig:
         return cfg
 
     def save(self) -> None:
-        CONFIG_PATH.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        data = asdict(self)
+        # Templates are stored in the bridge database, not in local JSON.
+        for key in ("sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries", "sms_template", "recall_template", "default_template_key", "template_schema_version"):
+            data.pop(key, None)
+        CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 class BridgeClient:
@@ -564,6 +568,37 @@ class BridgeClient:
                 "reminderOffsetDays": reminder_offset_days(appointment),
             },
         )
+
+
+    # Template management via bridge API
+    def fetch_templates(self) -> dict[str, Any]:
+        return self.request("GET", "/api/sms-templates")
+
+    def init_default_templates(self) -> dict[str, Any]:
+        return self.request("GET", "/api/sms-templates/init")
+
+    def add_template(self, template_key: str, category: str, country: str, template_text: str) -> dict[str, Any]:
+        return self.request("POST", "/api/sms-templates", json={
+            "templateKey": template_key,
+            "category": category,
+            "country": country,
+            "templateText": template_text,
+        })
+
+    def save_template(self, template_key: str, category: str, country: str, template_text: str) -> dict[str, Any]:
+        return self.request("PUT", "/api/sms-templates", json={
+            "templateKey": template_key,
+            "category": category,
+            "country": country,
+            "templateText": template_text,
+        })
+
+    def delete_template(self, template_key: str, category: str) -> dict[str, Any]:
+        return self.request("DELETE", "/api/sms-templates", json={
+            "templateKey": template_key,
+            "category": category,
+        })
+
 
 
 class PhoneLinkSender:
@@ -1024,7 +1059,29 @@ class SmsReminderWindow(QMainWindow):
         frame.setObjectName(object_name)
         return frame
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
+    def load_templates_from_bridge(self) -> None:
+        try:
+            data = self.repo.fetch_templates()
+            tmpl = data.get("templates") or data or {}
+            countries = data.get("countries") or {}
+            self.config.sms_templates = tmpl.get("appointment") or dict(DEFAULT_SMS_TEMPLATES)
+            self.config.sms_template_countries = countries.get("appointment") or dict(DEFAULT_TEMPLATE_COUNTRIES)
+            self.config.recall_templates = tmpl.get("recall") or dict(DEFAULT_RECALL_TEMPLATES)
+            self.config.recall_template_countries = countries.get("recall") or dict(DEFAULT_TEMPLATE_COUNTRIES)
+            if not self.config.sms_templates:
+                self.config.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
+                self.config.sms_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
+            if not self.config.recall_templates:
+                self.config.recall_templates = dict(DEFAULT_RECALL_TEMPLATES)
+                self.config.recall_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
+        except Exception:
+            self.config.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
+            self.config.sms_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
+            self.config.recall_templates = dict(DEFAULT_RECALL_TEMPLATES)
+            self.config.recall_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
+
+
+        def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
         super().resizeEvent(event)
         self.update_loading_overlay_geometry()
         self.fill_configured_tables()
@@ -1575,8 +1632,14 @@ class SmsReminderWindow(QMainWindow):
         if key in self.config.sms_templates:
             QMessageBox.information(self, "Template exists", "That template already exists.")
             return
-        self.config.sms_templates[key] = default_template(self.config)
-        self.config.sms_template_countries[key] = infer_template_country(key)
+        country = infer_template_country(key)
+        template_text = self.config.sms_templates.get("US") or list(self.config.sms_templates.values())[0]
+        try:
+            self.repo.add_template(key, "appointment", country, template_text)
+            self.load_templates_from_bridge()
+        except Exception as exc:
+            QMessageBox.critical(self, "Failed to add template", str(exc))
+            return
         self.config.save()
         self.refresh_template_controls()
         index = self.template_select.findData(key)
@@ -1593,13 +1656,14 @@ class SmsReminderWindow(QMainWindow):
         if not new_key or not text:
             QMessageBox.warning(self, "Template required", "Template key and message are required.")
             return
-        if old_key != new_key:
-            self.config.sms_templates.pop(old_key, None)
-            self.config.sms_template_countries.pop(old_key, None)
-        self.config.sms_templates[new_key] = text
-        self.config.sms_template_countries[new_key] = country
-        self.config.default_template_key = "US"
-        self.config.sms_template = default_template(self.config)
+        try:
+            if old_key != new_key and old_key in self.config.sms_templates:
+                self.repo.delete_template(old_key, "appointment")
+            self.repo.save_template(new_key, "appointment", country, text)
+            self.load_templates_from_bridge()
+        except Exception as exc:
+            QMessageBox.critical(self, "Failed to save template", str(exc))
+            return
         self.config.save()
         self.refresh_template_controls()
         index = self.template_select.findData(new_key)
@@ -1617,13 +1681,15 @@ class SmsReminderWindow(QMainWindow):
         confirm = QMessageBox.question(self, "Delete template?", f"Delete template {key}?")
         if confirm != QMessageBox.Yes:
             return
-        self.config.sms_templates.pop(key, None)
-        self.config.sms_template_countries.pop(key, None)
-        if "US" not in self.config.sms_templates:
-            self.config.sms_templates["US"] = DEFAULT_SMS_TEMPLATES["US"]
-            self.config.sms_template_countries["US"] = "US"
-        self.config.default_template_key = "US"
-        self.config.sms_template = default_template(self.config)
+        try:
+            self.repo.delete_template(key, "appointment")
+            self.load_templates_from_bridge()
+            if "US" not in self.config.sms_templates:
+                self.repo.init_default_templates()
+                self.load_templates_from_bridge()
+        except Exception as exc:
+            QMessageBox.critical(self, "Failed to delete template", str(exc))
+            return
         self.config.save()
         self.refresh_template_controls()
         self.refresh_table_template_combos()
@@ -1693,9 +1759,14 @@ class SmsReminderWindow(QMainWindow):
             if key in self.config.recall_templates:
                 QMessageBox.information(dialog, "Template exists", "That recall template already exists.")
                 return
-            self.config.recall_templates[key] = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
-            self.config.recall_template_countries[key] = infer_template_country(key)
-            self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            country = infer_template_country(key)
+            default_text = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            try:
+                self.repo.add_template(key, "recall", country, default_text)
+                self.load_templates_from_bridge()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Failed to add recall template", str(exc))
+                return
             self.config.save()
             refresh(key)
             self.refresh_table_template_combos()
@@ -1709,15 +1780,14 @@ class SmsReminderWindow(QMainWindow):
             if not new_key or not body:
                 QMessageBox.warning(dialog, "Template required", "Template key and message are required.")
                 return
-            if old_key != new_key:
-                self.config.recall_templates.pop(old_key, None)
-                self.config.recall_template_countries.pop(old_key, None)
-            self.config.recall_templates[new_key] = body
-            self.config.recall_template_countries[new_key] = country
-            if "US" not in self.config.recall_templates:
-                self.config.recall_templates["US"] = DEFAULT_RECALL_TEMPLATES["US"]
-                self.config.recall_template_countries["US"] = "US"
-            self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            try:
+                if old_key != new_key and old_key in self.config.recall_templates and old_key != "US":
+                    self.repo.delete_template(old_key, "recall")
+                self.repo.save_template(new_key, "recall", country, body)
+                self.load_templates_from_bridge()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Failed to save recall template", str(exc))
+                return
             self.config.save()
             refresh(new_key)
             self.refresh_table_template_combos()

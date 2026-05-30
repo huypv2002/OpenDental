@@ -26,12 +26,22 @@ import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
 import { exportAppointmentReport, parseAppointmentReportBody } from './reports.js';
 import {
+  addSmsTemplate,
+  deleteSmsTemplate,
+  getSmsTemplates,
+  initDefaultSmsTemplates,
+  saveSmsTemplate,
   clearSmsDryRunLogs,
   getSmsRecallCandidates,
   getSmsReminderAppointments,
   getSmsReminderLogs,
   logSmsRecallResult,
   logSmsReminderResult,
+  addSmsTemplate,
+  deleteSmsTemplate,
+  getSmsTemplates,
+  initDefaultSmsTemplates,
+  saveSmsTemplate,
   resetSmsReminderLog
 } from './smsReminders.js';
 import { getAvailableSlots, getAvailableSlotsRange, getReferenceData, parseSlotQuery, parseSlotRangeQuery } from './slots.js';
@@ -240,6 +250,51 @@ app.post('/api/sms-reminders/clear-dry-run', requireApiToken, async (_req, res, 
 app.post('/api/sms-reminders/reset-log', requireApiToken, async (req, res, next) => {
   try {
     const data = await resetSmsReminderLog(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/sms-templates', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getSmsTemplates(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/sms-templates/init', requireApiToken, async (_req, res, next) => {
+  try {
+    const data = await initDefaultSmsTemplates();
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/sms-templates', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await addSmsTemplate(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/sms-templates', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await saveSmsTemplate(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/sms-templates', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await deleteSmsTemplate(req.body ?? {});
     res.json({ ok: true, data });
   } catch (error) {
     next(error);

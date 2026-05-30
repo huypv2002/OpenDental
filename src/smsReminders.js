@@ -402,3 +402,125 @@ export async function getSmsReminderLogs(query = {}) {
   );
   return { logs: rows };
 }
+
+// ===== SMS TEMPLATES TABLE & CRUD =====
+
+const TEMPLATE_TABLE = 'luk_sms_templates';
+
+function parseTemplateBody(body) {
+  const key = String(body.templateKey ?? '').trim().toUpperCase();
+  const category = ['appointment', 'recall'].includes(String(body.category ?? '').toLowerCase())
+    ? String(body.category ?? '').toLowerCase()
+    : 'appointment';
+  const country = String(body.country ?? 'US').toUpperCase().slice(0, 5);
+  const templateText = String(body.templateText ?? '').trim();
+  return { key, category, country, templateText };
+}
+
+export async function ensureSmsTemplatesTable(connection = pool) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS ${TEMPLATE_TABLE} (
+      TemplateId BIGINT NOT NULL AUTO_INCREMENT,
+      TemplateKey VARCHAR(50) NOT NULL,
+      Category VARCHAR(20) NOT NULL DEFAULT 'appointment',
+      Country VARCHAR(5) NOT NULL DEFAULT 'US',
+      TemplateText TEXT NOT NULL,
+      CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UpdatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (TemplateId),
+      UNIQUE KEY uq_template_key_category (TemplateKey, Category)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
+
+export async function getSmsTemplates(query = {}) {
+  await ensureSmsTemplatesTable();
+  let sql = `SELECT TemplateKey, Category, Country, TemplateText FROM ${TEMPLATE_TABLE}`;
+  const params = [];
+  if (query.category) {
+    sql += ' WHERE Category = ?';
+    params.push(query.category);
+  }
+  sql += ' ORDER BY Category, TemplateKey';
+  const [rows] = await pool.execute(sql, params);
+  const templates = { appointment: {}, recall: {} };
+  const countries = { appointment: {}, recall: {} };
+  for (const row of rows) {
+    templates[row.Category][row.TemplateKey] = row.TemplateText;
+    countries[row.Category][row.TemplateKey] = row.Country;
+  }
+  return { templates, countries };
+}
+
+export async function addSmsTemplate(body) {
+  await ensureSmsTemplatesTable();
+  const { key, category, country, templateText } = parseTemplateBody(body);
+  if (!key || !templateText) {
+    const error = new Error('templateKey and templateText are required.');
+    error.status = 400;
+    throw error;
+  }
+  await pool.execute(
+    `INSERT INTO ${TEMPLATE_TABLE} (TemplateKey, Category, Country, TemplateText) VALUES (?, ?, ?, ?)`,
+    [key, category, country, templateText]
+  );
+  return { templateKey: key, category, country };
+}
+
+export async function saveSmsTemplate(body) {
+  await ensureSmsTemplatesTable();
+  const { key, category, country, templateText } = parseTemplateBody(body);
+  if (!key || !templateText) {
+    const error = new Error('templateKey and templateText are required.');
+    error.status = 400;
+    throw error;
+  }
+  const [result] = await pool.execute(
+    `INSERT INTO ${TEMPLATE_TABLE} (TemplateKey, Category, Country, TemplateText)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE Country = VALUES(Country), TemplateText = VALUES(TemplateText)`,
+    [key, category, country, templateText]
+  );
+  return { templateKey: key, category, country, updated: result.affectedRows > 0 };
+}
+
+export async function deleteSmsTemplate(body) {
+  await ensureSmsTemplatesTable();
+  const key = String(body.templateKey ?? '').trim().toUpperCase();
+  const category = ['appointment', 'recall'].includes(String(body.category ?? '').toLowerCase())
+    ? String(body.category ?? '').toLowerCase()
+    : 'appointment';
+  if (!key) {
+    const error = new Error('templateKey is required.');
+    error.status = 400;
+    throw error;
+  }
+  const [result] = await pool.execute(
+    `DELETE FROM ${TEMPLATE_TABLE} WHERE TemplateKey = ? AND Category = ?`,
+    [key, category]
+  );
+  return { templateKey: key, category, deleted: result.affectedRows > 0 };
+}
+
+export async function initDefaultSmsTemplates() {
+  await ensureSmsTemplatesTable();
+  const [existing] = await pool.execute(`SELECT COUNT(*) AS cnt FROM ${TEMPLATE_TABLE}`);
+  if (existing[0].cnt > 0) return { initialized: false, reason: 'templates already exist' };
+
+  const defaults = [
+    { key: 'US', category: 'appointment', country: 'US', text: "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day." },
+    { key: 'ES', category: 'appointment', country: 'ES', text: "Buenos días {salutation}, soy Nhan Nguyen de Luk Dental. Le recuerdo su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. Gracias y que tenga un excelente día." },
+    { key: 'VI', category: 'appointment', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {vi_title} vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. Thank you and have a great day." },
+    { key: 'US', category: 'recall', country: 'US', text: "Good morning {salutation}, this is Luk Dental. Your 6-month cleaning recall is due. Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ to schedule your appointment. Thank you and have a great day." },
+    { key: 'ES', category: 'recall', country: 'ES', text: "Buenos días {salutation}, le habla Luk Dental. Ya llegó el momento de su limpieza de 6 meses. Por favor llame al {clinic_phone} o haga su cita en https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día." },
+    { key: 'VI', category: 'recall', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng của {vi_title} đã đến. {vi_title_cap} vui lòng gọi {clinic_phone} hoặc đặt lịch tại https://lukdental.us/dental-appointment/. Thank you and have a great day." },
+  ];
+
+  for (const t of defaults) {
+    await pool.execute(
+      `INSERT INTO ${TEMPLATE_TABLE} (TemplateKey, Category, Country, TemplateText) VALUES (?, ?, ?, ?)`,
+      [t.key, t.category, t.country, t.text]
+    );
+  }
+  return { initialized: true, count: defaults.length };
+}
