@@ -28,10 +28,13 @@ import { exportAppointmentReport, parseAppointmentReportBody } from './reports.j
 import {
   addSmsTemplate,
   deleteSmsTemplate,
+  ensureSmsSettingsTable,
   ensureSmsTemplatesTable,
+  getSmsSettings,
   getSmsTemplates,
   initDefaultSmsTemplates,
   saveSmsTemplate,
+  saveSmsSetting,
   clearSmsDryRunLogs,
   getSmsRecallCandidates,
   getSmsReminderAppointments,
@@ -297,6 +300,24 @@ app.delete('/api/sms-templates', requireApiToken, async (req, res, next) => {
   }
 });
 
+app.get('/api/sms-settings', requireApiToken, async (_req, res, next) => {
+  try {
+    const data = await getSmsSettings();
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/sms-settings', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await saveSmsSetting(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/sms-reminders/logs', requireApiToken, async (req, res, next) => {
   try {
     const data = await getSmsReminderLogs(req.query);
@@ -354,8 +375,8 @@ app.use((error, _req, res, _next) => {
   });
 });
 
-// Auto-create SMS template tables and seed defaults on startup
-ensureSmsTemplatesTable().then(() => initDefaultSmsTemplates()).then((init) => {
+// Auto-create SMS template/settings tables and seed defaults on startup
+ensureSmsTemplatesTable().then(() => ensureSmsSettingsTable()).then(() => initDefaultSmsTemplates()).then((init) => {
   if (init.initialized) {
     console.log(`SMS templates: seeded ${init.count} default templates.`);
   } else {

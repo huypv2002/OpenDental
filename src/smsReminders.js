@@ -3,6 +3,7 @@ import { config } from './config.js';
 
 const LOG_TABLE = 'luk_sms_reminder_log';
 const RECALL_LOG_TABLE = 'luk_sms_recall_log';
+const SMS_SETTINGS_TABLE = 'luk_sms_settings';
 
 function parseDate(value) {
   const text = String(value ?? '').trim();
@@ -406,6 +407,7 @@ export async function getSmsReminderLogs(query = {}) {
 // ===== SMS TEMPLATES TABLE & CRUD =====
 
 const TEMPLATE_TABLE = 'luk_sms_templates';
+const DEFAULT_REVIEW_LINK = 'https://g.page/r/CUSTOM_REVIEW_LINK/review';
 
 const DEFAULT_SMS_TEMPLATE_ROWS = [
   { key: 'US', category: 'appointment', country: 'US', text: "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day." },
@@ -414,6 +416,9 @@ const DEFAULT_SMS_TEMPLATE_ROWS = [
   { key: 'US', category: 'recall', country: 'US', text: "Good morning {salutation}, this is Luk Dental. Your 6-month cleaning recall is due. Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ to schedule your appointment. Thank you and have a great day." },
   { key: 'ES', category: 'recall', country: 'ES', text: "Buenos días {salutation}, le habla Luk Dental. Ya llegó el momento de su limpieza de 6 meses. Por favor llame al {clinic_phone} o haga su cita en https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día." },
   { key: 'VI', category: 'recall', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng của {vi_title} đã đến. {vi_title_cap} vui lòng gọi {clinic_phone} hoặc đặt lịch tại https://lukdental.us/dental-appointment/. Thank you and have a great day." },
+  { key: 'US', category: 'review_google', country: 'US', text: "Hi {first_name}, thank you for visiting Luk Dental. If you had a good experience, would you mind leaving us a Google review? Your feedback helps our clinic and other patients. {review_link} Thank you." },
+  { key: 'ES', category: 'review_google', country: 'ES', text: "Hola {first_name}, gracias por visitar Luk Dental. Si tuvo una buena experiencia, ¿podría dejarnos una reseña en Google? Sus comentarios ayudan a nuestra clínica y a otros pacientes. {review_link} Gracias." },
+  { key: 'VI', category: 'review_google', country: 'VI', text: "Good morning {vi_salutation}, cảm ơn {vi_title} đã đến nha khoa Luk Dental. Nếu {vi_title} hài lòng với dịch vụ, nhờ {vi_title} để lại review Google giúp phòng khám nhé. {review_link} Thank you." },
 ];
 
 function isManagedAppointmentTemplateVariant(key, text) {
@@ -455,7 +460,7 @@ function shouldUpdateManagedTemplate(row, defaultRow) {
 
 function parseTemplateBody(body) {
   const key = String(body.templateKey ?? '').trim().toUpperCase();
-  const category = ['appointment', 'recall'].includes(String(body.category ?? '').toLowerCase())
+  const category = ['appointment', 'recall', 'review_google'].includes(String(body.category ?? '').toLowerCase())
     ? String(body.category ?? '').toLowerCase()
     : 'appointment';
   const country = String(body.country ?? 'US').toUpperCase().slice(0, 5);
@@ -479,6 +484,54 @@ export async function ensureSmsTemplatesTable(connection = pool) {
   `);
 }
 
+export async function ensureSmsSettingsTable(connection = pool) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS ${SMS_SETTINGS_TABLE} (
+      SettingKey VARCHAR(100) NOT NULL,
+      SettingValue TEXT NOT NULL,
+      UpdatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (SettingKey)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await connection.execute(
+    `INSERT IGNORE INTO ${SMS_SETTINGS_TABLE} (SettingKey, SettingValue) VALUES ('review_link', ?)`,
+    [DEFAULT_REVIEW_LINK]
+  );
+}
+
+export async function getSmsSettings() {
+  await ensureSmsSettingsTable();
+  const [rows] = await pool.execute(`SELECT SettingKey, SettingValue FROM ${SMS_SETTINGS_TABLE}`);
+  const settings = {};
+  for (const row of rows) {
+    settings[row.SettingKey] = row.SettingValue;
+  }
+  return { settings };
+}
+
+export async function saveSmsSetting(body) {
+  await ensureSmsSettingsTable();
+  const key = String(body.settingKey ?? '').trim();
+  const value = String(body.settingValue ?? '').trim();
+  if (!key) {
+    const error = new Error('settingKey is required.');
+    error.status = 400;
+    throw error;
+  }
+  if (!['review_link'].includes(key)) {
+    const error = new Error('Unsupported SMS setting.');
+    error.status = 400;
+    throw error;
+  }
+  await pool.execute(
+    `INSERT INTO ${SMS_SETTINGS_TABLE} (SettingKey, SettingValue)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE SettingValue = VALUES(SettingValue)`,
+    [key, value]
+  );
+  return { settingKey: key, settingValue: value };
+}
+
 export async function getSmsTemplates(query = {}) {
   await ensureSmsTemplatesTable();
   let sql = `SELECT TemplateKey, Category, Country, TemplateText FROM ${TEMPLATE_TABLE}`;
@@ -489,9 +542,13 @@ export async function getSmsTemplates(query = {}) {
   }
   sql += ' ORDER BY Category, TemplateKey';
   const [rows] = await pool.execute(sql, params);
-  const templates = { appointment: {}, recall: {} };
-  const countries = { appointment: {}, recall: {} };
+  const templates = { appointment: {}, recall: {}, review_google: {} };
+  const countries = { appointment: {}, recall: {}, review_google: {} };
   for (const row of rows) {
+    if (!templates[row.Category]) {
+      templates[row.Category] = {};
+      countries[row.Category] = {};
+    }
     templates[row.Category][row.TemplateKey] = row.TemplateText;
     countries[row.Category][row.TemplateKey] = row.Country;
   }
@@ -533,7 +590,7 @@ export async function saveSmsTemplate(body) {
 export async function deleteSmsTemplate(body) {
   await ensureSmsTemplatesTable();
   const key = String(body.templateKey ?? '').trim().toUpperCase();
-  const category = ['appointment', 'recall'].includes(String(body.category ?? '').toLowerCase())
+  const category = ['appointment', 'recall', 'review_google'].includes(String(body.category ?? '').toLowerCase())
     ? String(body.category ?? '').toLowerCase()
     : 'appointment';
   if (!key) {

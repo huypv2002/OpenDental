@@ -162,7 +162,7 @@ export async function listAdminPatients(query = {}) {
   const [rows] = await pool.execute(
     `
       SELECT
-        p.PatNum, p.FName, p.LName, p.WirelessPhone, p.HmPhone, p.WkPhone, p.Email,
+        p.PatNum, p.FName, p.LName, p.WirelessPhone, p.HmPhone, p.WkPhone, p.Email, p.Gender,
         DATE_FORMAT(p.Birthdate, '%Y-%m-%d') AS Birthdate, p.Address, p.City, p.State, p.Zip, p.Language, p.PatStatus,
         DATE_FORMAT(MAX(a.AptDateTime), '%Y-%m-%d %H:%i:%s') AS LastAppointment
       FROM patient p

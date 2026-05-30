@@ -57,47 +57,6 @@ CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Centra
 DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
 SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 SCHEDULE_SEND_GRACE_MINUTES = 30
-DEFAULT_RECALL_TEMPLATES = {
-    "US": (
-        "Good morning {salutation}, this is Luk Dental. Your 6-month cleaning recall is due. "
-        "Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ "
-        "to schedule your appointment. Thank you and have a great day."
-    ),
-    "ES": (
-        "Buenos días {salutation}, le habla Luk Dental. Ya llegó el momento de su limpieza "
-        "de 6 meses. Por favor llame al {clinic_phone} o haga su cita en "
-        "https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día."
-    ),
-    "VI": (
-        "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng "
-        "của {vi_title} đã đến. {vi_title_cap} vui lòng gọi {clinic_phone} hoặc đặt lịch tại "
-        "https://lukdental.us/dental-appointment/. Thank you and have a great day."
-    ),
-}
-DEFAULT_RECALL_TEMPLATE = DEFAULT_RECALL_TEMPLATES["US"]
-OUTDATED_DEFAULT_RECALL_TEMPLATES = {
-    "US": [
-        (
-            "Good morning {first_name}, this is Luk Dental. Your 6-month cleaning recall is due. "
-            "Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ "
-            "to schedule your appointment. Thank you and have a great day."
-        ),
-    ],
-    "ES": [
-        (
-            "Buenos días {first_name}, le habla Luk Dental. Ya llegó el momento de su limpieza "
-            "de 6 meses. Por favor llame al {clinic_phone} o haga su cita en "
-            "https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día."
-        ),
-    ],
-    "VI": [
-        (
-            "Good morning anh/chị {first_name}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng "
-            "của anh/chị đã đến. Anh/chị vui lòng gọi {clinic_phone} hoặc đặt lịch tại "
-            "https://lukdental.us/dental-appointment/. Thank you and have a great day."
-        ),
-    ],
-}
 
 
 def clinic_now() -> datetime:
@@ -111,158 +70,6 @@ def clinic_today() -> date:
 def clinic_qdate(days_ahead: int = 0) -> QDate:
     today = clinic_today()
     return QDate(today.year, today.month, today.day).addDays(days_ahead)
-
-
-def is_managed_appointment_template_variant(key: str, text: str) -> bool:
-    normalized_key = key.upper().strip()
-    normalized_text = " ".join(str(text or "").lower().split())
-    if normalized_key == "US":
-        return (
-            "luk dental" in normalized_text
-            and "appointment" in normalized_text
-            and (
-                "i just remind" in normalized_text
-                or "i send a notification" in normalized_text
-                or "i would like to remind for" in normalized_text
-                or "remind for your appointment" in normalized_text
-                or "{salutation}" in normalized_text
-                or "{first_name}" in normalized_text
-                or "tommorrow" in normalized_text
-                or "appointment today" in normalized_text
-                or "appointment tomorrow" in normalized_text
-            )
-        )
-    if normalized_key == "ES":
-        return (
-            "soy nhan nguyen de luk dental" in normalized_text
-            and "cita" in normalized_text
-            and ("{salutation}" in normalized_text or "de mañana" in normalized_text)
-        )
-    return False
-
-
-DEFAULT_SMS_TEMPLATES = {
-    "US": (
-        "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you "
-        "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
-        "Thank you and have a great day."
-    ),
-    "ES": (
-        "Buenos días {formal_first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
-        "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
-        "Gracias y que tenga un excelente día."
-    ),
-    "VI": (
-        "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {vi_title} "
-        "vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. "
-        "Thank you and have a great day."
-    ),
-}
-
-OUTDATED_DEFAULT_SMS_TEMPLATES = {
-    "US": [
-        (
-            "Good morning {salutation}, I'm Nhan Nguyen from Luk Dental. I just remind you "
-            "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
-            "Thank you and have a great day."
-        ),
-        (
-            "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you "
-            "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
-            "Thank you and have a great day."
-        ),
-        (
-            "Good morning {salutation}, I'm Nhan Nguyen from Luk Dental. I would like to remind you "
-            "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
-            "Thank you and have a great day."
-        ),
-        (
-            "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I just remind you "
-            "of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. "
-            "Thank you and have a great day."
-        ),
-        (
-            "Good morning {salutation}, I'm Nhan Nguyen from Luk Dental. I just remind you "
-            "of your appointment tomorrow, {weekday}, {date_full} at {time_lower}. "
-            "Thank you and have a great day."
-        ),
-        (
-            "Good morning {salutation}, I send a notification from Luk Dental. I  would like to remind "
-            "for your appointment today, {weekday}, {date_full} at {time_lower}. "
-            "Thank you and have a great day."
-        ),
-        (
-            "Good morning {salutation}, I send a notification from Luk Dental. I would like to remind "
-            "for your appointment today, {weekday}, {date_full} at {time_lower}. "
-            "Thank you and have a great day."
-        ),
-        (
-            "Good morning {first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you "
-            "of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. "
-            "Thank you and have a great day."
-        ),
-    ],
-    "ES": [
-        (
-            "Buenos días {salutation}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
-            "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
-            "Gracias y que tenga un excelente día."
-        ),
-        (
-            "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
-            "su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. "
-            "Gracias y que tenga un excelente día."
-        ),
-        (
-            "Buenos días {first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo "
-            "su cita de mañana, {weekday}, {date_full} a las {time_lower}. "
-            "Gracias y que tenga un excelente día."
-        ),
-    ],
-    "VI": [
-        (
-            "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị "
-            "vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. "
-            "Thank you and have a great day anh/chị."
-        ),
-        (
-            "Good morning anh/chị, nha khoa Luk Dental xin nhắc lịch hẹn cho anh/chị "
-            "vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. "
-            "Thank you and have a great day anh/chị."
-        ),
-        (
-            "Good morning {salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {salutation} "
-            "vào ngày mai. {weekday_vi}, {date_short} lúc {time_lower}. "
-            "Thank you and have a great day."
-        ),
-        (
-            "Good morning {salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {salutation} "
-            "vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. "
-            "Thank you and have a great day."
-        ),
-    ],
-}
-
-DEFAULT_TEMPLATE_COUNTRIES = {
-    "US": "US",
-    "ES": "ES",
-    "VI": "VI",
-}
-
-LEGACY_SMS_TEMPLATES = {
-    "US": (
-        "Hi {first_name}, this is {clinic_name} reminding you of your appointment "
-        "on {date} at {time}. Please call {clinic_phone} if you need to change anything."
-    ),
-    "VI": (
-        "Xin chao {first_name}, {clinic_name} xin nhac lich hen cua ban vao {date} luc {time}. "
-        "Vui long goi {clinic_phone} neu can thay doi."
-    ),
-    "ES": (
-        "Hola {first_name}, le recordamos su cita con {clinic_name} el {date} a las {time}. "
-        "Llame al {clinic_phone} si necesita cambiar algo."
-    ),
-}
 
 
 def digits_only(value: str) -> str:
@@ -361,18 +168,16 @@ class AppConfig:
     dry_run: bool = False
     scheduler_enabled: bool = True
     default_template_key: str = "US"
-    sms_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SMS_TEMPLATES))
-    sms_template_countries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TEMPLATE_COUNTRIES))
+    sms_templates: dict[str, str] = field(default_factory=dict)
+    sms_template_countries: dict[str, str] = field(default_factory=dict)
     recall_codes: str = DEFAULT_RECALL_CODES
     recall_months: int = 6
-    recall_template: str = DEFAULT_RECALL_TEMPLATE
-    recall_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_RECALL_TEMPLATES))
-    recall_template_countries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TEMPLATE_COUNTRIES))
-    template_schema_version: int = 2
-    sms_template: str = (
-        "Hi {first_name}, this is {clinic_name} reminding you of your appointment "
-        "on {date} at {time}. Please call {clinic_phone} if you need to change anything."
-    )
+    recall_template: str = ""
+    recall_templates: dict[str, str] = field(default_factory=dict)
+    recall_template_countries: dict[str, str] = field(default_factory=dict)
+    review_link: str = ""
+    review_templates: dict[str, str] = field(default_factory=dict)
+    review_template_countries: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -380,63 +185,19 @@ class AppConfig:
             with CONFIG_PATH.open("r", encoding="utf-8") as file:
                 raw = json.load(file)
             defaults = asdict(cls())
-            known = {key: value for key, value in raw.items() if key in defaults}
+            template_keys = {
+                "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
+                "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
+                "default_template_key", "template_schema_version",
+            }
+            known = {key: value for key, value in raw.items() if key in defaults and key not in template_keys}
             cfg = cls(**{**defaults, **known})
             cfg.dry_run = False
-            if not cfg.sms_templates:
-                cfg.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
-            if not cfg.sms_template_countries:
-                cfg.sms_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
-            if not cfg.recall_templates:
-                cfg.recall_templates = dict(DEFAULT_RECALL_TEMPLATES)
-            if not cfg.recall_template_countries:
-                cfg.recall_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
-            if raw.get("recall_template") and not raw.get("recall_templates"):
-                cfg.recall_templates["US"] = str(raw["recall_template"])
-                cfg.recall_template_countries["US"] = "US"
-            if "sms_template" in raw and raw.get("sms_template") and not raw.get("sms_templates"):
-                cfg.sms_templates["US"] = str(raw["sms_template"])
-                cfg.sms_template_countries["US"] = "US"
-            migrated = False
+            migrated = any(key in raw for key in template_keys)
             if cfg.scheduled_send_time == "09:00":
                 cfg.scheduled_send_time = "11:00"
                 migrated = True
-            for key, legacy_text in LEGACY_SMS_TEMPLATES.items():
-                if cfg.sms_templates.get(key) == legacy_text:
-                    cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
-                    migrated = True
-            for key, outdated_texts in OUTDATED_DEFAULT_SMS_TEMPLATES.items():
-                if cfg.sms_templates.get(key) in outdated_texts or is_managed_appointment_template_variant(key, cfg.sms_templates.get(key, "")):
-                    cfg.sms_templates[key] = DEFAULT_SMS_TEMPLATES[key]
-                    migrated = True
-            for key, outdated_texts in OUTDATED_DEFAULT_RECALL_TEMPLATES.items():
-                if cfg.recall_templates.get(key) in outdated_texts:
-                    cfg.recall_templates[key] = DEFAULT_RECALL_TEMPLATES[key]
-                    migrated = True
-            if int(raw.get("template_schema_version") or 0) < 2:
-                for key, text in DEFAULT_SMS_TEMPLATES.items():
-                    cfg.sms_templates[key] = text
-                    cfg.sms_template_countries[key] = DEFAULT_TEMPLATE_COUNTRIES[key]
-                for key, text in DEFAULT_RECALL_TEMPLATES.items():
-                    cfg.recall_templates[key] = text
-                    cfg.recall_template_countries[key] = DEFAULT_TEMPLATE_COUNTRIES[key]
-                cfg.template_schema_version = 2
-                migrated = True
-            for key in cfg.sms_templates:
-                cfg.sms_template_countries.setdefault(key, infer_template_country(key))
-            for key in cfg.recall_templates:
-                cfg.recall_template_countries.setdefault(key, infer_template_country(key))
-            if "US" not in cfg.sms_templates:
-                cfg.sms_templates["US"] = DEFAULT_SMS_TEMPLATES["US"]
-                cfg.sms_template_countries["US"] = "US"
-                migrated = True
-            if "US" not in cfg.recall_templates:
-                cfg.recall_templates["US"] = DEFAULT_RECALL_TEMPLATES["US"]
-                cfg.recall_template_countries["US"] = "US"
-                migrated = True
             cfg.default_template_key = "US"
-            cfg.sms_template = default_template(cfg)
-            cfg.recall_template = cfg.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
             if migrated:
                 cfg.save()
             return cfg
@@ -455,7 +216,11 @@ class AppConfig:
     def save(self) -> None:
         data = asdict(self)
         # Templates are stored in the bridge database, not in local JSON.
-        for key in ("sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries", "sms_template", "recall_template", "default_template_key", "template_schema_version"):
+        for key in (
+            "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
+            "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
+            "default_template_key", "template_schema_version",
+        ):
             data.pop(key, None)
         CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -514,6 +279,14 @@ class BridgeClient:
                 "statuses": ",".join(str(item) for item in self.config.appointment_statuses or [1]),
                 "limit": 500,
             },
+        )
+        return data.get("patients") or []
+
+    def fetch_patients(self, query: str = "", limit: int = 300) -> list[dict[str, Any]]:
+        data = self.request(
+            "GET",
+            "/api/admin/patients",
+            params={"q": query.strip(), "limit": limit},
         )
         return data.get("patients") or []
 
@@ -576,6 +349,15 @@ class BridgeClient:
 
     def init_default_templates(self) -> dict[str, Any]:
         return self.request("GET", "/api/sms-templates/init")
+
+    def fetch_sms_settings(self) -> dict[str, Any]:
+        return self.request("GET", "/api/sms-settings")
+
+    def save_sms_setting(self, setting_key: str, setting_value: str) -> dict[str, Any]:
+        return self.request("PUT", "/api/sms-settings", json={
+            "settingKey": setting_key,
+            "settingValue": setting_value,
+        })
 
     def add_template(self, template_key: str, category: str, country: str, template_text: str) -> dict[str, Any]:
         return self.request("POST", "/api/sms-templates", json={
@@ -782,6 +564,23 @@ class LoadRecallWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class LoadPatientsWorker(QThread):
+    loaded = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, config: AppConfig, query: str):
+        super().__init__()
+        self.config = config
+        self.query = query
+
+    def run(self) -> None:
+        try:
+            repo = BridgeClient(self.config)
+            self.loaded.emit(repo.fetch_patients(self.query))
+        except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
+            self.failed.emit(str(exc))
+
+
 def reminder_log_key(row: dict[str, Any], phone: str | None = None) -> tuple[str, str, str, str]:
     try:
         reminder_date = parse_datetime(row.get("AptDateTime")).date().isoformat()
@@ -899,7 +698,7 @@ def vietnamese_salutation(row: dict[str, Any]) -> str:
 def default_template(config: AppConfig) -> str:
     if config.default_template_key in config.sms_templates:
         return config.sms_templates[config.default_template_key]
-    return next(iter(config.sms_templates.values()), config.sms_template)
+    return next(iter(config.sms_templates.values()), "")
 
 
 def template_label(key: str) -> str:
@@ -931,6 +730,10 @@ def template_key_for_language(config: AppConfig, language: str | None) -> str:
 
 def recall_template_key_for_language(config: AppConfig, language: str | None) -> str:
     return template_key_for_language_keys(config.recall_templates.keys(), language)
+
+
+def review_template_key_for_language(config: AppConfig, language: str | None) -> str:
+    return template_key_for_language_keys(config.review_templates.keys(), language)
 
 
 def template_key_for_language_keys(keys: Any, language: str | None) -> str:
@@ -973,6 +776,7 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
     return template.format(
         clinic_name=config.clinic_name,
         clinic_phone=config.clinic_phone,
+        review_link=config.review_link,
         first_name=first_name,
         formal_first_name=patient_formal_first_name(row),
         last_name=str(row.get("LName") or "").strip(),
@@ -1007,10 +811,12 @@ class SmsReminderWindow(QMainWindow):
         self.repo = BridgeClient(self.config)
         self.appointments: list[dict[str, Any]] = []
         self.recall_patients: list[dict[str, Any]] = []
+        self.review_patients: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
         self.active_send_kind = "appointments"
         self.load_worker: LoadAppointmentsWorker | None = None
         self.recall_load_worker: LoadRecallWorker | None = None
+        self.review_load_worker: LoadPatientsWorker | None = None
         self.queued_load = False
         self.send_after_load = False
         self.monitor_send_queue: list[date] = []
@@ -1020,10 +826,13 @@ class SmsReminderWindow(QMainWindow):
         self.monitoring_active = False
         self.row_template_combos: dict[int, QComboBox] = {}
         self.recall_template_combos: dict[int, QComboBox] = {}
+        self.review_template_combos: dict[int, QComboBox] = {}
         self.activity_messages: list[str] = []
         self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
         self._restoring_column_widths: set[str] = set()
+        if self.config.bridge_url and self.config.api_token:
+            self.load_templates_from_bridge()
 
         self.setWindowTitle("LUK Dental SMS Reminder Tool")
         self.resize(1540, 920)
@@ -1036,6 +845,7 @@ class SmsReminderWindow(QMainWindow):
         self.tabs.addTab(self.build_dashboard_tab(), "Dashboard")
         self.tabs.addTab(self.build_monitoring_tab(), "Monitoring")
         self.tabs.addTab(self.build_recall_tab(), "Recall")
+        self.tabs.addTab(self.build_review_google_tab(), "Review Google")
         self.tabs.addTab(self.build_templates_tab(), "Templates")
         self.tabs.addTab(self.build_settings_tab(), "Settings")
         self.tabs.addTab(self.build_logs_tab(), "Logs")
@@ -1061,48 +871,34 @@ class SmsReminderWindow(QMainWindow):
 
     def load_templates_from_bridge(self) -> None:
         try:
-            local_sms_templates = dict(self.config.sms_templates or {})
-            local_sms_countries = dict(self.config.sms_template_countries or {})
-            local_recall_templates = dict(self.config.recall_templates or {})
-            local_recall_countries = dict(self.config.recall_template_countries or {})
             data = self.repo.fetch_templates()
             tmpl = data.get("templates") or data or {}
             countries = data.get("countries") or {}
-            bridge_sms_templates = tmpl.get("appointment") or {}
-            bridge_sms_countries = countries.get("appointment") or {}
-            bridge_recall_templates = tmpl.get("recall") or {}
-            bridge_recall_countries = countries.get("recall") or {}
+            if not (tmpl.get("appointment") and tmpl.get("recall") and tmpl.get("review_google")):
+                self.repo.init_default_templates()
+                data = self.repo.fetch_templates()
+                tmpl = data.get("templates") or data or {}
+                countries = data.get("countries") or {}
+            settings_data = self.repo.fetch_sms_settings()
+            sms_settings = settings_data.get("settings") or {}
 
-            for key, text in local_sms_templates.items():
-                if key not in bridge_sms_templates and text:
-                    country = str(local_sms_countries.get(key) or infer_template_country(key)).upper()
-                    self.repo.save_template(key, "appointment", country, text)
-                    bridge_sms_templates[key] = text
-                    bridge_sms_countries[key] = country
-            for key, text in local_recall_templates.items():
-                if key not in bridge_recall_templates and text:
-                    country = str(local_recall_countries.get(key) or infer_template_country(key)).upper()
-                    self.repo.save_template(key, "recall", country, text)
-                    bridge_recall_templates[key] = text
-                    bridge_recall_countries[key] = country
-
-            self.config.sms_templates = bridge_sms_templates or dict(DEFAULT_SMS_TEMPLATES)
-            self.config.sms_template_countries = bridge_sms_countries or dict(DEFAULT_TEMPLATE_COUNTRIES)
-            self.config.recall_templates = bridge_recall_templates or dict(DEFAULT_RECALL_TEMPLATES)
-            self.config.recall_template_countries = bridge_recall_countries or dict(DEFAULT_TEMPLATE_COUNTRIES)
-            if not self.config.sms_templates:
-                self.config.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
-                self.config.sms_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
-            if not self.config.recall_templates:
-                self.config.recall_templates = dict(DEFAULT_RECALL_TEMPLATES)
-                self.config.recall_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
+            self.config.sms_templates = tmpl.get("appointment") or {}
+            self.config.sms_template_countries = countries.get("appointment") or {}
+            self.config.recall_templates = tmpl.get("recall") or {}
+            self.config.recall_template_countries = countries.get("recall") or {}
+            self.config.review_templates = tmpl.get("review_google") or {}
+            self.config.review_template_countries = countries.get("review_google") or {}
+            self.config.review_link = str(sms_settings.get("review_link") or "")
             self.config.sms_template = default_template(self.config)
-            self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            self.config.recall_template = self.config.recall_templates.get("US", "")
         except Exception:
-            self.config.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
-            self.config.sms_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
-            self.config.recall_templates = dict(DEFAULT_RECALL_TEMPLATES)
-            self.config.recall_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
+            self.config.sms_templates = {}
+            self.config.sms_template_countries = {}
+            self.config.recall_templates = {}
+            self.config.recall_template_countries = {}
+            self.config.review_templates = {}
+            self.config.review_template_countries = {}
+            self.config.review_link = ""
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
         super().resizeEvent(event)
@@ -1343,8 +1139,11 @@ class SmsReminderWindow(QMainWindow):
         self.schedule_time = QTimeEdit(QTime.fromString(self.config.scheduled_send_time, "HH:mm"))
         self.schedule_time.setDisplayFormat("HH:mm")
         self.statuses = QLineEdit(",".join(str(item) for item in self.config.appointment_statuses))
+        self.review_link = QLineEdit(self.config.review_link)
+        self.review_link.setPlaceholderText("Google review URL")
         sms_form.addRow("Clinic name", self.clinic_name)
         sms_form.addRow("Clinic phone", self.clinic_phone)
+        sms_form.addRow("Google review link", self.review_link)
         sms_form.addRow("Reminder days ahead", self.days_ahead)
         sms_form.addRow("Daily send time", self.schedule_time)
         sms_form.addRow("Appointment statuses", self.statuses)
@@ -1511,6 +1310,78 @@ class SmsReminderWindow(QMainWindow):
         layout.addWidget(table_card, 1)
         return page
 
+    def build_review_google_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(16)
+
+        hero = self.card("HeroCard")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(24, 22, 24, 22)
+        eyebrow = QLabel("GOOGLE REVIEW")
+        eyebrow.setObjectName("Eyebrow")
+        title = QLabel("Manual Google review SMS")
+        title.setObjectName("HeroTitle")
+        subtitle = QLabel("Search patients, choose a review template, then fill Phone Link manually. This tab never auto-sends SMS.")
+        subtitle.setObjectName("HeroSubtitle")
+        hero_layout.addWidget(eyebrow)
+        hero_layout.addWidget(title)
+        hero_layout.addWidget(subtitle)
+        layout.addWidget(hero)
+
+        controls_card = self.card()
+        controls = QHBoxLayout(controls_card)
+        controls.setContentsMargins(18, 14, 18, 14)
+        controls.setSpacing(12)
+        controls.addWidget(QLabel("Patient filter"))
+        self.review_search = QLineEdit()
+        self.review_search.setPlaceholderText("Patient, phone, email, patient #...")
+        self.review_search.returnPressed.connect(self.load_review_patients)
+        controls.addWidget(self.review_search, 1)
+        self.load_review_button = QPushButton("Load patients")
+        self.load_review_button.clicked.connect(self.load_review_patients)
+        self.manage_review_templates_button = QPushButton("Review templates")
+        self.manage_review_templates_button.clicked.connect(self.open_review_templates_popup)
+        self.preview_review_button = QPushButton("Preview selected")
+        self.preview_review_button.clicked.connect(self.preview_review_selected)
+        self.fill_review_button = QPushButton("Fill selected template")
+        self.fill_review_button.setObjectName("PrimaryButton")
+        self.fill_review_button.clicked.connect(self.fill_selected_review_template)
+        controls.addWidget(self.load_review_button)
+        controls.addWidget(self.manage_review_templates_button)
+        controls.addWidget(self.preview_review_button)
+        controls.addWidget(self.fill_review_button)
+        layout.addWidget(controls_card)
+
+        table_card = self.card()
+        table_layout = QVBoxLayout(table_card)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        self.review_table = QTableWidget(0, 7)
+        self.review_table.setHorizontalHeaderLabels(["Patient", "Phone", "Email", "Language", "Last visit", "Pat #", "Template"])
+        self.configure_resizable_columns(
+            self.review_table,
+            "review_google/patient_column_widths",
+            {
+                0: 220,
+                1: 320,
+                2: 220,
+                3: 120,
+                4: 130,
+                5: 90,
+                6: 190,
+            },
+        )
+        self.review_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.review_table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self.review_table.verticalHeader().setVisible(False)
+        self.review_table.setAlternatingRowColors(True)
+        self.review_table.setShowGrid(False)
+        self.review_table.verticalHeader().setDefaultSectionSize(46)
+        table_layout.addWidget(self.review_table)
+        layout.addWidget(table_card, 1)
+        return page
+
     def build_templates_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -1612,6 +1483,8 @@ class SmsReminderWindow(QMainWindow):
 
     def reload_templates_from_bridge(self) -> None:
         self.load_templates_from_bridge()
+        if hasattr(self, "review_link"):
+            self.review_link.setText(self.config.review_link)
         self.refresh_template_controls()
         self.refresh_table_template_combos()
         QMessageBox.information(self, "Templates reloaded", "Templates have been reloaded from the bridge database.")
@@ -1666,7 +1539,7 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.information(self, "Template exists", "That template already exists.")
             return
         country = infer_template_country(key)
-        template_text = self.config.sms_templates.get("US") or list(self.config.sms_templates.values())[0]
+        template_text = self.config.sms_templates.get("US") or next(iter(self.config.sms_templates.values()), "")
         try:
             self.repo.add_template(key, "appointment", country, template_text)
             self.load_templates_from_bridge()
@@ -1793,7 +1666,7 @@ class SmsReminderWindow(QMainWindow):
                 QMessageBox.information(dialog, "Template exists", "That recall template already exists.")
                 return
             country = infer_template_country(key)
-            default_text = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+            default_text = self.config.recall_templates.get("US") or next(iter(self.config.recall_templates.values()), "")
             try:
                 self.repo.add_template(key, "recall", country, default_text)
                 self.load_templates_from_bridge()
@@ -1879,6 +1752,153 @@ class SmsReminderWindow(QMainWindow):
         refresh("US")
         dialog.exec()
 
+    def open_review_templates_popup(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Google review SMS templates")
+        dialog.resize(900, 620)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 18, 20, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Google review SMS templates")
+        title.setObjectName("HeroTitle")
+        layout.addWidget(title)
+
+        form_card = self.card()
+        form = QGridLayout(form_card)
+        form.setContentsMargins(18, 16, 18, 18)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(14)
+
+        select = QComboBox()
+        select.setIconSize(QSize(30, 22))
+        name = QLineEdit()
+        country_select = QComboBox()
+        for country in ("US", "VI", "ES"):
+            country_select.addItem(template_icon(country), country, country)
+        country_select.setIconSize(QSize(30, 22))
+        text = QTextEdit()
+        text.setMinimumHeight(280)
+
+        def refresh(selected_key: str | None = None) -> None:
+            current = selected_key or str(select.currentData() or "US")
+            select.blockSignals(True)
+            select.clear()
+            for key in sorted(self.config.review_templates):
+                country = str(self.config.review_template_countries.get(key) or infer_template_country(key)).upper()
+                select.addItem(template_icon(country), template_label(key), key)
+            index = select.findData(current)
+            if index < 0:
+                index = max(0, select.findData("US"))
+            select.setCurrentIndex(index)
+            select.blockSignals(False)
+            load_current()
+
+        def current_key() -> str:
+            return str(select.currentData() or select.currentText() or "US").strip().upper()
+
+        def load_current(*_args: Any) -> None:
+            key = current_key()
+            name.setText(key)
+            country = str(self.config.review_template_countries.get(key) or infer_template_country(key)).upper()
+            country_index = country_select.findData(country)
+            country_select.setCurrentIndex(country_index if country_index >= 0 else 0)
+            text.setPlainText(self.config.review_templates.get(key, ""))
+
+        def add_template() -> None:
+            key, ok = QInputDialog.getText(dialog, "Add review template", "Template key, for example US_REVIEW_2 or VI_REVIEW:")
+            if not ok:
+                return
+            key = key.strip().upper()
+            if not key:
+                return
+            if key in self.config.review_templates:
+                QMessageBox.information(dialog, "Template exists", "That Google review template already exists.")
+                return
+            country = infer_template_country(key)
+            default_text = self.config.review_templates.get("US") or next(iter(self.config.review_templates.values()), "")
+            try:
+                self.repo.add_template(key, "review_google", country, default_text)
+                self.load_templates_from_bridge()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Failed to add review template", str(exc))
+                return
+            refresh(key)
+            self.refresh_table_template_combos()
+            QMessageBox.information(dialog, "Template added", f"Google review template {key} was added successfully.")
+
+        def save_template() -> None:
+            old_key = current_key()
+            new_key = name.text().strip().upper()
+            body = text.toPlainText().strip()
+            country = str(country_select.currentData() or infer_template_country(new_key)).upper()
+            if not new_key or not body:
+                QMessageBox.warning(dialog, "Template required", "Template key and message are required.")
+                return
+            try:
+                if old_key != new_key and old_key in self.config.review_templates and old_key != "US":
+                    self.repo.delete_template(old_key, "review_google")
+                self.repo.save_template(new_key, "review_google", country, body)
+                self.load_templates_from_bridge()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Failed to save review template", str(exc))
+                return
+            refresh(new_key)
+            self.refresh_table_template_combos()
+            QMessageBox.information(dialog, "Template saved", f"Google review template {new_key} was saved successfully.")
+
+        def delete_template() -> None:
+            key = current_key()
+            if len(self.config.review_templates) <= 1 or key == "US":
+                QMessageBox.warning(dialog, "Cannot delete", "The default US Google review template must remain available.")
+                return
+            confirm = QMessageBox.question(dialog, "Delete review template?", f"Delete Google review template {key}?")
+            if confirm != QMessageBox.Yes:
+                return
+            try:
+                self.repo.delete_template(key, "review_google")
+                self.load_templates_from_bridge()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Failed to delete review template", str(exc))
+                return
+            refresh("US")
+            self.refresh_table_template_combos()
+            QMessageBox.information(dialog, "Template deleted", f"Google review template {key} was deleted successfully.")
+
+        select.currentTextChanged.connect(load_current)
+        form.addWidget(QLabel("Edit template"), 0, 0)
+        form.addWidget(select, 0, 1)
+        form.addWidget(QLabel("Template key"), 1, 0)
+        form.addWidget(name, 1, 1)
+        form.addWidget(QLabel("Country flag"), 1, 2)
+        form.addWidget(country_select, 1, 3)
+        form.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
+        form.addWidget(text, 2, 1, 1, 3)
+        helper = QLabel("Placeholders: {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {age}, {clinic_phone}, {review_link}")
+        helper.setObjectName("Muted")
+        helper.setWordWrap(True)
+        form.addWidget(helper, 3, 1, 1, 3)
+        layout.addWidget(form_card, 1)
+
+        actions = QHBoxLayout()
+        add_button = QPushButton("Add template")
+        delete_button = QPushButton("Delete template")
+        save_button = QPushButton("Save template")
+        save_button.setObjectName("PrimaryButton")
+        close_button = QPushButton("Close")
+        add_button.clicked.connect(add_template)
+        delete_button.clicked.connect(delete_template)
+        save_button.clicked.connect(save_template)
+        close_button.clicked.connect(dialog.accept)
+        actions.addStretch()
+        actions.addWidget(add_button)
+        actions.addWidget(delete_button)
+        actions.addWidget(save_button)
+        actions.addWidget(close_button)
+        layout.addLayout(actions)
+        refresh("US")
+        dialog.exec()
+
     def save_settings(self, silent: bool = False) -> None:
         try:
             statuses = [int(part.strip()) for part in self.statuses.text().split(",") if part.strip()]
@@ -1893,15 +1913,23 @@ class SmsReminderWindow(QMainWindow):
         self.config.scheduled_send_time = self.schedule_time.time().toString("HH:mm")
         self.config.appointment_statuses = statuses or [1]
         self.config.dry_run = False
+        if hasattr(self, "review_link"):
+            self.config.review_link = self.review_link.text().strip()
         if hasattr(self, "recall_codes"):
             self.config.recall_codes = self.recall_codes.text().strip() or DEFAULT_RECALL_CODES
         if hasattr(self, "recall_months"):
             self.config.recall_months = self.recall_months.value()
         self.config.default_template_key = "US"
         self.config.sms_template = default_template(self.config)
-        self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
+        self.config.recall_template = self.config.recall_templates.get("US", "")
         self.config.save()
         self.repo = BridgeClient(self.config)
+        if hasattr(self, "review_link"):
+            try:
+                self.repo.save_sms_setting("review_link", self.config.review_link)
+            except Exception as exc:
+                if not silent:
+                    QMessageBox.warning(self, "Review link not saved", str(exc))
         self.update_dry_run_badge()
         self.update_monitoring_status()
         self.refresh_template_controls()
@@ -2062,7 +2090,16 @@ class SmsReminderWindow(QMainWindow):
         row["_Recall"] = True
         key = recall_template_key_for_language(self.config, row.get("Language"))
         row["_TemplateKey"] = key
-        row["_TemplateText"] = self.config.recall_templates.get(key, DEFAULT_RECALL_TEMPLATE)
+        row["_TemplateText"] = self.config.recall_templates.get(key, "")
+        return row
+
+    def normalize_review_patient_phone_targets(self, patient: dict[str, Any]) -> dict[str, Any]:
+        row = self.normalize_patient_phone_targets(patient)
+        row.pop("_Recall", None)
+        key = review_template_key_for_language(self.config, row.get("Language"))
+        row["_TemplateKey"] = key
+        row["_TemplateText"] = self.config.review_templates.get(key, "")
+        row["_TemplateCountry"] = str(self.config.review_template_countries.get(key) or infer_template_country(key)).upper()
         return row
 
     def load_recall_patients(self) -> None:
@@ -2085,6 +2122,28 @@ class SmsReminderWindow(QMainWindow):
 
     def recall_patients_failed(self, message: str) -> None:
         QMessageBox.critical(self, "Recall load error", message)
+
+    def load_review_patients(self) -> None:
+        if self.review_load_worker and self.review_load_worker.isRunning():
+            QMessageBox.information(self, "Loading", "Review patient list is already loading.")
+            return
+        self.save_settings(silent=True)
+        self.load_review_button.setEnabled(False)
+        query = self.review_search.text().strip() if hasattr(self, "review_search") else ""
+        self.statusBar().showMessage("Loading patients for Google review SMS...", 4000)
+        self.review_load_worker = LoadPatientsWorker(self.config, query)
+        self.review_load_worker.loaded.connect(self.review_patients_loaded)
+        self.review_load_worker.failed.connect(self.review_patients_failed)
+        self.review_load_worker.finished.connect(lambda: self.load_review_button.setEnabled(True))
+        self.review_load_worker.start()
+
+    def review_patients_loaded(self, patients: list[dict[str, Any]]) -> None:
+        self.review_patients = [self.normalize_review_patient_phone_targets(patient) for patient in patients]
+        self.render_review_patients()
+        self.statusBar().showMessage(f"Loaded {len(self.review_patients)} patients for Google review SMS.", 4000)
+
+    def review_patients_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "Review patient load error", message)
 
     def render_recall_patients(self) -> None:
         self.recall_template_combos = {}
@@ -2116,6 +2175,31 @@ class SmsReminderWindow(QMainWindow):
                     item.setForeground(QColor("#9aa3ad"))
                 self.recall_table.setItem(row_index, col, item)
 
+    def render_review_patients(self) -> None:
+        self.review_template_combos = {}
+        self.review_table.setRowCount(len(self.review_patients))
+        for row_index, row in enumerate(self.review_patients):
+            values = [
+                patient_name(row),
+                row.get("Phone", ""),
+                row.get("Email", ""),
+                row.get("Language", ""),
+                display_date(row.get("LastAppointment") or row.get("DateTimeLastAppt")),
+                row.get("PatNum", ""),
+                "",
+            ]
+            for col, value in enumerate(values):
+                if col == 6:
+                    combo = QComboBox()
+                    self.populate_review_template_combo(combo, row.get("_TemplateKey") or review_template_key_for_language(self.config, row.get("Language")))
+                    self.review_table.setCellWidget(row_index, col, combo)
+                    self.review_template_combos[row_index] = combo
+                    continue
+                item = QTableWidgetItem(str(value or ""))
+                if col == 5:
+                    item.setTextAlignment(Qt.AlignCenter)
+                self.review_table.setItem(row_index, col, item)
+
     def selected_recall_patients(self) -> list[dict[str, Any]]:
         rows = sorted({index.row() for index in self.recall_table.selectedIndexes()})
         selected: list[dict[str, Any]] = []
@@ -2124,8 +2208,21 @@ class SmsReminderWindow(QMainWindow):
             combo = self.recall_template_combos.get(row)
             key = str(combo.currentData() or patient.get("_TemplateKey") or "US") if combo else str(patient.get("_TemplateKey") or "US")
             patient["_TemplateKey"] = key
-            patient["_TemplateText"] = self.config.recall_templates.get(key) or DEFAULT_RECALL_TEMPLATE
+            patient["_TemplateText"] = self.config.recall_templates.get(key) or ""
             patient["_TemplateCountry"] = str(self.config.recall_template_countries.get(key) or infer_template_country(key)).upper()
+            selected.append(patient)
+        return selected
+
+    def selected_review_patients(self) -> list[dict[str, Any]]:
+        rows = sorted({index.row() for index in self.review_table.selectedIndexes()})
+        selected: list[dict[str, Any]] = []
+        for row in rows:
+            patient = dict(self.review_patients[row])
+            combo = self.review_template_combos.get(row)
+            key = str(combo.currentData() or patient.get("_TemplateKey") or "US") if combo else str(patient.get("_TemplateKey") or "US")
+            patient["_TemplateKey"] = key
+            patient["_TemplateText"] = self.config.review_templates.get(key) or ""
+            patient["_TemplateCountry"] = str(self.config.review_template_countries.get(key) or infer_template_country(key)).upper()
             selected.append(patient)
         return selected
 
@@ -2136,7 +2233,7 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.information(self, "No selection", "Please select one recall patient.")
             return
         patient = selected[0]
-        message = render_message(self.config, patient, patient.get("_TemplateText") or DEFAULT_RECALL_TEMPLATE)
+        message = render_message(self.config, patient, patient.get("_TemplateText") or "")
         QMessageBox.information(
             self,
             "Recall SMS preview",
@@ -2176,7 +2273,7 @@ class SmsReminderWindow(QMainWindow):
                 return
             index = options.index(chosen)
             target = targets[index]
-        message = render_message(self.config, patient, patient.get("_TemplateText") or DEFAULT_RECALL_TEMPLATE)
+        message = render_message(self.config, patient, patient.get("_TemplateText") or "")
         try:
             PhoneLinkSender(dry_run=False).compose_sms(target.get("phone", ""), message)
             self.append_activity(f"FILLED RECALL: {patient_name(patient)} {target.get('source')} -> {target.get('phone')}")
@@ -2190,6 +2287,59 @@ class SmsReminderWindow(QMainWindow):
                 self.repo.log_recall_result(patient, message, "sent", phone=target.get("phone", ""))
                 self.append_activity(f"MARKED SENT: {patient_name(patient)} {target.get('source')} -> {target.get('phone')}")
                 self.load_recall_patients()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Phone Link error", str(exc))
+
+    def preview_review_selected(self) -> None:
+        self.save_settings(silent=True)
+        selected = self.selected_review_patients()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select one patient.")
+            return
+        patient = selected[0]
+        message = render_message(self.config, patient, patient.get("_TemplateText") or "")
+        QMessageBox.information(
+            self,
+            "Google review SMS preview",
+            f"To: {patient_name(patient)}\nPhone: {patient.get('Phone', '')}\n\n{message}",
+        )
+
+    def fill_selected_review_template(self) -> None:
+        self.save_settings(silent=True)
+        selected = self.selected_review_patients()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select one patient.")
+            return
+        if len(selected) != 1:
+            QMessageBox.information(self, "One patient only", "Please select one patient at a time for manual Google review SMS.")
+            return
+        patient = selected[0]
+        targets = [
+            target for target in patient.get("PhoneTargets", [])
+            if digits_only(target.get("phone", ""))
+        ]
+        if not targets:
+            QMessageBox.warning(self, "Missing phone", "This patient does not have a valid phone number.")
+            return
+        target = targets[0]
+        if len(targets) > 1:
+            options = [f"{item.get('source')}: {item.get('phone')}" for item in targets]
+            chosen, ok = QInputDialog.getItem(self, "Choose phone", "Fill to:", options, 0, False)
+            if not ok:
+                return
+            target = targets[options.index(chosen)]
+        message = render_message(self.config, patient, patient.get("_TemplateText") or "")
+        if not message.strip():
+            QMessageBox.warning(self, "Missing template", "Please choose a Google review template first.")
+            return
+        try:
+            PhoneLinkSender(dry_run=False).compose_sms(target.get("phone", ""), message)
+            self.append_activity(f"FILLED REVIEW: {patient_name(patient)} {target.get('source')} -> {target.get('phone')}")
+            QMessageBox.information(
+                self,
+                "Template filled",
+                "The Google review SMS was filled in Phone Link.\n\nPlease review it and click Send manually.",
+            )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Phone Link error", str(exc))
 
@@ -2276,6 +2426,25 @@ class SmsReminderWindow(QMainWindow):
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
 
+    def populate_review_template_combo(self, combo: QComboBox, selected_key: str | None = None) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.setObjectName("TemplateCombo")
+        combo.setFixedHeight(34)
+        combo.setMinimumWidth(168)
+        combo.setIconSize(QSize(30, 20))
+        combo.setToolTip("Choose Google review SMS template")
+        for key in sorted(self.config.review_templates):
+            country = str(self.config.review_template_countries.get(key) or infer_template_country(key)).upper()
+            combo.addItem(template_icon(country), template_label(key), key)
+            combo.setItemData(combo.count() - 1, template_label(key), Qt.ToolTipRole)
+        selected = selected_key or "US"
+        index = combo.findData(selected)
+        if index < 0:
+            index = combo.findData("US")
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
     def refresh_table_template_combos(self) -> None:
         for combo in self.row_template_combos.values():
             current = str(combo.currentData() or self.config.default_template_key)
@@ -2283,6 +2452,9 @@ class SmsReminderWindow(QMainWindow):
         for combo in getattr(self, "recall_template_combos", {}).values():
             current = str(combo.currentData() or "US")
             self.populate_recall_template_combo(combo, current)
+        for combo in getattr(self, "review_template_combos", {}).values():
+            current = str(combo.currentData() or "US")
+            self.populate_review_template_combo(combo, current)
 
     def appointment_with_template(self, row_index: int) -> dict[str, Any]:
         appointment = dict(self.appointments[row_index])

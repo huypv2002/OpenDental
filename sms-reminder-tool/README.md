@@ -43,7 +43,7 @@ The bridge server handles Open Dental database access and creates/updates the `l
 
 ## First Test
 
-1. Keep `dry_run` enabled.
+1. Keep Phone Link open and paired.
 2. Open the app.
 3. Set the bridge URL and API token in `Settings`.
 4. Click `Test bridge connection`.
@@ -51,8 +51,7 @@ The bridge server handles Open Dental database access and creates/updates the `l
 6. The app loads the reminder target date automatically.
 7. Review or change the `Template` column for each patient if needed.
 8. Click `Send all not sent`, or leave monitoring running for the configured send time.
-9. Confirm the logs show `dry-run`.
-10. Turn off dry run only after confirming Phone Link is ready.
+9. Confirm the bridge logs show `sent` for successfully sent messages.
 
 ## Sending Behavior
 
@@ -60,9 +59,11 @@ Phone Link is controlled through Windows UI automation, so this app sends remind
 
 ## Template Management
 
-Use the `Templates` tab to add, edit, and delete templates. Templates are stored in the bridge database table `luk_sms_templates`, so multiple workstations share the same template list. The local `sms_config.json` keeps only workstation settings such as bridge URL, token, schedule time, and reminder statuses.
+Use the `Templates` tab to add, edit, and delete appointment templates. Recall and Google review templates are managed from their own tabs. Templates are stored in the bridge database table `luk_sms_templates`, so multiple workstations share the same template list. The local `sms_config.json` keeps only workstation settings such as bridge URL, token, schedule time, and reminder statuses. The Google review link is stored in the bridge database as an SMS setting, not in local JSON.
 
 The dashboard also has a `Template` column so a staff member can choose the correct language/country template for each appointment before sending.
+
+The `Review Google` tab searches patients and fills Phone Link with a review request message. It does not auto-send SMS and does not run under monitoring.
 
 ## SMS Template Placeholders
 
@@ -70,6 +71,7 @@ Available placeholders:
 
 - `{clinic_name}`
 - `{clinic_phone}`
+- `{review_link}`
 - `{first_name}`
 - `{last_name}`
 - `{patient_name}`
