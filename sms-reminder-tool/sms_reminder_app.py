@@ -1074,14 +1074,15 @@ class SmsReminderWindow(QMainWindow):
             if not self.config.recall_templates:
                 self.config.recall_templates = dict(DEFAULT_RECALL_TEMPLATES)
                 self.config.recall_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
+            self.config.sms_template = default_template(self.config)
+            self.config.recall_template = self.config.recall_templates.get("US", DEFAULT_RECALL_TEMPLATE)
         except Exception:
             self.config.sms_templates = dict(DEFAULT_SMS_TEMPLATES)
             self.config.sms_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
             self.config.recall_templates = dict(DEFAULT_RECALL_TEMPLATES)
             self.config.recall_template_countries = dict(DEFAULT_TEMPLATE_COUNTRIES)
 
-
-        def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
         super().resizeEvent(event)
         self.update_loading_overlay_geometry()
         self.fill_configured_tables()
