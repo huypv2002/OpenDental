@@ -28,6 +28,7 @@ import { exportAppointmentReport, parseAppointmentReportBody } from './reports.j
 import {
   addSmsTemplate,
   deleteSmsTemplate,
+  ensureSmsTemplatesTable,
   getSmsTemplates,
   initDefaultSmsTemplates,
   saveSmsTemplate,
@@ -37,11 +38,6 @@ import {
   getSmsReminderLogs,
   logSmsRecallResult,
   logSmsReminderResult,
-  addSmsTemplate,
-  deleteSmsTemplate,
-  getSmsTemplates,
-  initDefaultSmsTemplates,
-  saveSmsTemplate,
   resetSmsReminderLog
 } from './smsReminders.js';
 import { getAvailableSlots, getAvailableSlotsRange, getReferenceData, parseSlotQuery, parseSlotRangeQuery } from './slots.js';
@@ -356,6 +352,17 @@ app.use((error, _req, res, _next) => {
     ok: false,
     error: error.message || 'Internal server error.'
   });
+});
+
+// Auto-create SMS template tables and seed defaults on startup
+ensureSmsTemplatesTable().then(() => initDefaultSmsTemplates()).then((init) => {
+  if (init.initialized) {
+    console.log(`SMS templates: seeded ${init.count} default templates.`);
+  } else {
+    console.log(`SMS templates: table ready (${init.reason}).`);
+  }
+}).catch((error) => {
+  console.warn(`SMS templates init skipped: ${error.message}`);
 });
 
 const server = app.listen(config.port, '0.0.0.0', () => {
