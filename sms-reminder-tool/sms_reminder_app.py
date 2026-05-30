@@ -1549,10 +1549,13 @@ class SmsReminderWindow(QMainWindow):
         template_layout.addWidget(helper, 3, 1, 1, 3)
         template_actions = QHBoxLayout()
         template_actions.addStretch()
+        self.reload_templates_button = QPushButton("Reload from Bridge")
+        template_actions.addWidget(self.reload_templates_button)
         template_actions.addWidget(self.add_template_button)
         template_actions.addWidget(self.delete_template_button)
         template_actions.addWidget(self.save_template_button)
         template_layout.addLayout(template_actions, 4, 1, 1, 3)
+        self.reload_templates_button.clicked.connect(self.reload_templates_from_bridge)
         layout.addWidget(template_card)
         layout.addStretch()
         self.refresh_template_controls()
@@ -1584,6 +1587,13 @@ class SmsReminderWindow(QMainWindow):
         logs_layout.addWidget(self.logs_table)
         layout.addWidget(logs_card)
         return page
+
+    def reload_templates_from_bridge(self) -> None:
+        self.load_templates_from_bridge()
+        self.refresh_template_controls()
+        self.refresh_table_template_combos()
+        QMessageBox.information(self, "Templates reloaded", "Templates have been reloaded from the bridge database.")
+        self.statusBar().showMessage("Templates reloaded from bridge.", 4000)
 
     def refresh_template_controls(self) -> None:
         if not hasattr(self, "template_select"):
