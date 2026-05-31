@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 
 
 APP_DIR = Path(__file__).resolve().parent
+APP_ICON_PATH = APP_DIR / "tooth.ico"
 FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
@@ -1040,6 +1041,8 @@ class SmsReminderWindow(QMainWindow):
             self.load_templates_from_bridge()
 
         self.setWindowTitle("LUK Dental SMS Reminder Tool")
+        if APP_ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self.resize(1680, 980)
         self.setStyleSheet(APP_STYLES)
 
@@ -5224,6 +5227,8 @@ QStatusBar {
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("LUK Dental SMS Reminder Tool")
+    if APP_ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     font = QFont("Segoe UI", 9)
     app.setFont(font)
     window = SmsReminderWindow()
