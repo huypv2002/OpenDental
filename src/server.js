@@ -31,9 +31,11 @@ import {
   ensureSmsCampaignLogTable,
   ensureSmsSettingsTable,
   ensureSmsTemplatesTable,
+  ensureSmsTreatmentLogTable,
   getSmsBirthdayCandidates,
   getSmsSettings,
   getSmsTemplates,
+  getSmsTreatmentCandidates,
   initDefaultSmsTemplates,
   saveSmsTemplate,
   saveSmsSetting,
@@ -44,6 +46,7 @@ import {
   logSmsCampaignResult,
   logSmsRecallResult,
   logSmsReminderResult,
+  logSmsTreatmentResult,
   resetSmsReminderLog
 } from './smsReminders.js';
 import { getAvailableSlots, getAvailableSlotsRange, getReferenceData, parseSlotQuery, parseSlotRangeQuery } from './slots.js';
@@ -231,6 +234,24 @@ app.post('/api/sms-reminders/recall-log', requireApiToken, async (req, res, next
   }
 });
 
+app.get('/api/sms-reminders/treatment-candidates', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getSmsTreatmentCandidates(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/sms-reminders/treatment-log', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await logSmsTreatmentResult(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/sms-reminders/birthday-candidates', requireApiToken, async (req, res, next) => {
   try {
     const data = await getSmsBirthdayCandidates(req.query);
@@ -397,7 +418,7 @@ app.use((error, _req, res, _next) => {
 });
 
 // Auto-create SMS template/settings tables and seed defaults on startup
-ensureSmsTemplatesTable().then(() => ensureSmsSettingsTable()).then(() => ensureSmsCampaignLogTable()).then(() => initDefaultSmsTemplates()).then((init) => {
+ensureSmsTemplatesTable().then(() => ensureSmsSettingsTable()).then(() => ensureSmsCampaignLogTable()).then(() => ensureSmsTreatmentLogTable()).then(() => initDefaultSmsTemplates()).then((init) => {
   if (init.initialized) {
     console.log(`SMS templates: seeded ${init.count} default templates.`);
   } else {

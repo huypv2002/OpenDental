@@ -4,6 +4,7 @@ import { config } from './config.js';
 const LOG_TABLE = 'luk_sms_reminder_log';
 const RECALL_LOG_TABLE = 'luk_sms_recall_log';
 const CAMPAIGN_LOG_TABLE = 'luk_sms_campaign_log';
+const TREATMENT_LOG_TABLE = 'luk_sms_treatment_log';
 const SMS_SETTINGS_TABLE = 'luk_sms_settings';
 
 function parseDate(value) {
@@ -33,6 +34,12 @@ function parseMonths(value, fallback = 6) {
   return Math.max(1, Math.min(parsed, 60));
 }
 
+function parseDays(value, fallback = 21) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.max(1, Math.min(parsed, 365));
+}
+
 function parseStatuses(value) {
   if (!value) return config.booking.busyAptStatuses?.length ? config.booking.busyAptStatuses : [1];
   const statuses = String(value)
@@ -60,6 +67,13 @@ function parseProcedureCodes(value) {
     .map((item) => item.trim().toUpperCase())
     .filter(Boolean);
   return codes.length ? codes : defaults;
+}
+
+function parseOptionalProcedureCodes(value) {
+  return String(value ?? '')
+    .split(',')
+    .map((item) => item.trim().toUpperCase())
+    .filter(Boolean);
 }
 
 function patternMinutes(pattern, fallback) {
@@ -156,6 +170,26 @@ export async function ensureSmsCampaignLogTable(connection = pool) {
       KEY idx_luk_sms_campaign_patient (PatNum, Phone),
       KEY idx_luk_sms_campaign_sent (SentAt),
       KEY idx_luk_sms_campaign_type (CampaignType, CampaignName)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
+
+export async function ensureSmsTreatmentLogTable(connection = pool) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS ${TREATMENT_LOG_TABLE} (
+      TreatmentLogNum BIGINT NOT NULL AUTO_INCREMENT,
+      PatNum BIGINT NOT NULL,
+      Phone VARCHAR(30) NOT NULL,
+      ProcedureCodes VARCHAR(255) NOT NULL DEFAULT '',
+      LastPendingProcDate DATE NULL,
+      Message TEXT NOT NULL,
+      Status VARCHAR(30) NOT NULL,
+      SentAt DATETIME NULL,
+      ErrorMessage TEXT NULL,
+      CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (TreatmentLogNum),
+      KEY idx_luk_sms_treatment_patient (PatNum, Phone),
+      KEY idx_luk_sms_treatment_sent (SentAt)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 }
@@ -342,6 +376,97 @@ export async function getSmsRecallCandidates(query = {}) {
   };
 }
 
+export async function getSmsTreatmentCandidates(query = {}) {
+  await ensureSmsTreatmentLogTable();
+  const thresholdDays = parseDays(query.days, 21);
+  const codes = parseOptionalProcedureCodes(query.codes);
+  const statuses = parseStatuses(query.statuses);
+  const treatmentStatuses = parseStatuses(query.treatmentStatuses || '1');
+  const statusPlaceholders = statuses.map(() => '?').join(',');
+  const treatmentStatusPlaceholders = treatmentStatuses.map(() => '?').join(',');
+  const limit = parseLimit(query.limit, 250);
+  const params = [...treatmentStatuses];
+  let codeFilter = '';
+  if (codes.length) {
+    codeFilter = `AND pc.ProcCode IN (${codes.map(() => '?').join(',')})`;
+    params.push(...codes);
+  }
+
+  const [rows] = await pool.execute(
+    `
+      SELECT
+        p.PatNum,
+        p.FName,
+        p.LName,
+        p.WirelessPhone,
+        p.HmPhone,
+        p.WkPhone,
+        p.Email,
+        p.Language,
+        p.Gender,
+        DATE_FORMAT(MAX(pl.ProcDate), '%Y-%m-%d') AS LastPendingProcDate,
+        GROUP_CONCAT(DISTINCT pc.ProcCode ORDER BY pc.ProcCode SEPARATOR ', ') AS ProcedureCodes,
+        GROUP_CONCAT(DISTINCT COALESCE(NULLIF(pc.Descript, ''), pc.ProcCode) ORDER BY pc.ProcCode SEPARATOR ', ') AS ProcedureDescriptions,
+        COALESCE(tl.TreatmentSentCount, 0) AS TreatmentSentCount,
+        DATE_FORMAT(tl.LastTreatmentSentAt, '%Y-%m-%d %H:%i:%s') AS LastTreatmentSentAt
+      FROM procedurelog pl
+      INNER JOIN procedurecode pc ON pc.CodeNum = pl.CodeNum
+      INNER JOIN patient p ON p.PatNum = pl.PatNum
+      LEFT JOIN (
+        SELECT
+          PatNum,
+          COUNT(*) AS TreatmentSentCount,
+          MAX(SentAt) AS LastTreatmentSentAt
+        FROM ${TREATMENT_LOG_TABLE}
+        WHERE Status = 'sent'
+        GROUP BY PatNum
+      ) tl ON tl.PatNum = p.PatNum
+      WHERE pl.ProcStatus IN (${treatmentStatusPlaceholders})
+        ${codeFilter}
+        AND p.PatStatus = 0
+        AND pl.ProcDate IS NOT NULL
+        AND pl.ProcDate > '1900-01-01'
+      GROUP BY
+        p.PatNum,
+        p.FName,
+        p.LName,
+        p.WirelessPhone,
+        p.HmPhone,
+        p.WkPhone,
+        p.Email,
+        p.Language,
+        p.Gender,
+        tl.TreatmentSentCount,
+        tl.LastTreatmentSentAt
+      HAVING MAX(pl.ProcDate) <= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM appointment a
+          WHERE a.PatNum = p.PatNum
+            AND a.AptStatus IN (${statusPlaceholders})
+            AND a.AptDateTime >= NOW()
+        )
+      ORDER BY MAX(pl.ProcDate), p.LName, p.FName
+      LIMIT ?
+    `,
+    [...params, thresholdDays, ...statuses, limit]
+  );
+
+  return {
+    thresholdDays,
+    codes,
+    treatmentStatuses,
+    patients: rows.map((row) => ({
+      ...row,
+      LastProcDate: row.LastPendingProcDate,
+      WirelessPhoneFormatted: formatUsPhone(row.WirelessPhone || ''),
+      WorkPhoneFormatted: formatUsPhone(row.WkPhone || ''),
+      HomePhoneFormatted: formatUsPhone(row.HmPhone || ''),
+      Phone: formatUsPhone(row.WirelessPhone || row.HmPhone || row.WkPhone || '')
+    }))
+  };
+}
+
 export async function logSmsRecallResult(body) {
   await ensureSmsRecallLogTable();
   const patNum = Number.parseInt(String(body.patNum ?? ''), 10);
@@ -366,6 +491,35 @@ export async function logSmsRecallResult(body) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [patNum, phone, procedureCodes, lastProcDate, message, status, sentAt, errorMessage]
+  );
+
+  return { patNum, phone, status };
+}
+
+export async function logSmsTreatmentResult(body) {
+  await ensureSmsTreatmentLogTable();
+  const patNum = Number.parseInt(String(body.patNum ?? ''), 10);
+  const phone = String(body.phone ?? '').trim();
+  const procedureCodes = String(body.procedureCodes ?? '').trim();
+  const lastPendingProcDate = body.lastPendingProcDate || body.lastProcDate ? parseDate(body.lastPendingProcDate || body.lastProcDate) : null;
+  const message = String(body.message ?? '');
+  const status = String(body.status ?? '').trim();
+  const errorMessage = String(body.errorMessage ?? '');
+
+  if (!Number.isInteger(patNum) || !phone || !status) {
+    const error = new Error('patNum, phone, and status are required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const sentAt = ['sent', 'dry-run'].includes(status) ? new Date() : null;
+  await pool.execute(
+    `
+      INSERT INTO ${TREATMENT_LOG_TABLE}
+        (PatNum, Phone, ProcedureCodes, LastPendingProcDate, Message, Status, SentAt, ErrorMessage)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [patNum, phone, procedureCodes, lastPendingProcDate, message, status, sentAt, errorMessage]
   );
 
   return { patNum, phone, status };
@@ -404,15 +558,20 @@ export async function logSmsCampaignResult(body) {
 export async function clearSmsDryRunLogs() {
   await ensureSmsReminderLogTable();
   await ensureSmsRecallLogTable();
+  await ensureSmsTreatmentLogTable();
   const [reminderResult] = await pool.execute(
     `DELETE FROM ${LOG_TABLE} WHERE Status = 'dry-run'`
   );
   const [recallResult] = await pool.execute(
     `DELETE FROM ${RECALL_LOG_TABLE} WHERE Status = 'dry-run'`
   );
+  const [treatmentResult] = await pool.execute(
+    `DELETE FROM ${TREATMENT_LOG_TABLE} WHERE Status = 'dry-run'`
+  );
   return {
     reminderDryRunDeleted: reminderResult.affectedRows ?? 0,
-    recallDryRunDeleted: recallResult.affectedRows ?? 0
+    recallDryRunDeleted: recallResult.affectedRows ?? 0,
+    treatmentDryRunDeleted: treatmentResult.affectedRows ?? 0
   };
 }
 
@@ -522,6 +681,9 @@ const DEFAULT_SMS_TEMPLATE_ROWS = [
   { key: 'US', category: 'recall', country: 'US', text: "Good morning {salutation}, this is Luk Dental. Your 6-month cleaning recall is due. Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ to schedule your appointment. Thank you and have a great day." },
   { key: 'ES', category: 'recall', country: 'ES', text: "Buenos días {salutation}, le habla Luk Dental. Ya llegó el momento de su limpieza de 6 meses. Por favor llame al {clinic_phone} o haga su cita en https://lukdental.us/dental-appointment/. Gracias y que tenga un excelente día." },
   { key: 'VI', category: 'recall', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch cleaning 6 tháng của {vi_title} đã đến. {vi_title_cap} vui lòng gọi {clinic_phone} hoặc đặt lịch tại https://lukdental.us/dental-appointment/. Thank you and have a great day." },
+  { key: 'US', category: 'treatment', country: 'US', text: "Good morning {salutation}, this is Luk Dental. Our records show you still have pending dental treatment ({procedure_codes}). Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ so we can help you continue your care. Thank you and have a great day." },
+  { key: 'ES', category: 'treatment', country: 'ES', text: "Buenos días {salutation}, le habla Luk Dental. Según nuestros registros, todavía tiene tratamiento dental pendiente ({procedure_codes}). Por favor llame al {clinic_phone} o haga su cita en https://lukdental.us/dental-appointment/ para continuar su cuidado. Gracias y que tenga un excelente día." },
+  { key: 'VI', category: 'treatment', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc {vi_title} hiện còn điều trị răng cần hoàn tất ({procedure_codes}). {vi_title_cap} vui lòng gọi {clinic_phone} hoặc đặt lịch tại https://lukdental.us/dental-appointment/ để tiếp tục điều trị. Thank you and have a great day." },
   { key: 'US', category: 'review_google', country: 'US', text: "Hi {first_name}, thank you for visiting Luk Dental. If you had a good experience, would you mind leaving us a Google review? Your feedback helps our clinic and other patients. {review_link} Thank you." },
   { key: 'ES', category: 'review_google', country: 'ES', text: "Hola {first_name}, gracias por visitar Luk Dental. Si tuvo una buena experiencia, ¿podría dejarnos una reseña en Google? Sus comentarios ayudan a nuestra clínica y a otros pacientes. {review_link} Gracias." },
   { key: 'VI', category: 'review_google', country: 'VI', text: "Good morning {vi_salutation}, cảm ơn {vi_title} đã đến nha khoa Luk Dental. Nếu {vi_title} hài lòng với dịch vụ, nhờ {vi_title} để lại review Google giúp phòng khám nhé. {review_link} Thank you." },
@@ -572,7 +734,7 @@ function shouldUpdateManagedTemplate(row, defaultRow) {
 
 function parseTemplateBody(body) {
   const key = String(body.templateKey ?? '').trim().toUpperCase();
-  const category = ['appointment', 'recall', 'review_google', 'holiday_birthday'].includes(String(body.category ?? '').toLowerCase())
+  const category = ['appointment', 'recall', 'treatment', 'review_google', 'holiday_birthday'].includes(String(body.category ?? '').toLowerCase())
     ? String(body.category ?? '').toLowerCase()
     : 'appointment';
   const country = String(body.country ?? 'US').toUpperCase().slice(0, 5);
@@ -585,7 +747,7 @@ export async function ensureSmsTemplatesTable(connection = pool) {
     CREATE TABLE IF NOT EXISTS ${TEMPLATE_TABLE} (
       TemplateId BIGINT NOT NULL AUTO_INCREMENT,
       TemplateKey VARCHAR(50) NOT NULL,
-      Category VARCHAR(20) NOT NULL DEFAULT 'appointment',
+      Category VARCHAR(30) NOT NULL DEFAULT 'appointment',
       Country VARCHAR(5) NOT NULL DEFAULT 'US',
       TemplateText TEXT NOT NULL,
       CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -654,8 +816,8 @@ export async function getSmsTemplates(query = {}) {
   }
   sql += ' ORDER BY Category, TemplateKey';
   const [rows] = await pool.execute(sql, params);
-  const templates = { appointment: {}, recall: {}, review_google: {}, holiday_birthday: {} };
-  const countries = { appointment: {}, recall: {}, review_google: {}, holiday_birthday: {} };
+  const templates = { appointment: {}, recall: {}, treatment: {}, review_google: {}, holiday_birthday: {} };
+  const countries = { appointment: {}, recall: {}, treatment: {}, review_google: {}, holiday_birthday: {} };
   for (const row of rows) {
     if (!templates[row.Category]) {
       templates[row.Category] = {};
@@ -702,7 +864,7 @@ export async function saveSmsTemplate(body) {
 export async function deleteSmsTemplate(body) {
   await ensureSmsTemplatesTable();
   const key = String(body.templateKey ?? '').trim().toUpperCase();
-  const category = ['appointment', 'recall', 'review_google', 'holiday_birthday'].includes(String(body.category ?? '').toLowerCase())
+  const category = ['appointment', 'recall', 'treatment', 'review_google', 'holiday_birthday'].includes(String(body.category ?? '').toLowerCase())
     ? String(body.category ?? '').toLowerCase()
     : 'appointment';
   if (!key) {
