@@ -198,6 +198,7 @@ class AppConfig:
     holiday_templates: dict[str, str] = field(default_factory=dict)
     holiday_template_countries: dict[str, str] = field(default_factory=dict)
     holiday_events: list[str] = field(default_factory=lambda: list(HOLIDAY_EVENTS))
+    holiday_campaigns: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -208,7 +209,7 @@ class AppConfig:
             template_keys = {
                 "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
                 "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
-                "holiday_templates", "holiday_template_countries", "holiday_events", "default_template_key", "template_schema_version",
+                "holiday_templates", "holiday_template_countries", "holiday_events", "holiday_campaigns", "default_template_key", "template_schema_version",
             }
             known = {key: value for key, value in raw.items() if key in defaults and key not in template_keys}
             cfg = cls(**{**defaults, **known})
@@ -239,7 +240,7 @@ class AppConfig:
         for key in (
             "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
             "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
-            "holiday_templates", "holiday_template_countries", "holiday_events", "default_template_key", "template_schema_version",
+            "holiday_templates", "holiday_template_countries", "holiday_events", "holiday_campaigns", "default_template_key", "template_schema_version",
         ):
             data.pop(key, None)
         CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -943,8 +944,10 @@ class SmsReminderWindow(QMainWindow):
         self.queued_load = False
         self.send_after_load = False
         self.monitor_send_queue: list[date] = []
+        self.monitor_campaign_queue: list[dict[str, Any]] = []
         self.monitor_batch_active = False
         self.monitor_batch_failed = False
+        self.active_campaign_id = ""
         self.active_schedule_key = ""
         self.monitoring_active = False
         self.row_template_combos: dict[int, QComboBox] = {}
@@ -1017,6 +1020,7 @@ class SmsReminderWindow(QMainWindow):
             self.config.holiday_template_countries = countries.get("holiday_birthday") or {}
             self.config.review_link = str(sms_settings.get("review_link") or "")
             self.config.holiday_events = self.parse_holiday_events_setting(sms_settings.get("holiday_events"))
+            self.config.holiday_campaigns = self.parse_holiday_campaigns_setting(sms_settings.get("holiday_campaigns"))
             self.config.sms_template = default_template(self.config)
             self.config.recall_template = self.config.recall_templates.get("US", "")
         except Exception:
@@ -1030,6 +1034,7 @@ class SmsReminderWindow(QMainWindow):
             self.config.holiday_template_countries = {}
             self.config.review_link = ""
             self.config.holiday_events = list(HOLIDAY_EVENTS)
+            self.config.holiday_campaigns = []
 
     def parse_holiday_events_setting(self, raw_value: Any) -> list[str]:
         events: list[str] = []
@@ -1059,6 +1064,39 @@ class SmsReminderWindow(QMainWindow):
     def save_holiday_events_to_bridge(self) -> None:
         self.config.holiday_events = self.unique_holiday_events(self.config.holiday_events)
         self.repo.save_sms_setting("holiday_events", json.dumps(self.config.holiday_events, ensure_ascii=False))
+
+    def parse_holiday_campaigns_setting(self, raw_value: Any) -> list[dict[str, Any]]:
+        if not raw_value:
+            return []
+        try:
+            parsed = json.loads(str(raw_value))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        campaigns: list[dict[str, Any]] = []
+        for campaign in parsed:
+            if not isinstance(campaign, dict):
+                continue
+            recipients = campaign.get("recipients")
+            if not isinstance(recipients, list):
+                recipients = []
+            campaign_type = str(campaign.get("type") or "").strip().lower()
+            if campaign_type not in {"holiday", "birthday"}:
+                continue
+            campaigns.append({
+                "id": str(campaign.get("id") or f"{campaign_type}-{int(time.time())}"),
+                "type": campaign_type,
+                "name": str(campaign.get("name") or ("Birthday" if campaign_type == "birthday" else "Holiday")).strip(),
+                "run_date": str(campaign.get("run_date") or "").strip(),
+                "enabled": bool(campaign.get("enabled", True)),
+                "last_sent_date": str(campaign.get("last_sent_date") or "").strip(),
+                "recipients": [item for item in recipients if isinstance(item, dict)],
+            })
+        return campaigns
+
+    def save_holiday_campaigns_to_bridge(self) -> None:
+        self.repo.save_sms_setting("holiday_campaigns", json.dumps(self.config.holiday_campaigns, ensure_ascii=False))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
         super().resizeEvent(event)
@@ -1583,6 +1621,7 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_birthday_date = QDateEdit(clinic_qdate())
         self.holiday_birthday_date.setCalendarPopup(True)
         self.holiday_birthday_date.setDisplayFormat("MM/dd/yyyy")
+        self.holiday_date_label = QLabel("Send date")
         self.holiday_search = QLineEdit()
         self.holiday_search.setPlaceholderText("Patient, phone, email, patient #...")
         self.holiday_search.returnPressed.connect(self.load_holiday_patients)
@@ -1596,6 +1635,10 @@ class SmsReminderWindow(QMainWindow):
         self.manage_holiday_templates_button.clicked.connect(self.open_holiday_templates_popup)
         self.preview_holiday_button = QPushButton("Preview selected")
         self.preview_holiday_button.clicked.connect(self.preview_holiday_selected)
+        self.save_holiday_automation_button = QPushButton("Save automation")
+        self.save_holiday_automation_button.clicked.connect(self.save_current_holiday_automation)
+        self.manage_holiday_automation_button = QPushButton("Saved automations")
+        self.manage_holiday_automation_button.clicked.connect(self.open_saved_holiday_automations)
         self.send_holiday_selected_button = QPushButton("Send selected")
         self.send_holiday_selected_button.clicked.connect(self.send_selected_holiday_sms)
         self.send_holiday_all_button = QPushButton("Send all in list")
@@ -1611,7 +1654,7 @@ class SmsReminderWindow(QMainWindow):
         holiday_actions.addWidget(self.edit_holiday_event_button)
         holiday_actions.addWidget(self.delete_holiday_event_button)
         controls.addLayout(holiday_actions, 0, 4, 1, 2)
-        controls.addWidget(QLabel("Birthday date"), 1, 0)
+        controls.addWidget(self.holiday_date_label, 1, 0)
         controls.addWidget(self.holiday_birthday_date, 1, 1)
         controls.addWidget(QLabel("Patient filter"), 1, 2)
         controls.addWidget(self.holiday_search, 1, 3, 1, 2)
@@ -1620,6 +1663,8 @@ class SmsReminderWindow(QMainWindow):
         action_row.addWidget(self.add_custom_holiday_button)
         action_row.addWidget(self.remove_holiday_button)
         action_row.addWidget(self.manage_holiday_templates_button)
+        action_row.addWidget(self.save_holiday_automation_button)
+        action_row.addWidget(self.manage_holiday_automation_button)
         action_row.addStretch()
         action_row.addWidget(self.preview_holiday_button)
         action_row.addWidget(self.send_holiday_selected_button)
@@ -2638,7 +2683,9 @@ class SmsReminderWindow(QMainWindow):
         if hasattr(self, "delete_holiday_event_button"):
             self.delete_holiday_event_button.setEnabled(not is_birthday and self.holiday_event.count() > 0)
         if hasattr(self, "holiday_birthday_date"):
-            self.holiday_birthday_date.setEnabled(is_birthday)
+            self.holiday_birthday_date.setEnabled(True)
+        if hasattr(self, "holiday_date_label"):
+            self.holiday_date_label.setText("Birthday date" if is_birthday else "Send date")
         if hasattr(self, "holiday_search"):
             self.holiday_search.setPlaceholderText(
                 "Optional patient filter after birthday load..."
@@ -2981,6 +3028,151 @@ class SmsReminderWindow(QMainWindow):
         }
         self.holiday_patients.append(self.normalize_holiday_patient(row))
         self.render_holiday_patients()
+
+    def holiday_campaign_recipients_from_visible_rows(self) -> list[dict[str, Any]]:
+        self.holiday_table.clearSelection()
+        for row in range(self.holiday_table.rowCount()):
+            self.holiday_table.selectRow(row)
+        recipients = self.selected_holiday_patients()
+        self.holiday_table.clearSelection()
+        safe_recipients: list[dict[str, Any]] = []
+        for patient in recipients:
+            safe_recipients.append({
+                "PatNum": patient.get("PatNum") or 0,
+                "FName": patient.get("FName") or "",
+                "LName": patient.get("LName") or "",
+                "Phone": patient.get("Phone") or "",
+                "PhoneTargets": patient.get("PhoneTargets") or [],
+                "Email": patient.get("Email") or "",
+                "Language": patient.get("Language") or "",
+                "Gender": patient.get("Gender") or "",
+                "Birthdate": patient.get("Birthdate") or "",
+                "_TemplateKey": patient.get("_TemplateKey") or "",
+            })
+        return safe_recipients
+
+    def save_current_holiday_automation(self) -> None:
+        recipients = self.holiday_campaign_recipients_from_visible_rows()
+        if not recipients:
+            QMessageBox.information(self, "No recipients", "Please load or add patients before saving automation.")
+            return
+        campaign_type = str(self.holiday_campaign_type.currentData() or "holiday")
+        run_date = self.holiday_birthday_date.date().toPython().isoformat()
+        name = (
+            "Birthday"
+            if campaign_type == "birthday"
+            else self.current_holiday_event() or "Holiday"
+        )
+        confirm = QMessageBox.question(
+            self,
+            "Save campaign automation?",
+            f"Save {len(recipients)} recipient(s) for {name} on {display_date(run_date)}?\n\n"
+            "When Monitoring is running at the daily send time, this campaign will be sent automatically on that date.",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        campaign = {
+            "id": f"{campaign_type}-{run_date}-{int(time.time())}",
+            "type": campaign_type,
+            "name": name,
+            "run_date": run_date,
+            "enabled": True,
+            "last_sent_date": "",
+            "recipients": recipients,
+        }
+        self.config.holiday_campaigns.append(campaign)
+        try:
+            self.save_holiday_campaigns_to_bridge()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Failed to save automation", str(exc))
+            return
+        self.append_activity(f"Saved campaign automation: {name} on {display_date(run_date)} ({len(recipients)} recipient(s)).")
+        QMessageBox.information(self, "Automation saved", "Campaign automation was saved. Keep Monitoring running for automatic sending.")
+
+    def open_saved_holiday_automations(self) -> None:
+        self.load_templates_from_bridge()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Saved Holiday & Birthday automations")
+        dialog.resize(820, 520)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 16, 18, 18)
+        title = QLabel("Saved campaign automations")
+        title.setObjectName("HeroTitle")
+        layout.addWidget(title)
+        table = QTableWidget(0, 6)
+        table.setHorizontalHeaderLabels(["Enabled", "Type", "Campaign", "Run date", "Recipients", "Last sent"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QTableWidget.SingleSelection)
+        table.setAlternatingRowColors(True)
+        layout.addWidget(table, 1)
+
+        def render() -> None:
+            table.setRowCount(len(self.config.holiday_campaigns))
+            for row_index, campaign in enumerate(self.config.holiday_campaigns):
+                values = [
+                    "Yes" if campaign.get("enabled", True) else "No",
+                    str(campaign.get("type") or ""),
+                    str(campaign.get("name") or ""),
+                    display_date(campaign.get("run_date") or ""),
+                    str(len(campaign.get("recipients") or [])),
+                    display_date(campaign.get("last_sent_date") or ""),
+                ]
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    if col in {0, 4}:
+                        item.setTextAlignment(Qt.AlignCenter)
+                    table.setItem(row_index, col, item)
+
+        def selected_campaign_index() -> int:
+            row = table.currentRow()
+            return row if 0 <= row < len(self.config.holiday_campaigns) else -1
+
+        def toggle_enabled() -> None:
+            row = selected_campaign_index()
+            if row < 0:
+                QMessageBox.information(dialog, "No selection", "Please select one campaign.")
+                return
+            self.config.holiday_campaigns[row]["enabled"] = not bool(self.config.holiday_campaigns[row].get("enabled", True))
+            try:
+                self.save_holiday_campaigns_to_bridge()
+            except Exception as exc:  # noqa: BLE001
+                QMessageBox.critical(dialog, "Failed to save automation", str(exc))
+                return
+            render()
+
+        def delete_campaign() -> None:
+            row = selected_campaign_index()
+            if row < 0:
+                QMessageBox.information(dialog, "No selection", "Please select one campaign.")
+                return
+            campaign = self.config.holiday_campaigns[row]
+            confirm = QMessageBox.question(dialog, "Delete automation?", f"Delete automation for {campaign.get('name')}?")
+            if confirm != QMessageBox.Yes:
+                return
+            self.config.holiday_campaigns.pop(row)
+            try:
+                self.save_holiday_campaigns_to_bridge()
+            except Exception as exc:  # noqa: BLE001
+                QMessageBox.critical(dialog, "Failed to delete automation", str(exc))
+                return
+            render()
+
+        actions = QHBoxLayout()
+        toggle = QPushButton("Enable / disable")
+        delete = QPushButton("Delete")
+        close = QPushButton("Close")
+        toggle.clicked.connect(toggle_enabled)
+        delete.clicked.connect(delete_campaign)
+        close.clicked.connect(dialog.accept)
+        actions.addStretch()
+        actions.addWidget(toggle)
+        actions.addWidget(delete)
+        actions.addWidget(close)
+        layout.addLayout(actions)
+        render()
+        dialog.exec()
 
     def remove_selected_holiday_patients(self) -> None:
         rows = sorted({index.row() for index in self.holiday_table.selectedIndexes()}, reverse=True)
@@ -3612,6 +3804,10 @@ class SmsReminderWindow(QMainWindow):
             self.send_holiday_selected_button.setEnabled(enabled)
         if hasattr(self, "send_holiday_all_button"):
             self.send_holiday_all_button.setEnabled(enabled)
+        if hasattr(self, "save_holiday_automation_button"):
+            self.save_holiday_automation_button.setEnabled(enabled)
+        if hasattr(self, "manage_holiday_automation_button"):
+            self.manage_holiday_automation_button.setEnabled(enabled)
 
     def append_activity(self, message: str) -> None:
         entry = f"[{clinic_now().strftime('%H:%M:%S')}] {message}"
@@ -3625,11 +3821,19 @@ class SmsReminderWindow(QMainWindow):
             self.monitor_batch_failed = True
         if self.active_send_kind == "recall":
             self.load_recall_patients()
-        elif self.active_send_kind == "campaign":
+        elif self.active_send_kind in {"campaign", "campaign-monitor"}:
             for row in range(self.holiday_table.rowCount()):
                 item = self.holiday_table.item(row, 8)
                 if item and item.text().strip() == "":
                     item.setText("sent" if failed == 0 else "check log")
+            if self.active_send_kind == "campaign-monitor":
+                if failed:
+                    self.monitor_batch_failed = True
+                    self.active_campaign_id = ""
+                else:
+                    self.mark_active_campaign_sent()
+                if self.monitor_batch_active:
+                    self.process_next_monitor_target()
         elif self.monitor_batch_active:
             self.process_next_monitor_target()
         else:
@@ -3679,6 +3883,7 @@ class SmsReminderWindow(QMainWindow):
         self.monitor_note_value.setText(
             "When monitoring is running, the app waits for the daily send time. "
             "At that time it sends pending SMS reminders for tomorrow's patients and patients with appointments 8 days away. "
+            "It also sends saved Holiday & Birthday campaign automations due today. "
             f"It will only send within {SCHEDULE_SEND_GRACE_MINUTES} minutes after the configured time."
         )
         self.start_monitoring_button.setEnabled(not self.monitoring_active)
@@ -3737,8 +3942,10 @@ class SmsReminderWindow(QMainWindow):
         self.monitoring_active = False
         self.send_after_load = False
         self.monitor_send_queue = []
+        self.monitor_campaign_queue = []
         self.monitor_batch_active = False
         self.monitor_batch_failed = False
+        self.active_campaign_id = ""
         self.active_schedule_key = ""
         self.update_monitoring_status()
         self.append_activity("Monitoring stopped.")
@@ -3777,6 +3984,7 @@ class SmsReminderWindow(QMainWindow):
 
     def start_monitoring_batch(self) -> None:
         self.monitor_send_queue = self.monitor_target_dates()
+        self.monitor_campaign_queue = self.due_holiday_campaigns()
         self.monitor_batch_active = True
         self.monitor_batch_failed = False
         self.append_activity(
@@ -3784,12 +3992,84 @@ class SmsReminderWindow(QMainWindow):
             + ", ".join(display_date(target) for target in self.monitor_send_queue)
             + "."
         )
+        if self.monitor_campaign_queue:
+            self.append_activity(f"Queued {len(self.monitor_campaign_queue)} Holiday/Birthday campaign automation(s).")
         self.process_next_monitor_target()
+
+    def due_holiday_campaigns(self) -> list[dict[str, Any]]:
+        self.load_templates_from_bridge()
+        today_key = clinic_today().isoformat()
+        due: list[dict[str, Any]] = []
+        for campaign in self.config.holiday_campaigns:
+            if not campaign.get("enabled", True):
+                continue
+            if str(campaign.get("run_date") or "") != today_key:
+                continue
+            if str(campaign.get("last_sent_date") or "") == today_key:
+                continue
+            recipients = [self.prepare_campaign_recipient(campaign, patient) for patient in campaign.get("recipients") or []]
+            recipients = [patient for patient in recipients if patient.get("_TemplateText") and patient.get("PhoneTargets")]
+            if not recipients:
+                self.append_activity(f"Skipped campaign {campaign.get('name')}: no valid recipients/templates.")
+                continue
+            due_campaign = dict(campaign)
+            due_campaign["recipients"] = recipients
+            due.append(due_campaign)
+        return due
+
+    def prepare_campaign_recipient(self, campaign: dict[str, Any], patient: dict[str, Any]) -> dict[str, Any]:
+        row = dict(patient)
+        campaign_type = str(campaign.get("type") or row.get("_CampaignType") or "holiday")
+        key = str(row.get("_TemplateKey") or holiday_template_key_for_language(self.config, row.get("Language"), campaign_type))
+        row["_CampaignType"] = campaign_type
+        row["_CampaignName"] = str(campaign.get("name") or row.get("_CampaignName") or "")
+        row["_HolidayName"] = row["_CampaignName"]
+        row["_TemplateKey"] = key
+        row["_TemplateText"] = self.config.holiday_templates.get(key, "")
+        row["_TemplateCountry"] = str(self.config.holiday_template_countries.get(key) or infer_template_country(key)).upper()
+        targets = [
+            {"source": target.get("source") or "Phone", "phone": target.get("phone", ""), "status": ""}
+            for target in row.get("PhoneTargets", [])
+            if digits_only(target.get("phone", ""))
+        ]
+        if not targets and digits_only(row.get("Phone", "")):
+            targets = [{"source": "Phone", "phone": format_us_phone(row.get("Phone", "")), "status": ""}]
+        row["PhoneTargets"] = targets
+        row["Phone"] = self.phone_targets_display(targets)
+        return row
+
+    def mark_active_campaign_sent(self) -> None:
+        if not self.active_campaign_id:
+            return
+        today_key = clinic_today().isoformat()
+        for campaign in self.config.holiday_campaigns:
+            if str(campaign.get("id") or "") == self.active_campaign_id:
+                campaign["last_sent_date"] = today_key
+                break
+        try:
+            self.save_holiday_campaigns_to_bridge()
+        except Exception as exc:  # noqa: BLE001
+            self.monitor_batch_failed = True
+            self.append_activity(f"Campaign sent but failed to update saved automation: {exc}")
+        self.active_campaign_id = ""
 
     def process_next_monitor_target(self) -> None:
         if not self.monitor_batch_active:
             return
         if not self.monitor_send_queue:
+            if self.monitor_campaign_queue:
+                campaign = self.monitor_campaign_queue.pop(0)
+                self.active_campaign_id = str(campaign.get("id") or "")
+                self.active_send_kind = "campaign-monitor"
+                self.set_send_enabled(False)
+                self.append_activity(
+                    f"Sending campaign automation: {campaign.get('name')} ({len(campaign.get('recipients') or [])} recipient(s))."
+                )
+                self.worker = CampaignSendWorker(self.config, campaign.get("recipients") or [])
+                self.worker.progress.connect(self.append_activity)
+                self.worker.finished.connect(self.send_finished)
+                self.worker.start()
+                return
             self.monitor_batch_active = False
             if self.monitor_batch_failed:
                 self.append_activity("Scheduled monitoring finished with errors. It will retry on the next scheduler check.")
