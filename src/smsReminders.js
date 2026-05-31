@@ -378,7 +378,7 @@ export async function getSmsRecallCandidates(query = {}) {
 
 export async function getSmsTreatmentCandidates(query = {}) {
   await ensureSmsTreatmentLogTable();
-  const thresholdDays = parseDays(query.days, 21);
+  const beforeDays = parseDays(query.beforeDays ?? query.days, 21);
   const codes = parseOptionalProcedureCodes(query.codes);
   const statuses = parseStatuses(query.statuses);
   const treatmentStatuses = parseStatuses(query.treatmentStatuses || '1');
@@ -449,11 +449,11 @@ export async function getSmsTreatmentCandidates(query = {}) {
       ORDER BY MAX(pl.ProcDate), p.LName, p.FName
       LIMIT ?
     `,
-    [...params, thresholdDays, ...statuses, limit]
+    [...params, beforeDays, ...statuses, limit]
   );
 
   return {
-    thresholdDays,
+    beforeDays,
     codes,
     treatmentStatuses,
     patients: rows.map((row) => ({

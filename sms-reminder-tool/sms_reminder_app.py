@@ -316,7 +316,7 @@ class BridgeClient:
             "GET",
             "/api/sms-reminders/treatment-candidates",
             params={
-                "days": days,
+                "beforeDays": days,
                 "codes": codes,
                 "treatmentStatuses": treatment_statuses,
                 "statuses": ",".join(str(item) for item in self.config.appointment_statuses or [1]),
@@ -1668,6 +1668,16 @@ class SmsReminderWindow(QMainWindow):
         controls.addWidget(self.fill_recall_button)
         layout.addWidget(controls_card)
 
+        search_card = self.card()
+        search_layout = QHBoxLayout(search_card)
+        search_layout.setContentsMargins(18, 12, 18, 12)
+        search_layout.addWidget(QLabel("Search"))
+        self.recall_search = QLineEdit()
+        self.recall_search.setPlaceholderText("Patient, phone, email, code, patient #...")
+        self.recall_search.textChanged.connect(lambda _text: self.render_recall_patients())
+        search_layout.addWidget(self.recall_search, 1)
+        layout.addWidget(search_card)
+
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
@@ -1714,7 +1724,7 @@ class SmsReminderWindow(QMainWindow):
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("Pending treatment SMS")
         title.setObjectName("HeroTitle")
-        subtitle = QLabel("Find patients with planned procedure codes that are still not complete after the configured follow-up window.")
+        subtitle = QLabel("Find patients with planned procedure codes dated before the configured miss window and no future appointment.")
         subtitle.setObjectName("HeroSubtitle")
         hero_layout.addWidget(eyebrow)
         hero_layout.addWidget(title)
@@ -1725,7 +1735,7 @@ class SmsReminderWindow(QMainWindow):
         controls = QGridLayout(controls_card)
         controls.setContentsMargins(18, 14, 18, 14)
         controls.setSpacing(12)
-        controls.addWidget(QLabel("Follow up after"), 0, 0)
+        controls.addWidget(QLabel("Procedure date before"), 0, 0)
         self.treatment_days = QSpinBox()
         self.treatment_days.setRange(1, 365)
         self.treatment_days.setValue(self.config.treatment_days)
@@ -1762,12 +1772,22 @@ class SmsReminderWindow(QMainWindow):
         controls.setColumnStretch(3, 1)
         layout.addWidget(controls_card)
 
+        search_card = self.card()
+        search_layout = QHBoxLayout(search_card)
+        search_layout.setContentsMargins(18, 12, 18, 12)
+        search_layout.addWidget(QLabel("Search"))
+        self.treatment_search = QLineEdit()
+        self.treatment_search.setPlaceholderText("Patient, phone, email, pending code, patient #...")
+        self.treatment_search.textChanged.connect(lambda _text: self.render_treatment_patients())
+        search_layout.addWidget(self.treatment_search, 1)
+        layout.addWidget(search_card)
+
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
         self.treatment_table = QTableWidget(0, 10)
         self.treatment_table.setHorizontalHeaderLabels(
-            ["Pending since", "Patient", "Phone", "Email", "Language", "Pending codes", "Sent", "Last sent", "Pat #", "Template"]
+            ["Procedure date", "Patient", "Phone", "Email", "Language", "Pending codes", "Sent", "Last sent", "Pat #", "Template"]
         )
         self.configure_resizable_columns(
             self.treatment_table,
@@ -1822,6 +1842,7 @@ class SmsReminderWindow(QMainWindow):
         controls.addWidget(QLabel("Patient filter"))
         self.review_search = QLineEdit()
         self.review_search.setPlaceholderText("Patient, phone, email, patient #...")
+        self.review_search.textChanged.connect(lambda _text: self.render_review_patients())
         self.review_search.returnPressed.connect(self.load_review_patients)
         controls.addWidget(self.review_search, 1)
         self.load_review_button = QPushButton("Load patients")
@@ -1911,6 +1932,7 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_date_label = QLabel("Send date")
         self.holiday_search = QLineEdit()
         self.holiday_search.setPlaceholderText("Patient, phone, email, patient #...")
+        self.holiday_search.textChanged.connect(lambda _text: self.render_holiday_patients())
         self.holiday_search.returnPressed.connect(self.load_holiday_patients)
         self.load_holiday_button = QPushButton("Load / filter patients")
         self.load_holiday_button.clicked.connect(self.load_holiday_patients)
@@ -3250,8 +3272,11 @@ class SmsReminderWindow(QMainWindow):
 
     def render_recall_patients(self) -> None:
         self.recall_template_combos = {}
-        self.recall_table.setRowCount(len(self.recall_patients))
-        for row_index, row in enumerate(self.recall_patients):
+        query = self.recall_search.text().strip().lower() if hasattr(self, "recall_search") else ""
+        visible_rows = [row for row in self.recall_patients if self.patient_matches_query(row, query, ("LastProcDate", "ProcedureCodes", "RecallSentCount", "LastRecallSentAt"))]
+        self.recall_table.setRowCount(len(visible_rows))
+        self.recall_table.setProperty("_visible_patients", visible_rows)
+        for row_index, row in enumerate(visible_rows):
             values = [
                 display_date(row.get("LastProcDate")),
                 patient_name(row),
@@ -3280,8 +3305,14 @@ class SmsReminderWindow(QMainWindow):
 
     def render_treatment_patients(self) -> None:
         self.treatment_template_combos = {}
-        self.treatment_table.setRowCount(len(self.treatment_patients))
-        for row_index, row in enumerate(self.treatment_patients):
+        query = self.treatment_search.text().strip().lower() if hasattr(self, "treatment_search") else ""
+        visible_rows = [
+            row for row in self.treatment_patients
+            if self.patient_matches_query(row, query, ("LastPendingProcDate", "LastProcDate", "ProcedureCodes", "ProcedureDescriptions", "TreatmentSentCount", "LastTreatmentSentAt"))
+        ]
+        self.treatment_table.setRowCount(len(visible_rows))
+        self.treatment_table.setProperty("_visible_patients", visible_rows)
+        for row_index, row in enumerate(visible_rows):
             values = [
                 display_date(row.get("LastPendingProcDate") or row.get("LastProcDate")),
                 patient_name(row),
@@ -3308,8 +3339,11 @@ class SmsReminderWindow(QMainWindow):
 
     def render_review_patients(self) -> None:
         self.review_template_combos = {}
-        self.review_table.setRowCount(len(self.review_patients))
-        for row_index, row in enumerate(self.review_patients):
+        query = self.review_search.text().strip().lower() if hasattr(self, "review_search") else ""
+        visible_rows = [row for row in self.review_patients if self.patient_matches_query(row, query, ("LastAppointment", "DateTimeLastAppt"))]
+        self.review_table.setRowCount(len(visible_rows))
+        self.review_table.setProperty("_visible_patients", visible_rows)
+        for row_index, row in enumerate(visible_rows):
             values = [
                 patient_name(row),
                 row.get("Phone", ""),
@@ -3388,11 +3422,44 @@ class SmsReminderWindow(QMainWindow):
     def holiday_visible_patients(self) -> list[dict[str, Any]]:
         return list(self.holiday_table.property("_visible_patients") or [])
 
+    def patient_matches_query(self, row: dict[str, Any], query: str, extra_fields: tuple[str, ...] = ()) -> bool:
+        if not query:
+            return True
+        values = [
+            patient_name(row),
+            row.get("Phone"),
+            row.get("WirelessPhone"),
+            row.get("WkPhone"),
+            row.get("HmPhone"),
+            row.get("Email"),
+            row.get("Language"),
+            row.get("Birthdate"),
+            row.get("PatNum"),
+            row.get("Gender"),
+            row.get("_CampaignName"),
+            row.get("_TemplateKey"),
+        ]
+        values.extend(row.get(field) for field in extra_fields)
+        haystack = " ".join(str(value or "") for value in values).lower()
+        return query in haystack
+
+    def recall_visible_patients(self) -> list[dict[str, Any]]:
+        return list(self.recall_table.property("_visible_patients") or [])
+
+    def treatment_visible_patients(self) -> list[dict[str, Any]]:
+        return list(self.treatment_table.property("_visible_patients") or [])
+
+    def review_visible_patients(self) -> list[dict[str, Any]]:
+        return list(self.review_table.property("_visible_patients") or [])
+
     def selected_recall_patients(self) -> list[dict[str, Any]]:
         rows = sorted({index.row() for index in self.recall_table.selectedIndexes()})
+        visible = self.recall_visible_patients()
         selected: list[dict[str, Any]] = []
         for row in rows:
-            patient = dict(self.recall_patients[row])
+            if row < 0 or row >= len(visible):
+                continue
+            patient = dict(visible[row])
             combo = self.recall_template_combos.get(row)
             key = str(combo.currentData() or patient.get("_TemplateKey") or "US") if combo else str(patient.get("_TemplateKey") or "US")
             patient["_TemplateKey"] = key
@@ -3406,11 +3473,12 @@ class SmsReminderWindow(QMainWindow):
         current_row = self.treatment_table.currentRow()
         if current_row >= 0:
             rows.append(current_row)
+        visible = self.treatment_visible_patients()
         selected: list[dict[str, Any]] = []
         for row in sorted(set(rows)):
-            if row < 0 or row >= len(self.treatment_patients):
+            if row < 0 or row >= len(visible):
                 continue
-            patient = dict(self.treatment_patients[row])
+            patient = dict(visible[row])
             combo = self.treatment_template_combos.get(row)
             key = str(combo.currentData() or patient.get("_TemplateKey") or "US") if combo else str(patient.get("_TemplateKey") or "US")
             patient["_TemplateKey"] = key
@@ -3422,9 +3490,12 @@ class SmsReminderWindow(QMainWindow):
 
     def selected_review_patients(self) -> list[dict[str, Any]]:
         rows = sorted({index.row() for index in self.review_table.selectedIndexes()})
+        visible = self.review_visible_patients()
         selected: list[dict[str, Any]] = []
         for row in rows:
-            patient = dict(self.review_patients[row])
+            if row < 0 or row >= len(visible):
+                continue
+            patient = dict(visible[row])
             combo = self.review_template_combos.get(row)
             key = str(combo.currentData() or patient.get("_TemplateKey") or "US") if combo else str(patient.get("_TemplateKey") or "US")
             patient["_TemplateKey"] = key
@@ -3775,7 +3846,7 @@ class SmsReminderWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Treatment SMS preview",
-            f"To: {patient_name(patient)}\nPhone: {patient.get('Phone', '')}\nPending since: {display_date(patient.get('LastPendingProcDate') or patient.get('LastProcDate'))}\nCodes: {patient.get('ProcedureCodes', '')}\n\n{message}",
+            f"To: {patient_name(patient)}\nPhone: {patient.get('Phone', '')}\nProcedure date: {display_date(patient.get('LastPendingProcDate') or patient.get('LastProcDate'))}\nCodes: {patient.get('ProcedureCodes', '')}\n\n{message}",
         )
 
     def send_selected_treatment_sms(self) -> None:
@@ -4505,10 +4576,10 @@ class SmsReminderWindow(QMainWindow):
             self.monitor_treatment_status_value.setProperty("running", "true" if self.treatment_monitoring_active else "false")
             self.monitor_treatment_status_value.style().unpolish(self.monitor_treatment_status_value)
             self.monitor_treatment_status_value.style().polish(self.monitor_treatment_status_value)
-            self.monitor_treatment_due_value.setText(f"{self.config.treatment_days} days after pending procedure date")
+            self.monitor_treatment_due_value.setText(f"Pending procedure date is {self.config.treatment_days}+ days before today")
             self.monitor_treatment_time_value.setText(self.config.scheduled_send_time)
             self.monitor_treatment_note_value.setText(
-                "Treatment monitoring uses its own Start/Stop state. At the configured send time, it loads pending planned procedure codes older than the miss window and sends treatment templates."
+                "Treatment monitoring uses its own Start/Stop state. At the configured send time, it loads unfinished planned procedure codes dated before the miss window and sends treatment templates."
             )
             self.start_treatment_monitoring_button.setEnabled(not self.treatment_monitoring_active)
             self.stop_treatment_monitoring_button.setEnabled(self.treatment_monitoring_active)
