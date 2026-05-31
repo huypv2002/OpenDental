@@ -197,6 +197,7 @@ class AppConfig:
     review_template_countries: dict[str, str] = field(default_factory=dict)
     holiday_templates: dict[str, str] = field(default_factory=dict)
     holiday_template_countries: dict[str, str] = field(default_factory=dict)
+    holiday_events: list[str] = field(default_factory=lambda: list(HOLIDAY_EVENTS))
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -207,7 +208,7 @@ class AppConfig:
             template_keys = {
                 "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
                 "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
-                "holiday_templates", "holiday_template_countries", "default_template_key", "template_schema_version",
+                "holiday_templates", "holiday_template_countries", "holiday_events", "default_template_key", "template_schema_version",
             }
             known = {key: value for key, value in raw.items() if key in defaults and key not in template_keys}
             cfg = cls(**{**defaults, **known})
@@ -238,7 +239,7 @@ class AppConfig:
         for key in (
             "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
             "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
-            "holiday_templates", "holiday_template_countries", "default_template_key", "template_schema_version",
+            "holiday_templates", "holiday_template_countries", "holiday_events", "default_template_key", "template_schema_version",
         ):
             data.pop(key, None)
         CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -1015,6 +1016,7 @@ class SmsReminderWindow(QMainWindow):
             self.config.holiday_templates = tmpl.get("holiday_birthday") or {}
             self.config.holiday_template_countries = countries.get("holiday_birthday") or {}
             self.config.review_link = str(sms_settings.get("review_link") or "")
+            self.config.holiday_events = self.parse_holiday_events_setting(sms_settings.get("holiday_events"))
             self.config.sms_template = default_template(self.config)
             self.config.recall_template = self.config.recall_templates.get("US", "")
         except Exception:
@@ -1027,6 +1029,36 @@ class SmsReminderWindow(QMainWindow):
             self.config.holiday_templates = {}
             self.config.holiday_template_countries = {}
             self.config.review_link = ""
+            self.config.holiday_events = list(HOLIDAY_EVENTS)
+
+    def parse_holiday_events_setting(self, raw_value: Any) -> list[str]:
+        events: list[str] = []
+        if raw_value:
+            try:
+                parsed = json.loads(str(raw_value))
+                if isinstance(parsed, list):
+                    events = [str(item).strip() for item in parsed if str(item).strip()]
+            except (TypeError, ValueError, json.JSONDecodeError):
+                events = []
+        if not events:
+            events = list(HOLIDAY_EVENTS)
+        return self.unique_holiday_events(events)
+
+    def unique_holiday_events(self, events: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for event in events:
+            name = str(event or "").strip()
+            key = name.lower()
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            result.append(name)
+        return result
+
+    def save_holiday_events_to_bridge(self) -> None:
+        self.config.holiday_events = self.unique_holiday_events(self.config.holiday_events)
+        self.repo.save_sms_setting("holiday_events", json.dumps(self.config.holiday_events, ensure_ascii=False))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
         super().resizeEvent(event)
@@ -1541,8 +1573,13 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_campaign_type.addItem("Birthday", "birthday")
         self.holiday_campaign_type.currentIndexChanged.connect(self.update_holiday_campaign_controls)
         self.holiday_event = QComboBox()
-        for event in HOLIDAY_EVENTS:
-            self.holiday_event.addItem(event, event)
+        self.refresh_holiday_event_combo()
+        self.add_holiday_event_button = QPushButton("Add holiday")
+        self.add_holiday_event_button.clicked.connect(self.add_holiday_event)
+        self.edit_holiday_event_button = QPushButton("Edit holiday")
+        self.edit_holiday_event_button.clicked.connect(self.edit_holiday_event)
+        self.delete_holiday_event_button = QPushButton("Delete holiday")
+        self.delete_holiday_event_button.clicked.connect(self.delete_holiday_event)
         self.holiday_birthday_date = QDateEdit(clinic_qdate())
         self.holiday_birthday_date.setCalendarPopup(True)
         self.holiday_birthday_date.setDisplayFormat("MM/dd/yyyy")
@@ -1569,13 +1606,18 @@ class SmsReminderWindow(QMainWindow):
         controls.addWidget(self.holiday_campaign_type, 0, 1)
         controls.addWidget(QLabel("Holiday"), 0, 2)
         controls.addWidget(self.holiday_event, 0, 3)
-        controls.addWidget(QLabel("Birthday date"), 0, 4)
-        controls.addWidget(self.holiday_birthday_date, 0, 5)
-        controls.addWidget(QLabel("Patient filter"), 1, 0)
-        controls.addWidget(self.holiday_search, 1, 1, 1, 3)
-        controls.addWidget(self.load_holiday_button, 1, 4)
-        controls.addWidget(self.add_custom_holiday_button, 1, 5)
+        holiday_actions = QHBoxLayout()
+        holiday_actions.addWidget(self.add_holiday_event_button)
+        holiday_actions.addWidget(self.edit_holiday_event_button)
+        holiday_actions.addWidget(self.delete_holiday_event_button)
+        controls.addLayout(holiday_actions, 0, 4, 1, 2)
+        controls.addWidget(QLabel("Birthday date"), 1, 0)
+        controls.addWidget(self.holiday_birthday_date, 1, 1)
+        controls.addWidget(QLabel("Patient filter"), 1, 2)
+        controls.addWidget(self.holiday_search, 1, 3, 1, 2)
+        controls.addWidget(self.load_holiday_button, 1, 5)
         action_row = QHBoxLayout()
+        action_row.addWidget(self.add_custom_holiday_button)
         action_row.addWidget(self.remove_holiday_button)
         action_row.addWidget(self.manage_holiday_templates_button)
         action_row.addStretch()
@@ -1719,6 +1761,8 @@ class SmsReminderWindow(QMainWindow):
         self.load_templates_from_bridge()
         if hasattr(self, "review_link"):
             self.review_link.setText(self.config.review_link)
+        if hasattr(self, "holiday_event"):
+            self.refresh_holiday_event_combo()
         self.refresh_template_controls()
         self.refresh_table_template_combos()
         QMessageBox.information(self, "Templates reloaded", "Templates have been reloaded from the bridge database.")
@@ -2587,12 +2631,109 @@ class SmsReminderWindow(QMainWindow):
         campaign_type = str(self.holiday_campaign_type.currentData() or "holiday")
         is_birthday = campaign_type == "birthday"
         self.holiday_event.setEnabled(not is_birthday)
-        self.holiday_birthday_date.setEnabled(is_birthday)
-        self.holiday_search.setPlaceholderText(
-            "Optional patient filter after birthday load..."
-            if is_birthday
-            else "Patient, phone, email, patient #..."
-        )
+        if hasattr(self, "add_holiday_event_button"):
+            self.add_holiday_event_button.setEnabled(not is_birthday)
+        if hasattr(self, "edit_holiday_event_button"):
+            self.edit_holiday_event_button.setEnabled(not is_birthday and self.holiday_event.count() > 0)
+        if hasattr(self, "delete_holiday_event_button"):
+            self.delete_holiday_event_button.setEnabled(not is_birthday and self.holiday_event.count() > 0)
+        if hasattr(self, "holiday_birthday_date"):
+            self.holiday_birthday_date.setEnabled(is_birthday)
+        if hasattr(self, "holiday_search"):
+            self.holiday_search.setPlaceholderText(
+                "Optional patient filter after birthday load..."
+                if is_birthday
+                else "Patient, phone, email, patient #..."
+            )
+
+    def refresh_holiday_event_combo(self, selected_event: str | None = None) -> None:
+        if not hasattr(self, "holiday_event"):
+            return
+        current = selected_event or str(self.holiday_event.currentData() or self.holiday_event.currentText() or "")
+        self.config.holiday_events = self.unique_holiday_events(self.config.holiday_events or list(HOLIDAY_EVENTS))
+        self.holiday_event.blockSignals(True)
+        self.holiday_event.clear()
+        for event in self.config.holiday_events:
+            self.holiday_event.addItem(event, event)
+        index = self.holiday_event.findData(current)
+        if index < 0:
+            index = 0
+        self.holiday_event.setCurrentIndex(index if self.holiday_event.count() else -1)
+        self.holiday_event.blockSignals(False)
+        self.update_holiday_campaign_controls()
+
+    def current_holiday_event(self) -> str:
+        if not hasattr(self, "holiday_event"):
+            return ""
+        return str(self.holiday_event.currentData() or self.holiday_event.currentText() or "").strip()
+
+    def add_holiday_event(self) -> None:
+        name, ok = QInputDialog.getText(self, "Add holiday", "Holiday name:")
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if name.lower() in {event.lower() for event in self.config.holiday_events}:
+            QMessageBox.information(self, "Holiday exists", "That holiday is already in the list.")
+            return
+        self.config.holiday_events.append(name)
+        try:
+            self.save_holiday_events_to_bridge()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Failed to save holiday", str(exc))
+            return
+        self.refresh_holiday_event_combo(name)
+        QMessageBox.information(self, "Holiday added", f"{name} was added.")
+
+    def edit_holiday_event(self) -> None:
+        old_name = self.current_holiday_event()
+        if not old_name:
+            QMessageBox.information(self, "No holiday", "Please choose a holiday to edit.")
+            return
+        new_name, ok = QInputDialog.getText(self, "Edit holiday", "Holiday name:", text=old_name)
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name:
+            return
+        if new_name.lower() != old_name.lower() and new_name.lower() in {event.lower() for event in self.config.holiday_events}:
+            QMessageBox.information(self, "Holiday exists", "That holiday is already in the list.")
+            return
+        self.config.holiday_events = [
+            new_name if event == old_name else event
+            for event in self.config.holiday_events
+        ]
+        try:
+            self.save_holiday_events_to_bridge()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Failed to save holiday", str(exc))
+            return
+        self.refresh_holiday_event_combo(new_name)
+        self.holiday_patients = [self.normalize_holiday_patient(patient) for patient in self.holiday_patients]
+        self.render_holiday_patients()
+        QMessageBox.information(self, "Holiday saved", f"{old_name} was updated to {new_name}.")
+
+    def delete_holiday_event(self) -> None:
+        name = self.current_holiday_event()
+        if not name:
+            QMessageBox.information(self, "No holiday", "Please choose a holiday to delete.")
+            return
+        confirm = QMessageBox.question(self, "Delete holiday?", f"Delete {name} from the holiday list?")
+        if confirm != QMessageBox.Yes:
+            return
+        self.config.holiday_events = [event for event in self.config.holiday_events if event != name]
+        if not self.config.holiday_events:
+            self.config.holiday_events = list(HOLIDAY_EVENTS)
+        try:
+            self.save_holiday_events_to_bridge()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Failed to delete holiday", str(exc))
+            return
+        self.refresh_holiday_event_combo()
+        self.holiday_patients = [self.normalize_holiday_patient(patient) for patient in self.holiday_patients]
+        self.render_holiday_patients()
+        QMessageBox.information(self, "Holiday deleted", f"{name} was deleted.")
 
     def render_recall_patients(self) -> None:
         self.recall_template_combos = {}
