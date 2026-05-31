@@ -1383,11 +1383,20 @@ class SmsReminderWindow(QMainWindow):
         hero_layout.addWidget(subtitle)
         layout.addWidget(hero)
 
+        panels = QGridLayout()
+        panels.setHorizontalSpacing(16)
+        panels.setVerticalSpacing(16)
+
         monitor_card = self.card()
         monitor_layout = QGridLayout(monitor_card)
         monitor_layout.setContentsMargins(22, 20, 22, 22)
         monitor_layout.setHorizontalSpacing(18)
         monitor_layout.setVerticalSpacing(14)
+        monitor_title = QLabel("Appointment reminder")
+        monitor_title.setObjectName("SectionTitle")
+        monitor_subtitle = QLabel("Daily reminders for tomorrow and 8-day appointment targets.")
+        monitor_subtitle.setObjectName("Muted")
+        monitor_subtitle.setWordWrap(True)
 
         self.monitor_status_value = QLabel("Stopped")
         self.monitor_status_value.setObjectName("MonitorStatus")
@@ -1399,14 +1408,16 @@ class SmsReminderWindow(QMainWindow):
         self.monitor_note_value.setObjectName("Muted")
         self.monitor_note_value.setWordWrap(True)
 
-        monitor_layout.addWidget(QLabel("Status"), 0, 0)
-        monitor_layout.addWidget(self.monitor_status_value, 0, 1)
-        monitor_layout.addWidget(QLabel("Reminder target"), 1, 0)
-        monitor_layout.addWidget(self.monitor_date_value, 1, 1)
-        monitor_layout.addWidget(QLabel("Send time"), 2, 0)
-        monitor_layout.addWidget(self.monitor_time_value, 2, 1)
-        monitor_layout.addWidget(QLabel("Behavior"), 3, 0, Qt.AlignTop)
-        monitor_layout.addWidget(self.monitor_note_value, 3, 1)
+        monitor_layout.addWidget(monitor_title, 0, 0, 1, 2)
+        monitor_layout.addWidget(monitor_subtitle, 1, 0, 1, 2)
+        monitor_layout.addWidget(QLabel("Status"), 2, 0)
+        monitor_layout.addWidget(self.monitor_status_value, 2, 1)
+        monitor_layout.addWidget(QLabel("Reminder target"), 3, 0)
+        monitor_layout.addWidget(self.monitor_date_value, 3, 1)
+        monitor_layout.addWidget(QLabel("Send time"), 4, 0)
+        monitor_layout.addWidget(self.monitor_time_value, 4, 1)
+        monitor_layout.addWidget(QLabel("Behavior"), 5, 0, Qt.AlignTop)
+        monitor_layout.addWidget(self.monitor_note_value, 5, 1)
 
         action_row = QHBoxLayout()
         self.start_monitoring_button = QPushButton("Start Monitoring")
@@ -1417,9 +1428,72 @@ class SmsReminderWindow(QMainWindow):
         action_row.addStretch()
         action_row.addWidget(self.stop_monitoring_button)
         action_row.addWidget(self.start_monitoring_button)
-        monitor_layout.addLayout(action_row, 4, 0, 1, 2)
+        monitor_layout.addLayout(action_row, 6, 0, 1, 2)
 
-        layout.addWidget(monitor_card)
+        holiday_card = self.card()
+        holiday_layout = QGridLayout(holiday_card)
+        holiday_layout.setContentsMargins(22, 20, 22, 22)
+        holiday_layout.setHorizontalSpacing(18)
+        holiday_layout.setVerticalSpacing(14)
+        holiday_title = QLabel("Holiday & Birthday")
+        holiday_title.setObjectName("SectionTitle")
+        holiday_subtitle = QLabel("Holiday and birthday automations share the same monitoring clock, but are tracked separately here.")
+        holiday_subtitle.setObjectName("Muted")
+        holiday_subtitle.setWordWrap(True)
+        self.monitor_holiday_status_value = QLabel("Waiting")
+        self.monitor_holiday_status_value.setObjectName("MonitorStatus")
+        self.monitor_holiday_saved_value = QLabel("")
+        self.monitor_holiday_saved_value.setObjectName("Muted")
+        self.monitor_birthday_saved_value = QLabel("")
+        self.monitor_birthday_saved_value.setObjectName("Muted")
+        self.monitor_holiday_due_value = QLabel("")
+        self.monitor_holiday_due_value.setObjectName("Muted")
+        self.monitor_holiday_note_value = QLabel("")
+        self.monitor_holiday_note_value.setObjectName("Muted")
+        self.monitor_holiday_note_value.setWordWrap(True)
+        holiday_layout.addWidget(holiday_title, 0, 0, 1, 2)
+        holiday_layout.addWidget(holiday_subtitle, 1, 0, 1, 2)
+        holiday_layout.addWidget(QLabel("Status"), 2, 0)
+        holiday_layout.addWidget(self.monitor_holiday_status_value, 2, 1)
+        holiday_layout.addWidget(QLabel("Holiday saved"), 3, 0)
+        holiday_layout.addWidget(self.monitor_holiday_saved_value, 3, 1)
+        holiday_layout.addWidget(QLabel("Birthday saved"), 4, 0)
+        holiday_layout.addWidget(self.monitor_birthday_saved_value, 4, 1)
+        holiday_layout.addWidget(QLabel("Due today"), 5, 0)
+        holiday_layout.addWidget(self.monitor_holiday_due_value, 5, 1)
+        holiday_layout.addWidget(QLabel("Behavior"), 6, 0, Qt.AlignTop)
+        holiday_layout.addWidget(self.monitor_holiday_note_value, 6, 1)
+
+        treatment_card = self.card()
+        treatment_layout = QGridLayout(treatment_card)
+        treatment_layout.setContentsMargins(22, 20, 22, 22)
+        treatment_layout.setHorizontalSpacing(18)
+        treatment_layout.setVerticalSpacing(14)
+        treatment_title = QLabel("Treatment")
+        treatment_title.setObjectName("SectionTitle")
+        treatment_subtitle = QLabel("Treatment automation panel is reserved for the next workflow.")
+        treatment_subtitle.setObjectName("Muted")
+        treatment_subtitle.setWordWrap(True)
+        self.monitor_treatment_status_value = QLabel("Coming soon")
+        self.monitor_treatment_status_value.setObjectName("MonitorStatus")
+        treatment_note = QLabel("UI only for now. Logic will be added after the treatment workflow is finalized.")
+        treatment_note.setObjectName("Muted")
+        treatment_note.setWordWrap(True)
+        treatment_layout.addWidget(treatment_title, 0, 0, 1, 2)
+        treatment_layout.addWidget(treatment_subtitle, 1, 0, 1, 2)
+        treatment_layout.addWidget(QLabel("Status"), 2, 0)
+        treatment_layout.addWidget(self.monitor_treatment_status_value, 2, 1)
+        treatment_layout.addWidget(QLabel("Behavior"), 3, 0, Qt.AlignTop)
+        treatment_layout.addWidget(treatment_note, 3, 1)
+        treatment_layout.setRowStretch(4, 1)
+
+        panels.addWidget(monitor_card, 0, 0)
+        panels.addWidget(holiday_card, 0, 1)
+        panels.addWidget(treatment_card, 0, 2)
+        panels.setColumnStretch(0, 1)
+        panels.setColumnStretch(1, 1)
+        panels.setColumnStretch(2, 1)
+        layout.addLayout(panels)
         layout.addStretch()
         return page
 
@@ -3087,6 +3161,7 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.critical(self, "Failed to save automation", str(exc))
             return
         self.append_activity(f"Saved campaign automation: {name} on {display_date(run_date)} ({len(recipients)} recipient(s)).")
+        self.update_monitoring_status()
         QMessageBox.information(self, "Automation saved", "Campaign automation was saved. Keep Monitoring running for automatic sending.")
 
     def open_saved_holiday_automations(self) -> None:
@@ -3140,6 +3215,7 @@ class SmsReminderWindow(QMainWindow):
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.critical(dialog, "Failed to save automation", str(exc))
                 return
+            self.update_monitoring_status()
             render()
 
         def delete_campaign() -> None:
@@ -3157,6 +3233,7 @@ class SmsReminderWindow(QMainWindow):
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.critical(dialog, "Failed to delete automation", str(exc))
                 return
+            self.update_monitoring_status()
             render()
 
         actions = QHBoxLayout()
@@ -3883,9 +3960,31 @@ class SmsReminderWindow(QMainWindow):
         self.monitor_note_value.setText(
             "When monitoring is running, the app waits for the daily send time. "
             "At that time it sends pending SMS reminders for tomorrow's patients and patients with appointments 8 days away. "
-            "It also sends saved Holiday & Birthday campaign automations due today. "
             f"It will only send within {SCHEDULE_SEND_GRACE_MINUTES} minutes after the configured time."
         )
+        if hasattr(self, "monitor_holiday_status_value"):
+            campaigns = self.config.holiday_campaigns or []
+            today_key = clinic_today().isoformat()
+            holiday_count = sum(1 for campaign in campaigns if str(campaign.get("type") or "holiday") == "holiday")
+            birthday_count = sum(1 for campaign in campaigns if str(campaign.get("type") or "") == "birthday")
+            due_count = sum(
+                1
+                for campaign in campaigns
+                if campaign.get("enabled", True)
+                and str(campaign.get("run_date") or "") == today_key
+                and str(campaign.get("last_sent_date") or "") != today_key
+            )
+            self.monitor_holiday_status_value.setText("Running" if self.monitoring_active else "Stopped")
+            self.monitor_holiday_status_value.setProperty("running", "true" if self.monitoring_active else "false")
+            self.monitor_holiday_status_value.style().unpolish(self.monitor_holiday_status_value)
+            self.monitor_holiday_status_value.style().polish(self.monitor_holiday_status_value)
+            self.monitor_holiday_saved_value.setText(f"{holiday_count} automation(s)")
+            self.monitor_birthday_saved_value.setText(f"{birthday_count} automation(s)")
+            self.monitor_holiday_due_value.setText(f"{due_count} due today")
+            self.monitor_holiday_note_value.setText(
+                "Holiday and birthday campaigns are saved separately from the Holiday & Birthday tab. "
+                "Monitoring sends saved campaigns only on their configured send date."
+            )
         self.start_monitoring_button.setEnabled(not self.monitoring_active)
         self.stop_monitoring_button.setEnabled(self.monitoring_active)
 
