@@ -1244,6 +1244,12 @@ class SmsReminderWindow(QMainWindow):
             self.fill_table_width(self.appointment_table, "dashboard/appointment_column_widths")
         if hasattr(self, "recall_table"):
             self.fill_table_width(self.recall_table, "recall/patient_column_widths")
+        if hasattr(self, "treatment_table"):
+            self.fill_table_width(self.treatment_table, "treatment/patient_column_widths")
+        if hasattr(self, "review_table"):
+            self.fill_table_width(self.review_table, "review_google/patient_column_widths")
+        if hasattr(self, "holiday_table"):
+            self.fill_table_width(self.holiday_table, "holiday_birthday/patient_column_widths")
 
     def fill_table_width(self, table: QTableWidget, settings_key: str) -> None:
         viewport_width = table.viewport().width()
@@ -1716,26 +1722,27 @@ class SmsReminderWindow(QMainWindow):
         layout.addWidget(hero)
 
         controls_card = self.card()
-        controls = QHBoxLayout(controls_card)
+        controls = QGridLayout(controls_card)
         controls.setContentsMargins(18, 14, 18, 14)
         controls.setSpacing(12)
-        controls.addWidget(QLabel("Follow up after"))
+        controls.addWidget(QLabel("Follow up after"), 0, 0)
         self.treatment_days = QSpinBox()
         self.treatment_days.setRange(1, 365)
         self.treatment_days.setValue(self.config.treatment_days)
         self.treatment_days.setSuffix(" days")
         self.treatment_days.setMinimumHeight(42)
-        controls.addWidget(self.treatment_days)
-        controls.addWidget(QLabel("Procedure codes"))
+        self.treatment_days.setFixedWidth(132)
+        controls.addWidget(self.treatment_days, 0, 1)
+        controls.addWidget(QLabel("Procedure codes"), 0, 2)
         self.treatment_codes = QLineEdit(self.config.treatment_codes)
         self.treatment_codes.setPlaceholderText("Optional, e.g. D3310,D2392. Blank = all planned codes")
-        self.treatment_codes.setMinimumWidth(300)
-        controls.addWidget(self.treatment_codes)
-        controls.addWidget(QLabel("Proc status"))
+        self.treatment_codes.setMinimumWidth(220)
+        controls.addWidget(self.treatment_codes, 0, 3)
+        controls.addWidget(QLabel("Proc status"), 0, 4)
         self.treatment_statuses = QLineEdit(self.config.treatment_statuses)
         self.treatment_statuses.setPlaceholderText("1")
-        self.treatment_statuses.setFixedWidth(80)
-        controls.addWidget(self.treatment_statuses)
+        self.treatment_statuses.setFixedWidth(100)
+        controls.addWidget(self.treatment_statuses, 0, 5)
         self.load_treatment_button = QPushButton("Load treatment list")
         self.load_treatment_button.clicked.connect(self.load_treatment_patients)
         self.manage_treatment_templates_button = QPushButton("Treatment templates")
@@ -1745,11 +1752,14 @@ class SmsReminderWindow(QMainWindow):
         self.send_treatment_selected_button = QPushButton("Send selected")
         self.send_treatment_selected_button.setObjectName("PrimaryButton")
         self.send_treatment_selected_button.clicked.connect(self.send_selected_treatment_sms)
-        controls.addStretch()
-        controls.addWidget(self.load_treatment_button)
-        controls.addWidget(self.manage_treatment_templates_button)
-        controls.addWidget(self.preview_treatment_button)
-        controls.addWidget(self.send_treatment_selected_button)
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        action_row.addWidget(self.load_treatment_button)
+        action_row.addWidget(self.manage_treatment_templates_button)
+        action_row.addWidget(self.preview_treatment_button)
+        action_row.addWidget(self.send_treatment_selected_button)
+        controls.addLayout(action_row, 1, 0, 1, 6)
+        controls.setColumnStretch(3, 1)
         layout.addWidget(controls_card)
 
         table_card = self.card()
@@ -1772,7 +1782,7 @@ class SmsReminderWindow(QMainWindow):
                 6: 70,
                 7: 140,
                 8: 90,
-                9: 190,
+                9: 220,
             },
         )
         self.treatment_table.setSelectionBehavior(QTableWidget.SelectRows)
