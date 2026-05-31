@@ -1463,6 +1463,16 @@ class SmsReminderWindow(QMainWindow):
         holiday_layout.addWidget(self.monitor_holiday_due_value, 5, 1)
         holiday_layout.addWidget(QLabel("Behavior"), 6, 0, Qt.AlignTop)
         holiday_layout.addWidget(self.monitor_holiday_note_value, 6, 1)
+        holiday_action_row = QHBoxLayout()
+        self.start_holiday_monitoring_button = QPushButton("Start Holiday/Birthday")
+        self.start_holiday_monitoring_button.setObjectName("PrimaryButton")
+        self.start_holiday_monitoring_button.clicked.connect(self.start_monitoring)
+        self.stop_holiday_monitoring_button = QPushButton("Stop")
+        self.stop_holiday_monitoring_button.clicked.connect(self.stop_monitoring)
+        holiday_action_row.addStretch()
+        holiday_action_row.addWidget(self.stop_holiday_monitoring_button)
+        holiday_action_row.addWidget(self.start_holiday_monitoring_button)
+        holiday_layout.addLayout(holiday_action_row, 7, 0, 1, 2)
 
         treatment_card = self.card()
         treatment_layout = QGridLayout(treatment_card)
@@ -1485,7 +1495,16 @@ class SmsReminderWindow(QMainWindow):
         treatment_layout.addWidget(self.monitor_treatment_status_value, 2, 1)
         treatment_layout.addWidget(QLabel("Behavior"), 3, 0, Qt.AlignTop)
         treatment_layout.addWidget(treatment_note, 3, 1)
-        treatment_layout.setRowStretch(4, 1)
+        treatment_action_row = QHBoxLayout()
+        treatment_start = QPushButton("Start Treatment")
+        treatment_start.setEnabled(False)
+        treatment_stop = QPushButton("Stop")
+        treatment_stop.setEnabled(False)
+        treatment_action_row.addStretch()
+        treatment_action_row.addWidget(treatment_stop)
+        treatment_action_row.addWidget(treatment_start)
+        treatment_layout.addLayout(treatment_action_row, 4, 0, 1, 2)
+        treatment_layout.setRowStretch(5, 1)
 
         panels.addWidget(monitor_card, 0, 0)
         panels.addWidget(holiday_card, 0, 1)
@@ -3983,10 +4002,13 @@ class SmsReminderWindow(QMainWindow):
             self.monitor_holiday_due_value.setText(f"{due_count} due today")
             self.monitor_holiday_note_value.setText(
                 "Holiday and birthday campaigns are saved separately from the Holiday & Birthday tab. "
-                "Monitoring sends saved campaigns only on their configured send date."
+                "This panel starts the same scheduler, then sends saved Holiday/Birthday campaigns only on their configured send date."
             )
         self.start_monitoring_button.setEnabled(not self.monitoring_active)
         self.stop_monitoring_button.setEnabled(self.monitoring_active)
+        if hasattr(self, "start_holiday_monitoring_button"):
+            self.start_holiday_monitoring_button.setEnabled(not self.monitoring_active)
+            self.stop_holiday_monitoring_button.setEnabled(self.monitoring_active)
 
     def monitor_target_dates(self) -> list[date]:
         today = clinic_qdate()
