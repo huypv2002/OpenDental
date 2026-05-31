@@ -1040,7 +1040,7 @@ class SmsReminderWindow(QMainWindow):
             self.load_templates_from_bridge()
 
         self.setWindowTitle("LUK Dental SMS Reminder Tool")
-        self.resize(1540, 920)
+        self.resize(1680, 980)
         self.setStyleSheet(APP_STYLES)
 
         self.tabs = QTabWidget()
@@ -1205,7 +1205,7 @@ class SmsReminderWindow(QMainWindow):
     def stat_card(self, label: str) -> tuple[QFrame, QLabel]:
         frame = self.card("StatCard")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setContentsMargins(14, 10, 14, 10)
         value = QLabel("0")
         value.setObjectName("StatValue")
         caption = QLabel(label)
@@ -1271,12 +1271,12 @@ class SmsReminderWindow(QMainWindow):
     def build_dashboard_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         hero = self.card("HeroCard")
         hero_layout = QHBoxLayout(hero)
-        hero_layout.setContentsMargins(24, 22, 24, 22)
+        hero_layout.setContentsMargins(18, 14, 18, 14)
         brand = QVBoxLayout()
         eyebrow = QLabel("LUK DENTAL")
         eyebrow.setObjectName("Eyebrow")
@@ -1307,14 +1307,14 @@ class SmsReminderWindow(QMainWindow):
 
         controls_card = self.card()
         controls = QHBoxLayout(controls_card)
-        controls.setContentsMargins(18, 14, 18, 14)
-        controls.setSpacing(12)
+        controls.setContentsMargins(14, 10, 14, 10)
+        controls.setSpacing(8)
         controls.addWidget(QLabel("Reminder date"))
         self.date_edit = QDateEdit(clinic_qdate(self.config.reminder_days_ahead))
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("MM/dd/yyyy")
-        self.date_edit.setMinimumWidth(150)
-        self.date_edit.setMinimumHeight(42)
+        self.date_edit.setMinimumWidth(128)
+        self.date_edit.setMinimumHeight(34)
         self.date_edit.dateChanged.connect(self.load_appointments_for_selected_date)
         self.send_selected_button = QPushButton("Send selected")
         self.send_selected_button.clicked.connect(self.send_selected)
@@ -1379,8 +1379,8 @@ class SmsReminderWindow(QMainWindow):
         self.appointment_table.verticalHeader().setVisible(False)
         self.appointment_table.setAlternatingRowColors(True)
         self.appointment_table.setShowGrid(False)
-        self.appointment_table.verticalHeader().setDefaultSectionSize(46)
-        self.appointment_table.verticalHeader().setMinimumSectionSize(44)
+        self.appointment_table.verticalHeader().setDefaultSectionSize(38)
+        self.appointment_table.verticalHeader().setMinimumSectionSize(34)
         table_layout.addWidget(self.appointment_table)
         self.loading_overlay = QFrame(table_card)
         self.loading_overlay.setObjectName("LoadingOverlay")
@@ -1398,8 +1398,8 @@ class SmsReminderWindow(QMainWindow):
     def build_settings_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         heading = QLabel("Reminder settings")
         heading.setObjectName("HeroTitle")
@@ -1407,8 +1407,8 @@ class SmsReminderWindow(QMainWindow):
 
         bridge_box = QGroupBox("Bridge API")
         bridge_form = QFormLayout(bridge_box)
-        bridge_form.setContentsMargins(20, 20, 20, 20)
-        bridge_form.setSpacing(12)
+        bridge_form.setContentsMargins(14, 14, 14, 14)
+        bridge_form.setSpacing(8)
         self.bridge_url = QLineEdit(self.config.bridge_url)
         self.bridge_url.setPlaceholderText("http://SERVER-IP:3008")
         self.api_token = QLineEdit(self.config.api_token)
@@ -1418,8 +1418,8 @@ class SmsReminderWindow(QMainWindow):
 
         sms_box = QGroupBox("SMS and schedule")
         sms_form = QFormLayout(sms_box)
-        sms_form.setContentsMargins(20, 20, 20, 20)
-        sms_form.setSpacing(12)
+        sms_form.setContentsMargins(14, 14, 14, 14)
+        sms_form.setSpacing(8)
         self.clinic_name = QLineEdit(self.config.clinic_name)
         self.clinic_phone = QLineEdit(self.config.clinic_phone)
         self.days_ahead = QSpinBox()
@@ -1457,12 +1457,12 @@ class SmsReminderWindow(QMainWindow):
     def build_monitoring_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         hero = self.card("HeroCard")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(24, 22, 24, 22)
+        hero_layout.setContentsMargins(18, 14, 18, 14)
         eyebrow = QLabel("AUTOMATION")
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("Daily SMS monitoring")
@@ -1480,9 +1480,9 @@ class SmsReminderWindow(QMainWindow):
 
         monitor_card = self.card()
         monitor_layout = QGridLayout(monitor_card)
-        monitor_layout.setContentsMargins(22, 20, 22, 22)
-        monitor_layout.setHorizontalSpacing(18)
-        monitor_layout.setVerticalSpacing(14)
+        monitor_layout.setContentsMargins(16, 14, 16, 14)
+        monitor_layout.setHorizontalSpacing(12)
+        monitor_layout.setVerticalSpacing(8)
         monitor_title = QLabel("Appointment reminder")
         monitor_title.setObjectName("SectionTitle")
         monitor_subtitle = QLabel("Daily reminders for tomorrow and 8-day appointment targets.")
@@ -1523,9 +1523,9 @@ class SmsReminderWindow(QMainWindow):
 
         holiday_card = self.card()
         holiday_layout = QGridLayout(holiday_card)
-        holiday_layout.setContentsMargins(22, 20, 22, 22)
-        holiday_layout.setHorizontalSpacing(18)
-        holiday_layout.setVerticalSpacing(14)
+        holiday_layout.setContentsMargins(16, 14, 16, 14)
+        holiday_layout.setHorizontalSpacing(12)
+        holiday_layout.setVerticalSpacing(8)
         holiday_title = QLabel("Holiday & Birthday")
         holiday_title.setObjectName("SectionTitle")
         holiday_subtitle = QLabel("Separate monitoring for saved Holiday and Birthday campaign automations.")
@@ -1567,9 +1567,9 @@ class SmsReminderWindow(QMainWindow):
 
         treatment_card = self.card()
         treatment_layout = QGridLayout(treatment_card)
-        treatment_layout.setContentsMargins(22, 20, 22, 22)
-        treatment_layout.setHorizontalSpacing(18)
-        treatment_layout.setVerticalSpacing(14)
+        treatment_layout.setContentsMargins(16, 14, 16, 14)
+        treatment_layout.setHorizontalSpacing(12)
+        treatment_layout.setVerticalSpacing(8)
         treatment_title = QLabel("Treatment")
         treatment_title.setObjectName("SectionTitle")
         treatment_subtitle = QLabel("Separate monitoring for overdue planned procedure codes.")
@@ -1619,12 +1619,12 @@ class SmsReminderWindow(QMainWindow):
     def build_recall_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         hero = self.card("HeroCard")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(24, 22, 24, 22)
+        hero_layout.setContentsMargins(18, 14, 18, 14)
         eyebrow = QLabel("RECALL")
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("Cleaning recall SMS")
@@ -1638,19 +1638,19 @@ class SmsReminderWindow(QMainWindow):
 
         controls_card = self.card()
         controls = QHBoxLayout(controls_card)
-        controls.setContentsMargins(18, 14, 18, 14)
-        controls.setSpacing(12)
+        controls.setContentsMargins(14, 10, 14, 10)
+        controls.setSpacing(8)
         controls.addWidget(QLabel("Recall after"))
         self.recall_months = QSpinBox()
         self.recall_months.setRange(1, 60)
         self.recall_months.setValue(self.config.recall_months)
         self.recall_months.setSuffix(" months")
-        self.recall_months.setMinimumHeight(42)
+        self.recall_months.setMinimumHeight(34)
         controls.addWidget(self.recall_months)
         controls.addWidget(QLabel("Procedure codes"))
         self.recall_codes = QLineEdit(self.config.recall_codes)
         self.recall_codes.setPlaceholderText(DEFAULT_RECALL_CODES)
-        self.recall_codes.setMinimumWidth(260)
+        self.recall_codes.setMinimumWidth(220)
         controls.addWidget(self.recall_codes)
         self.load_recall_button = QPushButton("Load recall list")
         self.load_recall_button.clicked.connect(self.load_recall_patients)
@@ -1706,7 +1706,7 @@ class SmsReminderWindow(QMainWindow):
         self.recall_table.verticalHeader().setVisible(False)
         self.recall_table.setAlternatingRowColors(True)
         self.recall_table.setShowGrid(False)
-        self.recall_table.verticalHeader().setDefaultSectionSize(46)
+        self.recall_table.verticalHeader().setDefaultSectionSize(38)
         table_layout.addWidget(self.recall_table)
         layout.addWidget(table_card, 1)
         return page
@@ -1714,12 +1714,12 @@ class SmsReminderWindow(QMainWindow):
     def build_treatment_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         hero = self.card("HeroCard")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(24, 22, 24, 22)
+        hero_layout.setContentsMargins(18, 14, 18, 14)
         eyebrow = QLabel("TREATMENT")
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("Pending treatment SMS")
@@ -1733,25 +1733,25 @@ class SmsReminderWindow(QMainWindow):
 
         controls_card = self.card()
         controls = QGridLayout(controls_card)
-        controls.setContentsMargins(18, 14, 18, 14)
-        controls.setSpacing(12)
+        controls.setContentsMargins(14, 10, 14, 10)
+        controls.setSpacing(8)
         controls.addWidget(QLabel("Procedure date before"), 0, 0)
         self.treatment_days = QSpinBox()
         self.treatment_days.setRange(1, 365)
         self.treatment_days.setValue(self.config.treatment_days)
         self.treatment_days.setSuffix(" days")
-        self.treatment_days.setMinimumHeight(42)
-        self.treatment_days.setFixedWidth(132)
+        self.treatment_days.setMinimumHeight(34)
+        self.treatment_days.setFixedWidth(118)
         controls.addWidget(self.treatment_days, 0, 1)
         controls.addWidget(QLabel("Procedure codes"), 0, 2)
         self.treatment_codes = QLineEdit(self.config.treatment_codes)
         self.treatment_codes.setPlaceholderText("Optional, e.g. D3310,D2392. Blank = all planned codes")
-        self.treatment_codes.setMinimumWidth(220)
+        self.treatment_codes.setMinimumWidth(200)
         controls.addWidget(self.treatment_codes, 0, 3)
         controls.addWidget(QLabel("Proc status"), 0, 4)
         self.treatment_statuses = QLineEdit(self.config.treatment_statuses)
         self.treatment_statuses.setPlaceholderText("1")
-        self.treatment_statuses.setFixedWidth(100)
+        self.treatment_statuses.setFixedWidth(84)
         controls.addWidget(self.treatment_statuses, 0, 5)
         self.load_treatment_button = QPushButton("Load treatment list")
         self.load_treatment_button.clicked.connect(self.load_treatment_patients)
@@ -1810,7 +1810,7 @@ class SmsReminderWindow(QMainWindow):
         self.treatment_table.verticalHeader().setVisible(False)
         self.treatment_table.setAlternatingRowColors(True)
         self.treatment_table.setShowGrid(False)
-        self.treatment_table.verticalHeader().setDefaultSectionSize(46)
+        self.treatment_table.verticalHeader().setDefaultSectionSize(38)
         table_layout.addWidget(self.treatment_table)
         layout.addWidget(table_card, 1)
         return page
@@ -1818,12 +1818,12 @@ class SmsReminderWindow(QMainWindow):
     def build_review_google_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         hero = self.card("HeroCard")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(24, 22, 24, 22)
+        hero_layout.setContentsMargins(18, 14, 18, 14)
         eyebrow = QLabel("GOOGLE REVIEW")
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("Manual Google review SMS")
@@ -1837,8 +1837,8 @@ class SmsReminderWindow(QMainWindow):
 
         controls_card = self.card()
         controls = QHBoxLayout(controls_card)
-        controls.setContentsMargins(18, 14, 18, 14)
-        controls.setSpacing(12)
+        controls.setContentsMargins(14, 10, 14, 10)
+        controls.setSpacing(8)
         controls.addWidget(QLabel("Patient filter"))
         self.review_search = QLineEdit()
         self.review_search.setPlaceholderText("Patient, phone, email, patient #...")
@@ -1883,7 +1883,7 @@ class SmsReminderWindow(QMainWindow):
         self.review_table.verticalHeader().setVisible(False)
         self.review_table.setAlternatingRowColors(True)
         self.review_table.setShowGrid(False)
-        self.review_table.verticalHeader().setDefaultSectionSize(46)
+        self.review_table.verticalHeader().setDefaultSectionSize(38)
         table_layout.addWidget(self.review_table)
         layout.addWidget(table_card, 1)
         return page
@@ -1891,12 +1891,12 @@ class SmsReminderWindow(QMainWindow):
     def build_holiday_birthday_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         hero = self.card("HeroCard")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(24, 22, 24, 22)
+        hero_layout.setContentsMargins(18, 14, 18, 14)
         eyebrow = QLabel("HOLIDAY & BIRTHDAY")
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("Holiday promotion and birthday SMS")
@@ -1910,7 +1910,7 @@ class SmsReminderWindow(QMainWindow):
 
         controls_card = self.card()
         controls = QGridLayout(controls_card)
-        controls.setContentsMargins(18, 14, 18, 14)
+        controls.setContentsMargins(14, 10, 14, 10)
         controls.setHorizontalSpacing(12)
         controls.setVerticalSpacing(12)
 
@@ -2006,7 +2006,7 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_table.verticalHeader().setVisible(False)
         self.holiday_table.setAlternatingRowColors(True)
         self.holiday_table.setShowGrid(False)
-        self.holiday_table.verticalHeader().setDefaultSectionSize(46)
+        self.holiday_table.verticalHeader().setDefaultSectionSize(38)
         table_layout.addWidget(self.holiday_table)
         layout.addWidget(table_card, 1)
         self.update_holiday_campaign_controls()
@@ -2015,12 +2015,12 @@ class SmsReminderWindow(QMainWindow):
     def build_templates_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         hero = self.card("HeroCard")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(24, 22, 24, 22)
+        hero_layout.setContentsMargins(18, 14, 18, 14)
         eyebrow = QLabel("MESSAGE LIBRARY")
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("SMS templates")
@@ -2034,9 +2034,9 @@ class SmsReminderWindow(QMainWindow):
 
         template_card = self.card()
         template_layout = QGridLayout(template_card)
-        template_layout.setContentsMargins(22, 20, 22, 22)
+        template_layout.setContentsMargins(16, 14, 16, 14)
         template_layout.setHorizontalSpacing(14)
-        template_layout.setVerticalSpacing(14)
+        template_layout.setVerticalSpacing(8)
         self.template_select = QComboBox()
         self.template_name = QLineEdit()
         self.template_country_select = QComboBox()
@@ -2087,8 +2087,8 @@ class SmsReminderWindow(QMainWindow):
     def build_logs_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
         row = QHBoxLayout()
         title = QLabel("Reminder send log")
         title.setObjectName("HeroTitle")
@@ -4975,7 +4975,7 @@ QMainWindow, QWidget {
   background: #f7fbfd;
   color: #202833;
   font-family: "Google Sans", "Segoe UI", Arial, sans-serif;
-  font-size: 14px;
+  font-size: 12px;
 }
 QMainWindow {
   background: #f7fbfd;
@@ -4997,29 +4997,29 @@ QTabBar {
 QTabBar::tab {
   background: transparent;
   color: #617181;
-  padding: 16px 24px 14px 24px;
+  padding: 10px 16px 9px 16px;
   font-weight: 700;
   border: 0;
-  min-width: 112px;
+  min-width: 88px;
 }
 QTabBar::tab:selected {
   color: #1359d8;
-  border-bottom: 4px solid #23c7e8;
+  border-bottom: 3px solid #23c7e8;
 }
 #HeroCard {
   border: 1px solid #e2edf3;
-  border-radius: 14px;
+  border-radius: 8px;
   background: #ffffff;
 }
 #Card, #StatCard, QGroupBox {
   border: 1px solid #e2edf3;
-  border-radius: 14px;
+  border-radius: 8px;
   background: #ffffff;
 }
 QGroupBox {
-  margin-top: 14px;
-  padding-top: 18px;
-  font-size: 16px;
+  margin-top: 10px;
+  padding-top: 12px;
+  font-size: 13px;
   font-weight: 800;
   color: #1c2936;
 }
@@ -5030,44 +5030,44 @@ QGroupBox::title {
 }
 #Eyebrow {
   color: #1359d8;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 900;
   letter-spacing: 1px;
 }
 #HeroTitle {
   color: #1f2933;
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 900;
 }
 #HeroSubtitle {
   color: #647381;
-  font-size: 14px;
+  font-size: 12px;
 }
 #SectionTitle {
   color: #2f3742;
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 800;
 }
 #Muted {
   color: #68717d;
 }
 #StatCard {
-  min-height: 86px;
+  min-height: 66px;
 }
 #StatValue {
   color: #1359d8;
-  font-size: 30px;
+  font-size: 23px;
   font-weight: 900;
 }
 #StatLabel {
   color: #68717d;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
 }
 QPushButton {
   border: 1px solid #d8e2ea;
-  border-radius: 20px;
-  padding: 10px 20px;
+  border-radius: 7px;
+  padding: 7px 13px;
   background: #ffffff;
   font-weight: 700;
   color: #26323f;
@@ -5089,8 +5089,8 @@ QPushButton:pressed {
   border-color: #0f4fc4;
 }
 #Badge {
-  padding: 9px 16px;
-  border-radius: 17px;
+  padding: 6px 11px;
+  border-radius: 8px;
   background: #e8f2ff;
   color: #155bd8;
   font-weight: 900;
@@ -5100,11 +5100,11 @@ QPushButton:pressed {
   color: #b42318;
 }
 #MonitorStatus {
-  padding: 9px 14px;
-  border-radius: 16px;
+  padding: 6px 10px;
+  border-radius: 8px;
   background: #fff7ed;
   color: #b45309;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 900;
 }
 #MonitorStatus[running="true"] {
@@ -5117,9 +5117,9 @@ QPushButton:pressed {
 }
 QLineEdit, QSpinBox, QDateEdit, QTimeEdit, QTextEdit, QPlainTextEdit {
   border: 1px solid #d5dfe8;
-  border-radius: 10px;
-  min-height: 22px;
-  padding: 10px 12px;
+  border-radius: 7px;
+  min-height: 18px;
+  padding: 6px 9px;
   background: #ffffff;
   color: #202833;
   selection-background-color: #155bd8;
@@ -5127,9 +5127,9 @@ QLineEdit, QSpinBox, QDateEdit, QTimeEdit, QTextEdit, QPlainTextEdit {
 }
 QComboBox {
   border: 1px solid #d5dfe8;
-  border-radius: 10px;
-  min-height: 22px;
-  padding: 9px 36px 9px 12px;
+  border-radius: 7px;
+  min-height: 18px;
+  padding: 6px 30px 6px 9px;
   background: #ffffff;
   color: #202833;
 }
@@ -5148,11 +5148,11 @@ QComboBox:disabled::drop-down {
 QComboBox::drop-down, QDateEdit::drop-down, QTimeEdit::drop-down {
   subcontrol-origin: padding;
   subcontrol-position: top right;
-  width: 30px;
+  width: 24px;
   border: 0;
   border-left: 1px solid #edf3f7;
-  border-top-right-radius: 10px;
-  border-bottom-right-radius: 10px;
+  border-top-right-radius: 7px;
+  border-bottom-right-radius: 7px;
   background: #f8fcff;
 }
 QComboBox QAbstractItemView {
@@ -5165,9 +5165,9 @@ QComboBox QAbstractItemView {
   outline: 0;
 }
 #TemplateCombo {
-  border-radius: 7px;
-  padding: 4px 26px 4px 8px;
-  min-height: 18px;
+  border-radius: 6px;
+  padding: 3px 24px 3px 7px;
+  min-height: 16px;
   background: #ffffff;
 }
 #TemplateCombo::drop-down {
@@ -5176,15 +5176,15 @@ QComboBox QAbstractItemView {
 #LoadingOverlay {
   background: rgba(247, 251, 253, 218);
   border: 1px solid #d8e7f0;
-  border-radius: 14px;
+  border-radius: 8px;
 }
 #LoadingText {
   color: #1359d8;
   background: #ffffff;
   border: 1px solid #d8e7f0;
-  border-radius: 18px;
-  padding: 12px 22px;
-  font-size: 16px;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
   font-weight: 900;
 }
 QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
@@ -5192,7 +5192,7 @@ QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus, QTextEdit:foc
 }
 QTableWidget {
   border: 0;
-  border-radius: 14px;
+  border-radius: 8px;
   background: #ffffff;
   alternate-background-color: #f8fcff;
   selection-background-color: #e4f2ff;
@@ -5201,12 +5201,12 @@ QTableWidget {
 QHeaderView::section {
   background: #edf9fd;
   color: #2f3742;
-  padding: 12px;
+  padding: 8px;
   border: 0;
   font-weight: 800;
 }
 QTableWidget::item {
-  padding: 8px;
+  padding: 5px;
   border-bottom: 1px solid #edf3f7;
 }
 QSplitter::handle {
@@ -5224,10 +5224,10 @@ QStatusBar {
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("LUK Dental SMS Reminder Tool")
-    font = QFont("Segoe UI", 10)
+    font = QFont("Segoe UI", 9)
     app.setFont(font)
     window = SmsReminderWindow()
-    window.show()
+    window.showMaximized()
     if "--start-monitoring" in sys.argv:
         QTimer.singleShot(1500, window.start_monitoring)
     return app.exec()
