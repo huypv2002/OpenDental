@@ -3,6 +3,7 @@ import { config } from './config.js';
 
 const LOG_TABLE = 'luk_sms_reminder_log';
 const RECALL_LOG_TABLE = 'luk_sms_recall_log';
+const CAMPAIGN_LOG_TABLE = 'luk_sms_campaign_log';
 const SMS_SETTINGS_TABLE = 'luk_sms_settings';
 
 function parseDate(value) {
@@ -137,6 +138,28 @@ export async function ensureSmsRecallLogTable(connection = pool) {
   `);
 }
 
+export async function ensureSmsCampaignLogTable(connection = pool) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS ${CAMPAIGN_LOG_TABLE} (
+      CampaignLogNum BIGINT NOT NULL AUTO_INCREMENT,
+      CampaignType VARCHAR(40) NOT NULL DEFAULT '',
+      CampaignName VARCHAR(255) NOT NULL DEFAULT '',
+      PatNum BIGINT NOT NULL DEFAULT 0,
+      Phone VARCHAR(30) NOT NULL,
+      TemplateKey VARCHAR(50) NOT NULL DEFAULT '',
+      Message TEXT NOT NULL,
+      Status VARCHAR(30) NOT NULL,
+      SentAt DATETIME NULL,
+      ErrorMessage TEXT NULL,
+      CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (CampaignLogNum),
+      KEY idx_luk_sms_campaign_patient (PatNum, Phone),
+      KEY idx_luk_sms_campaign_sent (SentAt),
+      KEY idx_luk_sms_campaign_type (CampaignType, CampaignName)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
+
 export async function getSmsReminderAppointments(query) {
   const targetDate = parseDate(query.date);
   const statuses = parseStatuses(query.statuses);
@@ -184,6 +207,59 @@ export async function getSmsReminderAppointments(query) {
         DurationMinutes: patternMinutes(row.Pattern, config.booking.fallbackDurationMinutes)
       };
     })
+  };
+}
+
+export async function getSmsBirthdayCandidates(query = {}) {
+  const targetDate = query.date ? parseDate(query.date) : new Date().toISOString().slice(0, 10);
+  const limit = parseLimit(query.limit, 300);
+  const [rows] = await pool.execute(
+    `
+      SELECT
+        p.PatNum,
+        p.FName,
+        p.LName,
+        p.WirelessPhone,
+        p.HmPhone,
+        p.WkPhone,
+        p.Email,
+        p.Language,
+        p.Gender,
+        DATE_FORMAT(p.Birthdate, '%Y-%m-%d') AS Birthdate,
+        DATE_FORMAT(MAX(a.AptDateTime), '%Y-%m-%d %H:%i:%s') AS LastAppointment
+      FROM patient p
+      LEFT JOIN appointment a ON a.PatNum = p.PatNum
+      WHERE p.PatStatus = 0
+        AND p.Birthdate IS NOT NULL
+        AND p.Birthdate > '1900-01-01'
+        AND MONTH(p.Birthdate) = MONTH(?)
+        AND DAYOFMONTH(p.Birthdate) = DAYOFMONTH(?)
+      GROUP BY
+        p.PatNum,
+        p.FName,
+        p.LName,
+        p.WirelessPhone,
+        p.HmPhone,
+        p.WkPhone,
+        p.Email,
+        p.Language,
+        p.Gender,
+        p.Birthdate
+      ORDER BY p.LName, p.FName
+      LIMIT ?
+    `,
+    [targetDate, targetDate, limit]
+  );
+
+  return {
+    date: targetDate,
+    patients: rows.map((row) => ({
+      ...row,
+      WirelessPhoneFormatted: formatUsPhone(row.WirelessPhone || ''),
+      WorkPhoneFormatted: formatUsPhone(row.WkPhone || ''),
+      HomePhoneFormatted: formatUsPhone(row.HmPhone || ''),
+      Phone: formatUsPhone(row.WirelessPhone || row.HmPhone || row.WkPhone || '')
+    }))
   };
 }
 
@@ -293,6 +369,36 @@ export async function logSmsRecallResult(body) {
   );
 
   return { patNum, phone, status };
+}
+
+export async function logSmsCampaignResult(body) {
+  await ensureSmsCampaignLogTable();
+  const patNum = Number.parseInt(String(body.patNum ?? '0'), 10) || 0;
+  const phone = String(body.phone ?? '').trim();
+  const campaignType = String(body.campaignType ?? '').trim();
+  const campaignName = String(body.campaignName ?? '').trim();
+  const templateKey = String(body.templateKey ?? '').trim();
+  const message = String(body.message ?? '');
+  const status = String(body.status ?? '').trim();
+  const errorMessage = String(body.errorMessage ?? '');
+
+  if (!phone || !status) {
+    const error = new Error('phone and status are required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const sentAt = ['sent', 'dry-run'].includes(status) ? new Date() : null;
+  await pool.execute(
+    `
+      INSERT INTO ${CAMPAIGN_LOG_TABLE}
+        (CampaignType, CampaignName, PatNum, Phone, TemplateKey, Message, Status, SentAt, ErrorMessage)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [campaignType, campaignName, patNum, phone, templateKey, message, status, sentAt, errorMessage]
+  );
+
+  return { patNum, phone, campaignType, campaignName, status };
 }
 
 export async function clearSmsDryRunLogs() {
@@ -419,6 +525,12 @@ const DEFAULT_SMS_TEMPLATE_ROWS = [
   { key: 'US', category: 'review_google', country: 'US', text: "Hi {first_name}, thank you for visiting Luk Dental. If you had a good experience, would you mind leaving us a Google review? Your feedback helps our clinic and other patients. {review_link} Thank you." },
   { key: 'ES', category: 'review_google', country: 'ES', text: "Hola {first_name}, gracias por visitar Luk Dental. Si tuvo una buena experiencia, ¿podría dejarnos una reseña en Google? Sus comentarios ayudan a nuestra clínica y a otros pacientes. {review_link} Gracias." },
   { key: 'VI', category: 'review_google', country: 'VI', text: "Good morning {vi_salutation}, cảm ơn {vi_title} đã đến nha khoa Luk Dental. Nếu {vi_title} hài lòng với dịch vụ, nhờ {vi_title} để lại review Google giúp phòng khám nhé. {review_link} Thank you." },
+  { key: 'US_HOLIDAY', category: 'holiday_birthday', country: 'US', text: "Hi {first_name}, Luk Dental wishes you and your family a happy {holiday_name}. We are offering a holiday dental care promotion. Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ if you would like to schedule a visit. Thank you." },
+  { key: 'ES_HOLIDAY', category: 'holiday_birthday', country: 'ES', text: "Hola {first_name}, Luk Dental le desea a usted y a su familia un feliz {holiday_name}. Tenemos una promoción especial para cuidado dental. Llame al {clinic_phone} o haga su cita en https://lukdental.us/dental-appointment/. Gracias." },
+  { key: 'VI_HOLIDAY', category: 'holiday_birthday', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental kính chúc {vi_title} và gia đình một dịp {holiday_name} vui vẻ. Phòng khám đang có chương trình ưu đãi chăm sóc răng miệng. {vi_title_cap} vui lòng gọi {clinic_phone} hoặc đặt lịch tại https://lukdental.us/dental-appointment/. Thank you." },
+  { key: 'US_BIRTHDAY', category: 'holiday_birthday', country: 'US', text: "Happy birthday {first_name}! Luk Dental wishes you a healthy and happy year ahead. If you would like to schedule a dental checkup, please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/. Thank you." },
+  { key: 'ES_BIRTHDAY', category: 'holiday_birthday', country: 'ES', text: "¡Feliz cumpleaños {first_name}! Luk Dental le desea mucha salud y felicidad. Si desea programar una revisión dental, llame al {clinic_phone} o haga su cita en https://lukdental.us/dental-appointment/. Gracias." },
+  { key: 'VI_BIRTHDAY', category: 'holiday_birthday', country: 'VI', text: "Happy birthday {vi_salutation}! Nha khoa Luk Dental kính chúc {vi_title} thật nhiều sức khỏe và niềm vui. Nếu {vi_title} muốn đặt lịch kiểm tra răng miệng, vui lòng gọi {clinic_phone} hoặc đặt lịch tại https://lukdental.us/dental-appointment/. Thank you." },
 ];
 
 function isManagedAppointmentTemplateVariant(key, text) {
@@ -460,7 +572,7 @@ function shouldUpdateManagedTemplate(row, defaultRow) {
 
 function parseTemplateBody(body) {
   const key = String(body.templateKey ?? '').trim().toUpperCase();
-  const category = ['appointment', 'recall', 'review_google'].includes(String(body.category ?? '').toLowerCase())
+  const category = ['appointment', 'recall', 'review_google', 'holiday_birthday'].includes(String(body.category ?? '').toLowerCase())
     ? String(body.category ?? '').toLowerCase()
     : 'appointment';
   const country = String(body.country ?? 'US').toUpperCase().slice(0, 5);
@@ -542,8 +654,8 @@ export async function getSmsTemplates(query = {}) {
   }
   sql += ' ORDER BY Category, TemplateKey';
   const [rows] = await pool.execute(sql, params);
-  const templates = { appointment: {}, recall: {}, review_google: {} };
-  const countries = { appointment: {}, recall: {}, review_google: {} };
+  const templates = { appointment: {}, recall: {}, review_google: {}, holiday_birthday: {} };
+  const countries = { appointment: {}, recall: {}, review_google: {}, holiday_birthday: {} };
   for (const row of rows) {
     if (!templates[row.Category]) {
       templates[row.Category] = {};
@@ -590,7 +702,7 @@ export async function saveSmsTemplate(body) {
 export async function deleteSmsTemplate(body) {
   await ensureSmsTemplatesTable();
   const key = String(body.templateKey ?? '').trim().toUpperCase();
-  const category = ['appointment', 'recall', 'review_google'].includes(String(body.category ?? '').toLowerCase())
+  const category = ['appointment', 'recall', 'review_google', 'holiday_birthday'].includes(String(body.category ?? '').toLowerCase())
     ? String(body.category ?? '').toLowerCase()
     : 'appointment';
   if (!key) {

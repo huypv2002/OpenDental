@@ -28,8 +28,10 @@ import { exportAppointmentReport, parseAppointmentReportBody } from './reports.j
 import {
   addSmsTemplate,
   deleteSmsTemplate,
+  ensureSmsCampaignLogTable,
   ensureSmsSettingsTable,
   ensureSmsTemplatesTable,
+  getSmsBirthdayCandidates,
   getSmsSettings,
   getSmsTemplates,
   initDefaultSmsTemplates,
@@ -39,6 +41,7 @@ import {
   getSmsRecallCandidates,
   getSmsReminderAppointments,
   getSmsReminderLogs,
+  logSmsCampaignResult,
   logSmsRecallResult,
   logSmsReminderResult,
   resetSmsReminderLog
@@ -228,6 +231,24 @@ app.post('/api/sms-reminders/recall-log', requireApiToken, async (req, res, next
   }
 });
 
+app.get('/api/sms-reminders/birthday-candidates', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getSmsBirthdayCandidates(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/sms-reminders/campaign-log', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await logSmsCampaignResult(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/sms-reminders/log', requireApiToken, async (req, res, next) => {
   try {
     const data = await logSmsReminderResult(req.body ?? {});
@@ -376,7 +397,7 @@ app.use((error, _req, res, _next) => {
 });
 
 // Auto-create SMS template/settings tables and seed defaults on startup
-ensureSmsTemplatesTable().then(() => ensureSmsSettingsTable()).then(() => initDefaultSmsTemplates()).then((init) => {
+ensureSmsTemplatesTable().then(() => ensureSmsSettingsTable()).then(() => ensureSmsCampaignLogTable()).then(() => initDefaultSmsTemplates()).then((init) => {
   if (init.initialized) {
     console.log(`SMS templates: seeded ${init.count} default templates.`);
   } else {

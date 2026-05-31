@@ -57,6 +57,23 @@ CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Centra
 DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
 SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 SCHEDULE_SEND_GRACE_MINUTES = 30
+HOLIDAY_EVENTS = [
+    "New Year's Day",
+    "Martin Luther King Jr. Day",
+    "Valentine's Day",
+    "Presidents' Day",
+    "Easter",
+    "Mother's Day",
+    "Memorial Day",
+    "Father's Day",
+    "Independence Day",
+    "Labor Day",
+    "Halloween",
+    "Veterans Day",
+    "Thanksgiving",
+    "Christmas",
+    "New Year Promotion",
+]
 
 
 def clinic_now() -> datetime:
@@ -178,6 +195,8 @@ class AppConfig:
     review_link: str = ""
     review_templates: dict[str, str] = field(default_factory=dict)
     review_template_countries: dict[str, str] = field(default_factory=dict)
+    holiday_templates: dict[str, str] = field(default_factory=dict)
+    holiday_template_countries: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -188,7 +207,7 @@ class AppConfig:
             template_keys = {
                 "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
                 "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
-                "default_template_key", "template_schema_version",
+                "holiday_templates", "holiday_template_countries", "default_template_key", "template_schema_version",
             }
             known = {key: value for key, value in raw.items() if key in defaults and key not in template_keys}
             cfg = cls(**{**defaults, **known})
@@ -219,7 +238,7 @@ class AppConfig:
         for key in (
             "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
             "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
-            "default_template_key", "template_schema_version",
+            "holiday_templates", "holiday_template_countries", "default_template_key", "template_schema_version",
         ):
             data.pop(key, None)
         CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -290,6 +309,14 @@ class BridgeClient:
         )
         return data.get("patients") or []
 
+    def fetch_birthday_candidates(self, target_date: date) -> list[dict[str, Any]]:
+        data = self.request(
+            "GET",
+            "/api/sms-reminders/birthday-candidates",
+            params={"date": target_date.isoformat(), "limit": 500},
+        )
+        return data.get("patients") or []
+
     def log_result(self, appointment: dict[str, Any], message: str, status: str, error: str = "", phone: str | None = None) -> None:
         apt_time = parse_datetime(appointment.get("AptDateTime"))
         self.request(
@@ -316,6 +343,22 @@ class BridgeClient:
                 "phone": phone or patient.get("Phone", ""),
                 "procedureCodes": patient.get("ProcedureCodes", ""),
                 "lastProcDate": patient.get("LastProcDate", ""),
+                "message": message,
+                "status": status,
+                "errorMessage": error,
+            },
+        )
+
+    def log_campaign_result(self, patient: dict[str, Any], message: str, status: str, error: str = "", phone: str | None = None) -> None:
+        self.request(
+            "POST",
+            "/api/sms-reminders/campaign-log",
+            json={
+                "campaignType": patient.get("_CampaignType", ""),
+                "campaignName": patient.get("_CampaignName", ""),
+                "patNum": patient.get("PatNum") or 0,
+                "phone": phone or patient.get("Phone", ""),
+                "templateKey": patient.get("_TemplateKey", ""),
                 "message": message,
                 "status": status,
                 "errorMessage": error,
@@ -527,6 +570,50 @@ class SendWorker(QThread):
         self.finished.emit(sent, failed)
 
 
+class CampaignSendWorker(QThread):
+    progress = Signal(str)
+    finished = Signal(int, int)
+
+    def __init__(self, config: AppConfig, recipients: list[dict[str, Any]]):
+        super().__init__()
+        self.config = config
+        self.recipients = recipients
+
+    def run(self) -> None:
+        repo = BridgeClient(self.config)
+        sender = PhoneLinkSender(self.config.dry_run)
+        sent = 0
+        failed = 0
+        for patient in self.recipients:
+            message = render_message(self.config, patient, patient.get("_TemplateText") or "")
+            name = patient_name(patient)
+            targets = [
+                target for target in patient.get("PhoneTargets", [])
+                if digits_only(target.get("phone", ""))
+            ]
+            if not targets and digits_only(patient.get("Phone", "")):
+                targets = [{"source": patient.get("PhoneSource") or "Phone", "phone": patient.get("Phone", "")}]
+            if not targets:
+                failed += 1
+                repo.log_campaign_result(patient, message, "failed", "Missing patient phone number.")
+                self.progress.emit(f"Failed campaign SMS: {name} has no phone number.")
+                continue
+            for target in targets:
+                phone = target.get("phone", "")
+                source = target.get("source") or "Phone"
+                try:
+                    sender.send_sms(phone, message)
+                    status = "dry-run" if self.config.dry_run else "sent"
+                    repo.log_campaign_result(patient, message, status, phone=phone)
+                    sent += 1
+                    self.progress.emit(f"{status.upper()} CAMPAIGN: {name} {source} -> {phone}")
+                except Exception as exc:  # noqa: BLE001
+                    failed += 1
+                    repo.log_campaign_result(patient, message, "failed", str(exc), phone=phone)
+                    self.progress.emit(f"Failed campaign SMS: {name} {source} -> {exc}")
+        self.finished.emit(sent, failed)
+
+
 class LoadAppointmentsWorker(QThread):
     loaded = Signal(object, list, list)
     failed = Signal(object, str)
@@ -577,6 +664,23 @@ class LoadPatientsWorker(QThread):
         try:
             repo = BridgeClient(self.config)
             self.loaded.emit(repo.fetch_patients(self.query))
+        except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
+            self.failed.emit(str(exc))
+
+
+class LoadBirthdayPatientsWorker(QThread):
+    loaded = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, config: AppConfig, target_date: date):
+        super().__init__()
+        self.config = config
+        self.target_date = target_date
+
+    def run(self) -> None:
+        try:
+            repo = BridgeClient(self.config)
+            self.loaded.emit(repo.fetch_birthday_candidates(self.target_date))
         except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
             self.failed.emit(str(exc))
 
@@ -736,6 +840,15 @@ def review_template_key_for_language(config: AppConfig, language: str | None) ->
     return template_key_for_language_keys(config.review_templates.keys(), language)
 
 
+def holiday_template_key_for_language(config: AppConfig, language: str | None, campaign_type: str = "holiday") -> str:
+    preferred = template_key_for_language_keys(config.holiday_templates.keys(), language)
+    suffix = "_BIRTHDAY" if campaign_type == "birthday" else "_HOLIDAY"
+    candidate = f"{infer_template_country(preferred)}{suffix}"
+    if candidate in {str(key).upper() for key in config.holiday_templates.keys()}:
+        return candidate
+    return preferred
+
+
 def template_key_for_language_keys(keys: Any, language: str | None) -> str:
     available = {str(key).upper() for key in keys}
     text = str(language or "").strip().lower()
@@ -745,7 +858,12 @@ def template_key_for_language_keys(keys: Any, language: str | None) -> str:
         preferred = "VI"
     else:
         preferred = "US"
-    return preferred if preferred in available else "US"
+    if preferred in available:
+        return preferred
+    for key in sorted(available):
+        if key.startswith(f"{preferred}_") or key.startswith(f"{preferred}-"):
+            return key
+    return "US"
 
 
 def template_flag_path(key: str) -> Path | None:
@@ -777,6 +895,8 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
         clinic_name=config.clinic_name,
         clinic_phone=config.clinic_phone,
         review_link=config.review_link,
+        holiday_name=row.get("_HolidayName") or row.get("_CampaignName") or "",
+        campaign_name=row.get("_CampaignName") or "",
         first_name=first_name,
         formal_first_name=patient_formal_first_name(row),
         last_name=str(row.get("LName") or "").strip(),
@@ -812,11 +932,13 @@ class SmsReminderWindow(QMainWindow):
         self.appointments: list[dict[str, Any]] = []
         self.recall_patients: list[dict[str, Any]] = []
         self.review_patients: list[dict[str, Any]] = []
+        self.holiday_patients: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
         self.active_send_kind = "appointments"
         self.load_worker: LoadAppointmentsWorker | None = None
         self.recall_load_worker: LoadRecallWorker | None = None
         self.review_load_worker: LoadPatientsWorker | None = None
+        self.holiday_load_worker: QThread | None = None
         self.queued_load = False
         self.send_after_load = False
         self.monitor_send_queue: list[date] = []
@@ -827,6 +949,7 @@ class SmsReminderWindow(QMainWindow):
         self.row_template_combos: dict[int, QComboBox] = {}
         self.recall_template_combos: dict[int, QComboBox] = {}
         self.review_template_combos: dict[int, QComboBox] = {}
+        self.holiday_template_combos: dict[int, QComboBox] = {}
         self.activity_messages: list[str] = []
         self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
@@ -846,6 +969,7 @@ class SmsReminderWindow(QMainWindow):
         self.tabs.addTab(self.build_monitoring_tab(), "Monitoring")
         self.tabs.addTab(self.build_recall_tab(), "Recall")
         self.tabs.addTab(self.build_review_google_tab(), "Review Google")
+        self.tabs.addTab(self.build_holiday_birthday_tab(), "Holiday & Birthday")
         self.tabs.addTab(self.build_templates_tab(), "Templates")
         self.tabs.addTab(self.build_settings_tab(), "Settings")
         self.tabs.addTab(self.build_logs_tab(), "Logs")
@@ -874,7 +998,7 @@ class SmsReminderWindow(QMainWindow):
             data = self.repo.fetch_templates()
             tmpl = data.get("templates") or data or {}
             countries = data.get("countries") or {}
-            if not (tmpl.get("appointment") and tmpl.get("recall") and tmpl.get("review_google")):
+            if not (tmpl.get("appointment") and tmpl.get("recall") and tmpl.get("review_google") and tmpl.get("holiday_birthday")):
                 self.repo.init_default_templates()
                 data = self.repo.fetch_templates()
                 tmpl = data.get("templates") or data or {}
@@ -888,6 +1012,8 @@ class SmsReminderWindow(QMainWindow):
             self.config.recall_template_countries = countries.get("recall") or {}
             self.config.review_templates = tmpl.get("review_google") or {}
             self.config.review_template_countries = countries.get("review_google") or {}
+            self.config.holiday_templates = tmpl.get("holiday_birthday") or {}
+            self.config.holiday_template_countries = countries.get("holiday_birthday") or {}
             self.config.review_link = str(sms_settings.get("review_link") or "")
             self.config.sms_template = default_template(self.config)
             self.config.recall_template = self.config.recall_templates.get("US", "")
@@ -898,6 +1024,8 @@ class SmsReminderWindow(QMainWindow):
             self.config.recall_template_countries = {}
             self.config.review_templates = {}
             self.config.review_template_countries = {}
+            self.config.holiday_templates = {}
+            self.config.holiday_template_countries = {}
             self.config.review_link = ""
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
@@ -1380,6 +1508,112 @@ class SmsReminderWindow(QMainWindow):
         self.review_table.verticalHeader().setDefaultSectionSize(46)
         table_layout.addWidget(self.review_table)
         layout.addWidget(table_card, 1)
+        return page
+
+    def build_holiday_birthday_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(16)
+
+        hero = self.card("HeroCard")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(24, 22, 24, 22)
+        eyebrow = QLabel("HOLIDAY & BIRTHDAY")
+        eyebrow.setObjectName("Eyebrow")
+        title = QLabel("Holiday promotion and birthday SMS")
+        title.setObjectName("HeroTitle")
+        subtitle = QLabel("Build a custom patient list first, then send the selected holiday or birthday template through Phone Link automation.")
+        subtitle.setObjectName("HeroSubtitle")
+        hero_layout.addWidget(eyebrow)
+        hero_layout.addWidget(title)
+        hero_layout.addWidget(subtitle)
+        layout.addWidget(hero)
+
+        controls_card = self.card()
+        controls = QGridLayout(controls_card)
+        controls.setContentsMargins(18, 14, 18, 14)
+        controls.setHorizontalSpacing(12)
+        controls.setVerticalSpacing(12)
+
+        self.holiday_campaign_type = QComboBox()
+        self.holiday_campaign_type.addItem("Holiday promotion", "holiday")
+        self.holiday_campaign_type.addItem("Birthday", "birthday")
+        self.holiday_campaign_type.currentIndexChanged.connect(self.update_holiday_campaign_controls)
+        self.holiday_event = QComboBox()
+        for event in HOLIDAY_EVENTS:
+            self.holiday_event.addItem(event, event)
+        self.holiday_birthday_date = QDateEdit(clinic_qdate())
+        self.holiday_birthday_date.setCalendarPopup(True)
+        self.holiday_birthday_date.setDisplayFormat("MM/dd/yyyy")
+        self.holiday_search = QLineEdit()
+        self.holiday_search.setPlaceholderText("Patient, phone, email, patient #...")
+        self.holiday_search.returnPressed.connect(self.load_holiday_patients)
+        self.load_holiday_button = QPushButton("Load / filter patients")
+        self.load_holiday_button.clicked.connect(self.load_holiday_patients)
+        self.add_custom_holiday_button = QPushButton("Add custom")
+        self.add_custom_holiday_button.clicked.connect(self.add_custom_holiday_patient)
+        self.remove_holiday_button = QPushButton("Remove selected")
+        self.remove_holiday_button.clicked.connect(self.remove_selected_holiday_patients)
+        self.manage_holiday_templates_button = QPushButton("Templates")
+        self.manage_holiday_templates_button.clicked.connect(self.open_holiday_templates_popup)
+        self.preview_holiday_button = QPushButton("Preview selected")
+        self.preview_holiday_button.clicked.connect(self.preview_holiday_selected)
+        self.send_holiday_selected_button = QPushButton("Send selected")
+        self.send_holiday_selected_button.clicked.connect(self.send_selected_holiday_sms)
+        self.send_holiday_all_button = QPushButton("Send all in list")
+        self.send_holiday_all_button.setObjectName("PrimaryButton")
+        self.send_holiday_all_button.clicked.connect(self.send_all_holiday_sms)
+
+        controls.addWidget(QLabel("Campaign"), 0, 0)
+        controls.addWidget(self.holiday_campaign_type, 0, 1)
+        controls.addWidget(QLabel("Holiday"), 0, 2)
+        controls.addWidget(self.holiday_event, 0, 3)
+        controls.addWidget(QLabel("Birthday date"), 0, 4)
+        controls.addWidget(self.holiday_birthday_date, 0, 5)
+        controls.addWidget(QLabel("Patient filter"), 1, 0)
+        controls.addWidget(self.holiday_search, 1, 1, 1, 3)
+        controls.addWidget(self.load_holiday_button, 1, 4)
+        controls.addWidget(self.add_custom_holiday_button, 1, 5)
+        action_row = QHBoxLayout()
+        action_row.addWidget(self.remove_holiday_button)
+        action_row.addWidget(self.manage_holiday_templates_button)
+        action_row.addStretch()
+        action_row.addWidget(self.preview_holiday_button)
+        action_row.addWidget(self.send_holiday_selected_button)
+        action_row.addWidget(self.send_holiday_all_button)
+        controls.addLayout(action_row, 2, 0, 1, 6)
+        layout.addWidget(controls_card)
+
+        table_card = self.card()
+        table_layout = QVBoxLayout(table_card)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        self.holiday_table = QTableWidget(0, 9)
+        self.holiday_table.setHorizontalHeaderLabels(["Patient", "Phone", "Email", "Language", "Birthdate", "Pat #", "Campaign", "Template", "Status"])
+        self.configure_resizable_columns(
+            self.holiday_table,
+            "holiday_birthday/patient_column_widths",
+            {
+                0: 220,
+                1: 300,
+                2: 190,
+                3: 100,
+                4: 120,
+                5: 80,
+                6: 160,
+                7: 190,
+                8: 120,
+            },
+        )
+        self.holiday_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.holiday_table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self.holiday_table.verticalHeader().setVisible(False)
+        self.holiday_table.setAlternatingRowColors(True)
+        self.holiday_table.setShowGrid(False)
+        self.holiday_table.verticalHeader().setDefaultSectionSize(46)
+        table_layout.addWidget(self.holiday_table)
+        layout.addWidget(table_card, 1)
+        self.update_holiday_campaign_controls()
         return page
 
     def build_templates_tab(self) -> QWidget:
@@ -1899,6 +2133,161 @@ class SmsReminderWindow(QMainWindow):
         refresh("US")
         dialog.exec()
 
+    def open_holiday_templates_popup(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Holiday & Birthday SMS templates")
+        dialog.resize(940, 640)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 18, 20, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Holiday & Birthday SMS templates")
+        title.setObjectName("HeroTitle")
+        layout.addWidget(title)
+
+        form_card = self.card()
+        form = QGridLayout(form_card)
+        form.setContentsMargins(18, 16, 18, 18)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(14)
+
+        select = QComboBox()
+        select.setIconSize(QSize(30, 22))
+        name = QLineEdit()
+        country_select = QComboBox()
+        for country in ("US", "VI", "ES"):
+            country_select.addItem(template_icon(country), country, country)
+        country_select.setIconSize(QSize(30, 22))
+        text = QTextEdit()
+        text.setMinimumHeight(300)
+
+        def refresh(selected_key: str | None = None) -> None:
+            current = selected_key or str(select.currentData() or "US_HOLIDAY")
+            select.blockSignals(True)
+            select.clear()
+            for key in sorted(self.config.holiday_templates):
+                country = str(self.config.holiday_template_countries.get(key) or infer_template_country(key)).upper()
+                select.addItem(template_icon(country), template_label(key), key)
+            index = select.findData(current)
+            if index < 0:
+                index = max(0, select.findData("US_HOLIDAY"))
+            select.setCurrentIndex(index)
+            select.blockSignals(False)
+            load_current()
+
+        def current_key() -> str:
+            return str(select.currentData() or select.currentText() or "US_HOLIDAY").strip().upper()
+
+        def load_current(*_args: Any) -> None:
+            key = current_key()
+            name.setText(key)
+            country = str(self.config.holiday_template_countries.get(key) or infer_template_country(key)).upper()
+            country_index = country_select.findData(country)
+            country_select.setCurrentIndex(country_index if country_index >= 0 else 0)
+            text.setPlainText(self.config.holiday_templates.get(key, ""))
+
+        def add_template() -> None:
+            key, ok = QInputDialog.getText(dialog, "Add campaign template", "Template key, for example US_HOLIDAY_2, VI_BIRTHDAY_2, or ES_HOLIDAY:")
+            if not ok:
+                return
+            key = key.strip().upper()
+            if not key:
+                return
+            if key in self.config.holiday_templates:
+                QMessageBox.information(dialog, "Template exists", "That Holiday & Birthday template already exists.")
+                return
+            country = infer_template_country(key)
+            fallback_key = f"{country}_BIRTHDAY" if "BIRTHDAY" in key else f"{country}_HOLIDAY"
+            default_text = (
+                self.config.holiday_templates.get(fallback_key)
+                or self.config.holiday_templates.get("US_HOLIDAY")
+                or next(iter(self.config.holiday_templates.values()), "")
+            )
+            try:
+                self.repo.add_template(key, "holiday_birthday", country, default_text)
+                self.load_templates_from_bridge()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Failed to add campaign template", str(exc))
+                return
+            self.config.save()
+            refresh(key)
+            self.refresh_table_template_combos()
+            QMessageBox.information(dialog, "Template added", f"Campaign template {key} was added successfully.")
+
+        def save_template() -> None:
+            old_key = current_key()
+            new_key = name.text().strip().upper()
+            body = text.toPlainText().strip()
+            country = str(country_select.currentData() or infer_template_country(new_key)).upper()
+            if not new_key or not body:
+                QMessageBox.warning(dialog, "Template required", "Template key and message are required.")
+                return
+            try:
+                if old_key != new_key and old_key in self.config.holiday_templates and old_key not in {"US_HOLIDAY", "US_BIRTHDAY"}:
+                    self.repo.delete_template(old_key, "holiday_birthday")
+                self.repo.save_template(new_key, "holiday_birthday", country, body)
+                self.load_templates_from_bridge()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Failed to save campaign template", str(exc))
+                return
+            self.config.save()
+            refresh(new_key)
+            self.refresh_table_template_combos()
+            QMessageBox.information(dialog, "Template saved", f"Campaign template {new_key} was saved successfully.")
+
+        def delete_template() -> None:
+            key = current_key()
+            if len(self.config.holiday_templates) <= 1 or key in {"US_HOLIDAY", "US_BIRTHDAY"}:
+                QMessageBox.warning(dialog, "Cannot delete", "Default US holiday and birthday templates must remain available.")
+                return
+            confirm = QMessageBox.question(dialog, "Delete campaign template?", f"Delete Holiday & Birthday template {key}?")
+            if confirm != QMessageBox.Yes:
+                return
+            try:
+                self.repo.delete_template(key, "holiday_birthday")
+                self.load_templates_from_bridge()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Failed to delete campaign template", str(exc))
+                return
+            self.config.save()
+            refresh("US_HOLIDAY")
+            self.refresh_table_template_combos()
+            QMessageBox.information(dialog, "Template deleted", f"Campaign template {key} was deleted successfully.")
+
+        select.currentTextChanged.connect(load_current)
+        form.addWidget(QLabel("Edit template"), 0, 0)
+        form.addWidget(select, 0, 1)
+        form.addWidget(QLabel("Template key"), 1, 0)
+        form.addWidget(name, 1, 1)
+        form.addWidget(QLabel("Country flag"), 1, 2)
+        form.addWidget(country_select, 1, 3)
+        form.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
+        form.addWidget(text, 2, 1, 1, 3)
+        helper = QLabel("Placeholders: {formal_first_name}, {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {age}, {clinic_phone}, {holiday_name}, {campaign_name}, {review_link}")
+        helper.setObjectName("Muted")
+        helper.setWordWrap(True)
+        form.addWidget(helper, 3, 1, 1, 3)
+        layout.addWidget(form_card, 1)
+
+        actions = QHBoxLayout()
+        add_button = QPushButton("Add template")
+        delete_button = QPushButton("Delete template")
+        save_button = QPushButton("Save template")
+        save_button.setObjectName("PrimaryButton")
+        close_button = QPushButton("Close")
+        add_button.clicked.connect(add_template)
+        delete_button.clicked.connect(delete_template)
+        save_button.clicked.connect(save_template)
+        close_button.clicked.connect(dialog.accept)
+        actions.addStretch()
+        actions.addWidget(add_button)
+        actions.addWidget(delete_button)
+        actions.addWidget(save_button)
+        actions.addWidget(close_button)
+        layout.addLayout(actions)
+        refresh("US_HOLIDAY")
+        dialog.exec()
+
     def save_settings(self, silent: bool = False) -> None:
         try:
             statuses = [int(part.strip()) for part in self.statuses.text().split(",") if part.strip()]
@@ -2102,6 +2491,25 @@ class SmsReminderWindow(QMainWindow):
         row["_TemplateCountry"] = str(self.config.review_template_countries.get(key) or infer_template_country(key)).upper()
         return row
 
+    def normalize_holiday_patient(self, patient: dict[str, Any]) -> dict[str, Any]:
+        row = self.normalize_patient_phone_targets(patient)
+        row.pop("_Recall", None)
+        campaign_type = str(self.holiday_campaign_type.currentData() or "holiday") if hasattr(self, "holiday_campaign_type") else "holiday"
+        campaign_name = (
+            self.holiday_birthday_date.date().toString("MM/dd/yyyy")
+            if campaign_type == "birthday" and hasattr(self, "holiday_birthday_date")
+            else str(self.holiday_event.currentData() or self.holiday_event.currentText() or "Holiday")
+        )
+        key = holiday_template_key_for_language(self.config, row.get("Language"), campaign_type)
+        row["_CampaignType"] = campaign_type
+        row["_CampaignName"] = campaign_name
+        row["_HolidayName"] = campaign_name
+        row["_TemplateKey"] = key
+        row["_TemplateText"] = self.config.holiday_templates.get(key, "")
+        row["_TemplateCountry"] = str(self.config.holiday_template_countries.get(key) or infer_template_country(key)).upper()
+        row["_CampaignStatus"] = ""
+        return row
+
     def load_recall_patients(self) -> None:
         if self.recall_load_worker and self.recall_load_worker.isRunning():
             QMessageBox.information(self, "Loading", "Recall list is already loading.")
@@ -2144,6 +2552,47 @@ class SmsReminderWindow(QMainWindow):
 
     def review_patients_failed(self, message: str) -> None:
         QMessageBox.critical(self, "Review patient load error", message)
+
+    def load_holiday_patients(self) -> None:
+        if self.holiday_load_worker and self.holiday_load_worker.isRunning():
+            QMessageBox.information(self, "Loading", "Holiday/Birthday patient list is already loading.")
+            return
+        self.save_settings(silent=True)
+        self.load_holiday_button.setEnabled(False)
+        campaign_type = str(self.holiday_campaign_type.currentData() or "holiday")
+        if campaign_type == "birthday":
+            target = self.holiday_birthday_date.date().toPython()
+            self.holiday_load_worker = LoadBirthdayPatientsWorker(self.config, target)
+            self.statusBar().showMessage(f"Loading birthday patients for {display_date(target)}...", 4000)
+        else:
+            query = self.holiday_search.text().strip() if hasattr(self, "holiday_search") else ""
+            self.holiday_load_worker = LoadPatientsWorker(self.config, query)
+            self.statusBar().showMessage("Loading holiday promotion patients...", 4000)
+        self.holiday_load_worker.loaded.connect(self.holiday_patients_loaded)
+        self.holiday_load_worker.failed.connect(self.holiday_patients_failed)
+        self.holiday_load_worker.finished.connect(lambda: self.load_holiday_button.setEnabled(True))
+        self.holiday_load_worker.start()
+
+    def holiday_patients_loaded(self, patients: list[dict[str, Any]]) -> None:
+        self.holiday_patients = [self.normalize_holiday_patient(patient) for patient in patients]
+        self.render_holiday_patients()
+        self.statusBar().showMessage(f"Loaded {len(self.holiday_patients)} campaign patients.", 4000)
+
+    def holiday_patients_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "Holiday/Birthday load error", message)
+
+    def update_holiday_campaign_controls(self) -> None:
+        if not hasattr(self, "holiday_campaign_type"):
+            return
+        campaign_type = str(self.holiday_campaign_type.currentData() or "holiday")
+        is_birthday = campaign_type == "birthday"
+        self.holiday_event.setEnabled(not is_birthday)
+        self.holiday_birthday_date.setEnabled(is_birthday)
+        self.holiday_search.setPlaceholderText(
+            "Optional patient filter after birthday load..."
+            if is_birthday
+            else "Patient, phone, email, patient #..."
+        )
 
     def render_recall_patients(self) -> None:
         self.recall_template_combos = {}
@@ -2200,6 +2649,63 @@ class SmsReminderWindow(QMainWindow):
                     item.setTextAlignment(Qt.AlignCenter)
                 self.review_table.setItem(row_index, col, item)
 
+    def render_holiday_patients(self) -> None:
+        self.holiday_template_combos = {}
+        query = self.holiday_search.text().strip().lower() if hasattr(self, "holiday_search") else ""
+        visible_rows: list[dict[str, Any]] = []
+        for row in self.holiday_patients:
+            haystack = " ".join(
+                str(value or "")
+                for value in (
+                    patient_name(row),
+                    row.get("Phone"),
+                    row.get("Email"),
+                    row.get("Language"),
+                    row.get("Birthdate"),
+                    row.get("PatNum"),
+                    row.get("_CampaignName"),
+                )
+            ).lower()
+            if query and query not in haystack:
+                continue
+            visible_rows.append(row)
+
+        self.holiday_table.setRowCount(len(visible_rows))
+        self.holiday_table.setProperty("_visible_patients", visible_rows)
+        for row_index, row in enumerate(visible_rows):
+            values = [
+                patient_name(row),
+                row.get("Phone", ""),
+                row.get("Email", ""),
+                row.get("Language", ""),
+                display_date(row.get("Birthdate")),
+                row.get("PatNum", ""),
+                row.get("_CampaignName", ""),
+                "",
+                row.get("_CampaignStatus", ""),
+            ]
+            for col, value in enumerate(values):
+                if col == 7:
+                    combo = QComboBox()
+                    self.populate_holiday_template_combo(
+                        combo,
+                        row.get("_TemplateKey") or holiday_template_key_for_language(
+                            self.config,
+                            row.get("Language"),
+                            row.get("_CampaignType") or "holiday",
+                        ),
+                    )
+                    self.holiday_table.setCellWidget(row_index, col, combo)
+                    self.holiday_template_combos[row_index] = combo
+                    continue
+                item = QTableWidgetItem(str(value or ""))
+                if col in {5, 8}:
+                    item.setTextAlignment(Qt.AlignCenter)
+                self.holiday_table.setItem(row_index, col, item)
+
+    def holiday_visible_patients(self) -> list[dict[str, Any]]:
+        return list(self.holiday_table.property("_visible_patients") or [])
+
     def selected_recall_patients(self) -> list[dict[str, Any]]:
         rows = sorted({index.row() for index in self.recall_table.selectedIndexes()})
         selected: list[dict[str, Any]] = []
@@ -2225,6 +2731,125 @@ class SmsReminderWindow(QMainWindow):
             patient["_TemplateCountry"] = str(self.config.review_template_countries.get(key) or infer_template_country(key)).upper()
             selected.append(patient)
         return selected
+
+    def selected_holiday_patients(self) -> list[dict[str, Any]]:
+        rows = {index.row() for index in self.holiday_table.selectedIndexes()}
+        current_row = self.holiday_table.currentRow()
+        if current_row >= 0:
+            rows.add(current_row)
+        visible = self.holiday_visible_patients()
+        selected: list[dict[str, Any]] = []
+        for row_index in sorted(rows):
+            if row_index < 0 or row_index >= len(visible):
+                continue
+            patient = dict(visible[row_index])
+            for col, key in (
+                (0, "_PatientName"),
+                (1, "Phone"),
+                (2, "Email"),
+                (3, "Language"),
+                (4, "Birthdate"),
+                (5, "PatNum"),
+                (6, "_CampaignName"),
+                (8, "_CampaignStatus"),
+            ):
+                item = self.holiday_table.item(row_index, col)
+                if item:
+                    patient[key] = item.text().strip()
+            name_parts = str(patient.pop("_PatientName", "")).strip().split(" ", 1)
+            if name_parts and name_parts[0]:
+                patient["FName"] = name_parts[0]
+            if len(name_parts) > 1:
+                patient["LName"] = name_parts[1]
+            combo = self.holiday_template_combos.get(row_index)
+            campaign_type = str(patient.get("_CampaignType") or self.holiday_campaign_type.currentData() or "holiday")
+            key = (
+                str(combo.currentData() or patient.get("_TemplateKey") or "")
+                if combo
+                else str(patient.get("_TemplateKey") or "")
+            )
+            if not key:
+                key = holiday_template_key_for_language(self.config, patient.get("Language"), campaign_type)
+            patient["_TemplateKey"] = key
+            patient["_TemplateText"] = self.config.holiday_templates.get(key) or ""
+            patient["_TemplateCountry"] = str(self.config.holiday_template_countries.get(key) or infer_template_country(key)).upper()
+            patient["_CampaignType"] = campaign_type
+            patient["_HolidayName"] = patient.get("_CampaignName") or patient.get("_HolidayName") or ""
+            existing_targets = [
+                {"source": target.get("source") or "Phone", "phone": target.get("phone", ""), "status": ""}
+                for target in patient.get("PhoneTargets", [])
+                if digits_only(target.get("phone", ""))
+            ]
+            phone_text = str(patient.get("Phone") or "")
+            if existing_targets and ("|" in phone_text or self.phone_targets_display(existing_targets) == phone_text):
+                patient["PhoneTargets"] = existing_targets
+            else:
+                phone = format_us_phone(phone_text)
+                patient["PhoneTargets"] = [{"source": "Phone", "phone": phone, "status": ""}] if digits_only(phone) else []
+            selected.append(patient)
+        return selected
+
+    def add_custom_holiday_patient(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add custom campaign patient")
+        dialog.resize(520, 420)
+        layout = QVBoxLayout(dialog)
+        form_card = self.card()
+        form = QFormLayout(form_card)
+        first_name = QLineEdit()
+        last_name = QLineEdit()
+        phone = QLineEdit()
+        email = QLineEdit()
+        language = QComboBox()
+        language.addItems(["English", "Spanish", "Vietnamese"])
+        birthdate = QLineEdit()
+        birthdate.setPlaceholderText("YYYY-MM-DD or MM/DD/YYYY")
+        pat_num = QLineEdit()
+        form.addRow("First name", first_name)
+        form.addRow("Last name", last_name)
+        form.addRow("Phone", phone)
+        form.addRow("Email", email)
+        form.addRow("Language", language)
+        form.addRow("Birthdate", birthdate)
+        form.addRow("Pat #", pat_num)
+        layout.addWidget(form_card)
+        actions = QHBoxLayout()
+        cancel = QPushButton("Cancel")
+        add = QPushButton("Add patient")
+        add.setObjectName("PrimaryButton")
+        cancel.clicked.connect(dialog.reject)
+        add.clicked.connect(dialog.accept)
+        actions.addStretch()
+        actions.addWidget(cancel)
+        actions.addWidget(add)
+        layout.addLayout(actions)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        if not digits_only(phone.text()):
+            QMessageBox.warning(self, "Missing phone", "Please enter a valid phone number for this custom patient.")
+            return
+        row = {
+            "FName": first_name.text().strip(),
+            "LName": last_name.text().strip(),
+            "Phone": format_us_phone(phone.text()),
+            "PhoneTargets": [{"source": "Phone", "phone": format_us_phone(phone.text()), "status": ""}],
+            "Email": email.text().strip(),
+            "Language": language.currentText(),
+            "Birthdate": birthdate.text().strip(),
+            "PatNum": pat_num.text().strip() or 0,
+        }
+        self.holiday_patients.append(self.normalize_holiday_patient(row))
+        self.render_holiday_patients()
+
+    def remove_selected_holiday_patients(self) -> None:
+        rows = sorted({index.row() for index in self.holiday_table.selectedIndexes()}, reverse=True)
+        if not rows:
+            QMessageBox.information(self, "No selection", "Please select one or more campaign patients to remove.")
+            return
+        visible = self.holiday_visible_patients()
+        remove_ids = {id(visible[row]) for row in rows if 0 <= row < len(visible)}
+        self.holiday_patients = [patient for patient in self.holiday_patients if id(patient) not in remove_ids]
+        self.render_holiday_patients()
 
     def preview_recall_selected(self) -> None:
         self.save_settings(silent=True)
@@ -2343,6 +2968,44 @@ class SmsReminderWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Phone Link error", str(exc))
 
+    def preview_holiday_selected(self) -> None:
+        self.save_settings(silent=True)
+        selected = self.selected_holiday_patients()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select one campaign patient.")
+            return
+        patient = selected[0]
+        message = render_message(self.config, patient, patient.get("_TemplateText") or "")
+        QMessageBox.information(
+            self,
+            "Holiday & Birthday SMS preview",
+            f"To: {patient_name(patient)}\nPhone: {patient.get('Phone', '')}\nCampaign: {patient.get('_CampaignName', '')}\n\n{message}",
+        )
+
+    def send_selected_holiday_sms(self) -> None:
+        selected = self.selected_holiday_patients()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select at least one campaign patient.")
+            return
+        self.start_holiday_send(selected)
+
+    def send_all_holiday_sms(self) -> None:
+        visible = self.holiday_visible_patients()
+        if not visible:
+            QMessageBox.information(self, "Nothing to send", "There are no patients in the Holiday & Birthday list.")
+            return
+        rows_to_select = []
+        self.holiday_table.clearSelection()
+        for row in range(self.holiday_table.rowCount()):
+            rows_to_select.append(row)
+            self.holiday_table.selectRow(row)
+        selected = self.selected_holiday_patients()
+        self.holiday_table.clearSelection()
+        if not selected:
+            QMessageBox.information(self, "Nothing to send", "There are no valid campaign recipients.")
+            return
+        self.start_holiday_send(selected)
+
     def render_appointments(self) -> None:
         self.row_template_combos = {}
         self.appointment_table.setRowCount(len(self.appointments))
@@ -2445,6 +3108,25 @@ class SmsReminderWindow(QMainWindow):
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
 
+    def populate_holiday_template_combo(self, combo: QComboBox, selected_key: str | None = None) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.setObjectName("TemplateCombo")
+        combo.setFixedHeight(34)
+        combo.setMinimumWidth(178)
+        combo.setIconSize(QSize(30, 20))
+        combo.setToolTip("Choose Holiday & Birthday SMS template")
+        for key in sorted(self.config.holiday_templates):
+            country = str(self.config.holiday_template_countries.get(key) or infer_template_country(key)).upper()
+            combo.addItem(template_icon(country), template_label(key), key)
+            combo.setItemData(combo.count() - 1, template_label(key), Qt.ToolTipRole)
+        selected = selected_key or "US_HOLIDAY"
+        index = combo.findData(selected)
+        if index < 0:
+            index = combo.findData("US_HOLIDAY")
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
     def refresh_table_template_combos(self) -> None:
         for combo in self.row_template_combos.values():
             current = str(combo.currentData() or self.config.default_template_key)
@@ -2455,6 +3137,9 @@ class SmsReminderWindow(QMainWindow):
         for combo in getattr(self, "review_template_combos", {}).values():
             current = str(combo.currentData() or "US")
             self.populate_review_template_combo(combo, current)
+        for combo in getattr(self, "holiday_template_combos", {}).values():
+            current = str(combo.currentData() or "US_HOLIDAY")
+            self.populate_holiday_template_combo(combo, current)
 
     def appointment_with_template(self, row_index: int) -> dict[str, Any]:
         appointment = dict(self.appointments[row_index])
@@ -2729,6 +3414,43 @@ class SmsReminderWindow(QMainWindow):
         self.worker.start()
         return True
 
+    def start_holiday_send(self, patients: list[dict[str, Any]]) -> bool:
+        if self.worker and self.worker.isRunning():
+            QMessageBox.information(self, "Sending", "A send job is already running.")
+            return False
+        sms_count = sum(
+            len([target for target in patient.get("PhoneTargets", []) if digits_only(target.get("phone", ""))])
+            or (1 if digits_only(patient.get("Phone", "")) else 0)
+            for patient in patients
+        )
+        if sms_count == 0:
+            QMessageBox.information(self, "Nothing to send", "There are no valid phone numbers in this campaign selection.")
+            return False
+        missing_templates = [patient_name(patient) for patient in patients if not str(patient.get("_TemplateText") or "").strip()]
+        if missing_templates:
+            QMessageBox.warning(
+                self,
+                "Missing template",
+                "Some selected patients do not have a campaign template. Please choose a Holiday & Birthday template first.",
+            )
+            return False
+        if not self.config.dry_run:
+            confirm = QMessageBox.question(
+                self,
+                "Send campaign SMS?",
+                f"Send {sms_count} real Holiday & Birthday SMS message(s) through Phone Link?",
+            )
+            if confirm != QMessageBox.Yes:
+                return False
+        self.save_settings(silent=True)
+        self.set_send_enabled(False)
+        self.active_send_kind = "campaign"
+        self.worker = CampaignSendWorker(self.config, patients)
+        self.worker.progress.connect(self.append_activity)
+        self.worker.finished.connect(self.send_finished)
+        self.worker.start()
+        return True
+
     def set_send_enabled(self, enabled: bool) -> None:
         self.send_selected_button.setEnabled(enabled)
         self.send_all_button.setEnabled(enabled)
@@ -2743,6 +3465,12 @@ class SmsReminderWindow(QMainWindow):
             self.fill_recall_button.setEnabled(enabled)
         if hasattr(self, "preview_recall_button"):
             self.preview_recall_button.setEnabled(enabled)
+        if hasattr(self, "preview_holiday_button"):
+            self.preview_holiday_button.setEnabled(enabled)
+        if hasattr(self, "send_holiday_selected_button"):
+            self.send_holiday_selected_button.setEnabled(enabled)
+        if hasattr(self, "send_holiday_all_button"):
+            self.send_holiday_all_button.setEnabled(enabled)
 
     def append_activity(self, message: str) -> None:
         entry = f"[{clinic_now().strftime('%H:%M:%S')}] {message}"
@@ -2756,6 +3484,11 @@ class SmsReminderWindow(QMainWindow):
             self.monitor_batch_failed = True
         if self.active_send_kind == "recall":
             self.load_recall_patients()
+        elif self.active_send_kind == "campaign":
+            for row in range(self.holiday_table.rowCount()):
+                item = self.holiday_table.item(row, 8)
+                if item and item.text().strip() == "":
+                    item.setText("sent" if failed == 0 else "check log")
         elif self.monitor_batch_active:
             self.process_next_monitor_target()
         else:

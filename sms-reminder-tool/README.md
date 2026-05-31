@@ -12,6 +12,9 @@ PySide6 desktop tool for sending one-day appointment reminders from the Open Den
 - Daily scheduler runs only after `Start Monitoring` is clicked.
 - Dedicated template management tab with country/language templates.
 - Per-appointment template selection, defaulting to the configured template.
+- Recall SMS tab for manual recall follow-up.
+- Review Google tab for manually filling review request SMS.
+- Holiday & Birthday tab for building custom campaign recipient lists and sending selected holiday/birthday templates.
 - Bridge-managed reminder log to prevent duplicate sends.
 - Dry-run mode for safe testing before real SMS.
 - Phone Link automation through `pywinauto` on Windows.
@@ -36,7 +39,9 @@ python sms_reminder_app.py
 The desktop app does not connect directly to MySQL. It calls the bridge API:
 
 - `GET /api/sms-reminders/appointments`
+- `GET /api/sms-reminders/birthday-candidates`
 - `POST /api/sms-reminders/log`
+- `POST /api/sms-reminders/campaign-log`
 - `GET /api/sms-reminders/logs`
 
 The bridge server handles Open Dental database access and creates/updates the `luk_sms_reminder_log` table.
@@ -64,6 +69,8 @@ Use the `Templates` tab to add, edit, and delete appointment templates. Recall a
 The dashboard also has a `Template` column so a staff member can choose the correct language/country template for each appointment before sending.
 
 The `Review Google` tab searches patients and fills Phone Link with a review request message. It does not auto-send SMS and does not run under monitoring.
+
+The `Holiday & Birthday` tab uses its own `holiday_birthday` template category in `luk_sms_templates`. Staff can load birthday patients for a selected date or search/load patients for a holiday promotion, then manually add, edit, or remove recipients before sending. This campaign send queue is separate from the daily appointment monitoring schedule.
 
 ## SMS Template Placeholders
 
