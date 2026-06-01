@@ -608,6 +608,103 @@ class PhoneLinkSender:
         self.slow_keys("^v", 1.25)
 
 
+class OpenDentalPatientViewer:
+    STEP_DELAY_SECONDS = 0.8
+
+    @staticmethod
+    def slow_keys(keys: str, delay: float | None = None) -> None:
+        from pywinauto.keyboard import send_keys
+
+        send_keys(keys)
+        time.sleep(OpenDentalPatientViewer.STEP_DELAY_SECONDS if delay is None else delay)
+
+    @staticmethod
+    def format_birthdate(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y"):
+            try:
+                return datetime.strptime(text[:10], fmt).strftime("%m/%d/%Y")
+            except ValueError:
+                continue
+        return text
+
+    @staticmethod
+    def open_open_dental() -> None:
+        if platform.system() != "Windows":
+            raise RuntimeError("Open Dental automation only runs on the Windows clinic workstation.")
+        shortcut_candidates = [
+            Path(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Open Dental.lnk"),
+            Path(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Open Dental\Open Dental.lnk"),
+            Path.home() / "Desktop" / "Open Dental.lnk",
+            Path(r"C:\Users\Public\Desktop\Open Dental.lnk"),
+        ]
+        for shortcut in shortcut_candidates:
+            if shortcut.exists():
+                os.startfile(str(shortcut))  # type: ignore[attr-defined]
+                return
+        subprocess.Popen(
+            ["cmd", "/c", "start", "", "Open Dental"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            shell=False,
+        )
+
+    @staticmethod
+    def open_patient(first_name: str, last_name: str, birthdate: str) -> None:
+        if platform.system() != "Windows":
+            raise RuntimeError("Open Dental automation only runs on the Windows clinic workstation.")
+        first_name = first_name.strip()
+        last_name = last_name.strip()
+        birthdate = OpenDentalPatientViewer.format_birthdate(birthdate)
+        if not first_name or not last_name or not birthdate:
+            raise RuntimeError("Missing first name, last name, or date of birth for Open Dental lookup.")
+
+        try:
+            from pywinauto import Desktop, Application, mouse
+        except ImportError as exc:
+            raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
+
+        desktop = Desktop(backend="uia")
+        window = desktop.window(title_re=r".*Open Dental.*")
+        if not window.exists(timeout=2):
+            OpenDentalPatientViewer.open_open_dental()
+            window = desktop.window(title_re=r".*Open Dental.*")
+        if not window.exists(timeout=20):
+            app = Application(backend="uia").connect(title_re=r".*Open Dental.*", timeout=20)
+            window = app.top_window()
+
+        window.set_focus()
+        time.sleep(1.0)
+        OpenDentalPatientViewer.slow_keys("^p", 1.5)
+
+        popup = desktop.window(title_re=r".*(Select Patient|Patient Select).*")
+        if not popup.exists(timeout=10):
+            raise RuntimeError("Open Dental Select Patient popup did not appear.")
+        popup.set_focus()
+        time.sleep(0.5)
+
+        pyperclip.copy(last_name)
+        OpenDentalPatientViewer.slow_keys("^v", 0.35)
+        OpenDentalPatientViewer.slow_keys("{TAB}", 0.2)
+        pyperclip.copy(first_name)
+        OpenDentalPatientViewer.slow_keys("^v", 0.35)
+        OpenDentalPatientViewer.slow_keys("{TAB 8}", 0.25)
+        pyperclip.copy(birthdate)
+        OpenDentalPatientViewer.slow_keys("^v", 1.2)
+
+        rect = popup.rectangle()
+        mouse.double_click(button="left", coords=(rect.left + 72, rect.top + 58))
+        time.sleep(1.5)
+
+        main = desktop.window(title_re=r".*Open Dental.*")
+        if main.exists(timeout=5):
+            main.set_focus()
+            main_rect = main.rectangle()
+            mouse.click(button="left", coords=(main_rect.left + 48, main_rect.top + 226))
+
+
 class SendWorker(QThread):
     progress = Signal(str)
     finished = Signal(int, int)
@@ -1109,6 +1206,7 @@ class SmsReminderWindow(QMainWindow):
         self.tabs.addTab(self.build_templates_tab(), "Templates")
         self.tabs.addTab(self.build_settings_tab(), "Settings")
         self.tabs.addTab(self.build_logs_tab(), "Logs")
+        self.tabs.currentChanged.connect(lambda _index: QTimer.singleShot(0, self.fill_configured_tables))
 
         self.load_debounce = QTimer(self)
         self.load_debounce.setSingleShot(True)
@@ -1409,9 +1507,9 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.appointment_table = QTableWidget(0, 11)
+        self.appointment_table = QTableWidget(0, 12)
         self.appointment_table.setHorizontalHeaderLabels(
-            ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Sent", "Last sent", "Template"]
+            ["Status", "Time", "Patient", "Phone", "Email", "Apt #", "Pat #", "Reminder", "Sent", "Last sent", "Template", "View"]
         )
         column_widths = {
             0: 120,  # Status
@@ -1425,6 +1523,7 @@ class SmsReminderWindow(QMainWindow):
             8: 70,   # Sent
             9: 140,  # Last sent
             10: 190, # Template
+            11: 90,  # View
         }
         self.configure_resizable_columns(self.appointment_table, "dashboard/appointment_column_widths", column_widths)
         self.appointment_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -1810,9 +1909,9 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.recall_table = QTableWidget(0, 10)
+        self.recall_table = QTableWidget(0, 11)
         self.recall_table.setHorizontalHeaderLabels(
-            ["Last code visit", "Patient", "Phone", "Email", "Language", "Codes", "Sent", "Last sent", "Pat #", "Template"]
+            ["Last code visit", "Patient", "Phone", "Email", "Language", "Codes", "Sent", "Last sent", "Pat #", "Template", "View"]
         )
         self.configure_resizable_columns(
             self.recall_table,
@@ -1828,6 +1927,7 @@ class SmsReminderWindow(QMainWindow):
                 7: 140,
                 8: 90,
                 9: 190,
+                10: 90,
             },
         )
         self.recall_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -1861,27 +1961,32 @@ class SmsReminderWindow(QMainWindow):
         layout.addWidget(hero)
 
         controls_card = self.card()
-        controls = QGridLayout(controls_card)
+        controls = QVBoxLayout(controls_card)
         controls.setContentsMargins(14, 10, 14, 10)
         controls.setSpacing(8)
-        controls.addWidget(QLabel("Procedure date before"), 0, 0)
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        filter_row.addWidget(QLabel("Procedure date before"))
         self.treatment_days = QSpinBox()
         self.treatment_days.setRange(1, 365)
         self.treatment_days.setValue(self.config.treatment_days)
         self.treatment_days.setSuffix(" days")
         self.treatment_days.setMinimumHeight(34)
-        self.treatment_days.setFixedWidth(118)
-        controls.addWidget(self.treatment_days, 0, 1)
-        controls.addWidget(QLabel("Procedure codes"), 0, 2)
+        self.treatment_days.setFixedWidth(132)
+        filter_row.addWidget(self.treatment_days)
+        filter_row.addWidget(QLabel("Procedure codes"))
         self.treatment_codes = QLineEdit(self.config.treatment_codes)
         self.treatment_codes.setPlaceholderText("Optional, e.g. D3310,D2392. Blank = all planned codes")
         self.treatment_codes.setMinimumWidth(200)
-        controls.addWidget(self.treatment_codes, 0, 3)
-        controls.addWidget(QLabel("Proc status"), 0, 4)
+        filter_row.addWidget(self.treatment_codes, 1)
+        filter_row.addWidget(QLabel("Proc status"))
         self.treatment_statuses = QLineEdit(self.config.treatment_statuses)
         self.treatment_statuses.setPlaceholderText("1")
         self.treatment_statuses.setFixedWidth(84)
-        controls.addWidget(self.treatment_statuses, 0, 5)
+        filter_row.addWidget(self.treatment_statuses)
+        controls.addLayout(filter_row)
+
         self.load_treatment_button = QPushButton("Load treatment list")
         self.load_treatment_button.clicked.connect(self.load_treatment_patients)
         self.manage_treatment_templates_button = QPushButton("Treatment templates")
@@ -1897,8 +2002,7 @@ class SmsReminderWindow(QMainWindow):
         action_row.addWidget(self.manage_treatment_templates_button)
         action_row.addWidget(self.preview_treatment_button)
         action_row.addWidget(self.send_treatment_selected_button)
-        controls.addLayout(action_row, 1, 0, 1, 6)
-        controls.setColumnStretch(3, 1)
+        controls.addLayout(action_row)
         layout.addWidget(controls_card)
 
         search_card = self.card()
@@ -1914,9 +2018,9 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.treatment_table = QTableWidget(0, 10)
+        self.treatment_table = QTableWidget(0, 11)
         self.treatment_table.setHorizontalHeaderLabels(
-            ["Procedure date", "Patient", "Phone", "Email", "Language", "Pending codes", "Sent", "Last sent", "Pat #", "Template"]
+            ["Procedure date", "Patient", "Phone", "Email", "Language", "Pending codes", "Sent", "Last sent", "Pat #", "Template", "View"]
         )
         self.configure_resizable_columns(
             self.treatment_table,
@@ -1932,6 +2036,7 @@ class SmsReminderWindow(QMainWindow):
                 7: 140,
                 8: 90,
                 9: 220,
+                10: 90,
             },
         )
         self.treatment_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -1992,8 +2097,8 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.review_table = QTableWidget(0, 7)
-        self.review_table.setHorizontalHeaderLabels(["Patient", "Phone", "Email", "Language", "Last visit", "Pat #", "Template"])
+        self.review_table = QTableWidget(0, 8)
+        self.review_table.setHorizontalHeaderLabels(["Patient", "Phone", "Email", "Language", "Last visit", "Pat #", "Template", "View"])
         self.configure_resizable_columns(
             self.review_table,
             "review_google/patient_column_widths",
@@ -2005,6 +2110,7 @@ class SmsReminderWindow(QMainWindow):
                 4: 130,
                 5: 90,
                 6: 190,
+                7: 90,
             },
         )
         self.review_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -2113,8 +2219,8 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.holiday_table = QTableWidget(0, 9)
-        self.holiday_table.setHorizontalHeaderLabels(["Patient", "Phone", "Email", "Language", "Birthdate", "Pat #", "Campaign", "Template", "Status"])
+        self.holiday_table = QTableWidget(0, 10)
+        self.holiday_table.setHorizontalHeaderLabels(["Patient", "Phone", "Email", "Language", "Birthdate", "Pat #", "Campaign", "Template", "Status", "View"])
         self.configure_resizable_columns(
             self.holiday_table,
             "holiday_birthday/patient_column_widths",
@@ -2128,6 +2234,7 @@ class SmsReminderWindow(QMainWindow):
                 6: 160,
                 7: 190,
                 8: 120,
+                9: 90,
             },
         )
         self.holiday_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -3465,6 +3572,7 @@ class SmsReminderWindow(QMainWindow):
                 row.get("LastRecallSentAt", ""),
                 row.get("PatNum", ""),
                 "",
+                "",
             ]
             for col, value in enumerate(values):
                 if col == 9:
@@ -3473,12 +3581,16 @@ class SmsReminderWindow(QMainWindow):
                     self.recall_table.setCellWidget(row_index, col, combo)
                     self.recall_template_combos[row_index] = combo
                     continue
+                if col == 10:
+                    self.recall_table.setCellWidget(row_index, col, self.make_open_dental_view_button(row))
+                    continue
                 item = QTableWidgetItem(str(value or ""))
                 if col in {6, 8}:
                     item.setTextAlignment(Qt.AlignCenter)
                 if int(row.get("RecallSentCount") or 0) >= 2:
                     item.setForeground(QColor("#9aa3ad"))
                 self.recall_table.setItem(row_index, col, item)
+        QTimer.singleShot(0, lambda: self.fill_table_width(self.recall_table, "recall/patient_column_widths"))
 
     def render_treatment_patients(self) -> None:
         self.treatment_template_combos = {}
@@ -3501,6 +3613,7 @@ class SmsReminderWindow(QMainWindow):
                 row.get("LastTreatmentSentAt", ""),
                 row.get("PatNum", ""),
                 "",
+                "",
             ]
             for col, value in enumerate(values):
                 if col == 9:
@@ -3509,10 +3622,14 @@ class SmsReminderWindow(QMainWindow):
                     self.treatment_table.setCellWidget(row_index, col, combo)
                     self.treatment_template_combos[row_index] = combo
                     continue
+                if col == 10:
+                    self.treatment_table.setCellWidget(row_index, col, self.make_open_dental_view_button(row))
+                    continue
                 item = QTableWidgetItem(str(value or ""))
                 if col in {6, 8}:
                     item.setTextAlignment(Qt.AlignCenter)
                 self.treatment_table.setItem(row_index, col, item)
+        QTimer.singleShot(0, lambda: self.fill_table_width(self.treatment_table, "treatment/patient_column_widths"))
 
     def render_review_patients(self) -> None:
         self.review_template_combos = {}
@@ -3529,6 +3646,7 @@ class SmsReminderWindow(QMainWindow):
                 display_date(row.get("LastAppointment") or row.get("DateTimeLastAppt")),
                 row.get("PatNum", ""),
                 "",
+                "",
             ]
             for col, value in enumerate(values):
                 if col == 6:
@@ -3537,10 +3655,14 @@ class SmsReminderWindow(QMainWindow):
                     self.review_table.setCellWidget(row_index, col, combo)
                     self.review_template_combos[row_index] = combo
                     continue
+                if col == 7:
+                    self.review_table.setCellWidget(row_index, col, self.make_open_dental_view_button(row))
+                    continue
                 item = QTableWidgetItem(str(value or ""))
                 if col == 5:
                     item.setTextAlignment(Qt.AlignCenter)
                 self.review_table.setItem(row_index, col, item)
+        QTimer.singleShot(0, lambda: self.fill_table_width(self.review_table, "review_google/patient_column_widths"))
 
     def render_holiday_patients(self) -> None:
         self.holiday_template_combos = {}
@@ -3576,6 +3698,7 @@ class SmsReminderWindow(QMainWindow):
                 row.get("_CampaignName", ""),
                 "",
                 row.get("_CampaignStatus", ""),
+                "",
             ]
             for col, value in enumerate(values):
                 if col == 7:
@@ -3591,10 +3714,14 @@ class SmsReminderWindow(QMainWindow):
                     self.holiday_table.setCellWidget(row_index, col, combo)
                     self.holiday_template_combos[row_index] = combo
                     continue
+                if col == 9:
+                    self.holiday_table.setCellWidget(row_index, col, self.make_open_dental_view_button(row))
+                    continue
                 item = QTableWidgetItem(str(value or ""))
                 if col in {5, 8}:
                     item.setTextAlignment(Qt.AlignCenter)
                 self.holiday_table.setItem(row_index, col, item)
+        QTimer.singleShot(0, lambda: self.fill_table_width(self.holiday_table, "holiday_birthday/patient_column_widths"))
 
     def holiday_visible_patients(self) -> list[dict[str, Any]]:
         return list(self.holiday_table.property("_visible_patients") or [])
@@ -3619,6 +3746,36 @@ class SmsReminderWindow(QMainWindow):
         values.extend(row.get(field) for field in extra_fields)
         haystack = " ".join(str(value or "") for value in values).lower()
         return query in haystack
+
+    def make_open_dental_view_button(self, row: dict[str, Any]) -> QPushButton:
+        button = QPushButton("View")
+        button.setObjectName("SmallActionButton")
+        button.clicked.connect(lambda _checked=False, patient=dict(row): self.view_patient_in_open_dental(patient))
+        return button
+
+    def view_patient_in_open_dental(self, row: dict[str, Any]) -> None:
+        first_name = str(row.get("FName") or "").strip()
+        last_name = str(row.get("LName") or "").strip()
+        if not first_name or not last_name:
+            parts = patient_name(row).split(" ", 1)
+            if not first_name and parts:
+                first_name = parts[0]
+            if not last_name and len(parts) > 1:
+                last_name = parts[1]
+        birthdate = str(row.get("Birthdate") or row.get("DOB") or "").strip()
+        if not first_name or not last_name or not birthdate:
+            QMessageBox.warning(
+                self,
+                "Missing patient info",
+                "This row needs first name, last name, and date of birth before it can be opened in Open Dental.",
+            )
+            return
+        try:
+            OpenDentalPatientViewer.open_patient(first_name, last_name, birthdate)
+            self.append_activity(f"Opened Open Dental patient lookup for {first_name} {last_name}.")
+        except Exception as exc:  # noqa: BLE001
+            self.append_activity(f"Open Dental view failed for {first_name} {last_name}: {exc}")
+            QMessageBox.warning(self, "Open Dental view failed", str(exc))
 
     def recall_visible_patients(self) -> list[dict[str, Any]]:
         return list(self.recall_table.property("_visible_patients") or [])
@@ -4147,6 +4304,7 @@ class SmsReminderWindow(QMainWindow):
                 row.get("ReminderSentCount", 0),
                 row.get("ReminderLastSentAt", ""),
                 "",
+                "",
             ]
             for col, value in enumerate(values):
                 if col == 10:
@@ -4154,6 +4312,9 @@ class SmsReminderWindow(QMainWindow):
                     self.populate_template_combo(combo, template_key_for_language(self.config, row.get("Language")))
                     self.appointment_table.setCellWidget(row_index, col, combo)
                     self.row_template_combos[row_index] = combo
+                    continue
+                if col == 11:
+                    self.appointment_table.setCellWidget(row_index, col, self.make_open_dental_view_button(row))
                     continue
                 item = QTableWidgetItem(str(value or ""))
                 if col in {5, 6, 8}:
@@ -4169,6 +4330,7 @@ class SmsReminderWindow(QMainWindow):
         self.sent_stat.setText(str(sent_count))
         self.missing_phone_stat.setText(str(missing_phone_count))
         self.apply_appointment_filter()
+        QTimer.singleShot(0, lambda: self.fill_table_width(self.appointment_table, "dashboard/appointment_column_widths"))
 
     def populate_template_combo(self, combo: QComboBox, selected_key: str | None = None) -> None:
         combo.blockSignals(True)
@@ -5309,6 +5471,20 @@ QPushButton:pressed {
   background: #0f4fc4;
   border-color: #0f4fc4;
 }
+#SmallActionButton {
+  min-width: 54px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid #b9cfe0;
+  background: #ffffff;
+  color: #155bd8;
+  font-size: 12px;
+  font-weight: 900;
+}
+#SmallActionButton:hover {
+  background: #edf9fd;
+  border-color: #23c7e8;
+}
 #Badge {
   padding: 6px 11px;
   border-radius: 8px;
@@ -5345,6 +5521,28 @@ QLineEdit, QSpinBox, QDateEdit, QTimeEdit, QTextEdit, QPlainTextEdit {
   color: #202833;
   selection-background-color: #155bd8;
   selection-color: #ffffff;
+}
+QSpinBox {
+  padding-right: 26px;
+}
+QSpinBox::up-button {
+  subcontrol-origin: border;
+  subcontrol-position: top right;
+  width: 22px;
+  border-left: 1px solid #edf3f7;
+  border-top-right-radius: 7px;
+  background: #f8fcff;
+}
+QSpinBox::down-button {
+  subcontrol-origin: border;
+  subcontrol-position: bottom right;
+  width: 22px;
+  border-left: 1px solid #edf3f7;
+  border-bottom-right-radius: 7px;
+  background: #f8fcff;
+}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+  background: #eaf7fd;
 }
 QComboBox {
   border: 1px solid #d5dfe8;
