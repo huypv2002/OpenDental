@@ -60,6 +60,7 @@ DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
 DEFAULT_TREATMENT_DAYS = 21
 SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 SCHEDULE_SEND_GRACE_MINUTES = 30
+LAZY_TABLE_BATCH_SIZE = 50
 HOLIDAY_EVENTS = [
     "New Year's Day",
     "Martin Luther King Jr. Day",
@@ -706,6 +707,27 @@ class OpenDentalPatientViewer:
             mouse.click(button="left", coords=(main_rect.left + 48, main_rect.top + 134))
 
 
+class OpenDentalViewWorker(QThread):
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, first_name: str, last_name: str, birthdate: str, pat_num: str):
+        super().__init__()
+        self.first_name = first_name
+        self.last_name = last_name
+        self.birthdate = birthdate
+        self.pat_num = pat_num
+
+    def run(self) -> None:
+        patient = f"{self.first_name} {self.last_name}".strip()
+        try:
+            OpenDentalPatientViewer.open_patient(self.first_name, self.last_name, self.birthdate, self.pat_num)
+        except Exception as exc:  # noqa: BLE001 - surface Open Dental automation failures in UI
+            self.failed.emit(f"{patient}: {exc}")
+            return
+        self.succeeded.emit(patient)
+
+
 class SendWorker(QThread):
     progress = Signal(str)
     finished = Signal(int, int)
@@ -1185,6 +1207,10 @@ class SmsReminderWindow(QMainWindow):
         self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
         self._restoring_column_widths: set[str] = set()
+        self.lazy_table_state: dict[str, dict[str, Any]] = {}
+        self.view_worker: OpenDentalViewWorker | None = None
+        self.active_view_button: QPushButton | None = None
+        self.active_campaign_recipient_keys: set[tuple[str, str, str, str, str, str]] = set()
         if self.config.bridge_url and self.config.api_token:
             self.load_templates_from_bridge()
 
@@ -1419,6 +1445,28 @@ class SmsReminderWindow(QMainWindow):
             table.setColumnWidth(col, width + add)
             remaining -= add
         self._restoring_column_widths.discard(settings_key)
+
+    def lazy_rows_for_table(self, key: str, rows: list[dict[str, Any]], query: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        state = self.lazy_table_state.setdefault(key, {"query": query, "limit": LAZY_TABLE_BATCH_SIZE})
+        if state.get("query") != query:
+            state["query"] = query
+            state["limit"] = LAZY_TABLE_BATCH_SIZE
+        limit = max(LAZY_TABLE_BATCH_SIZE, int(state.get("limit") or LAZY_TABLE_BATCH_SIZE))
+        return rows[: min(len(rows), limit)], rows
+
+    def maybe_load_more_lazy_rows(self, table: QTableWidget, key: str, render_callback: Any) -> None:
+        state = self.lazy_table_state.get(key)
+        filtered_rows = list(table.property("_filtered_patients") or [])
+        if not state or not filtered_rows:
+            return
+        current_limit = int(state.get("limit") or LAZY_TABLE_BATCH_SIZE)
+        if current_limit >= len(filtered_rows):
+            return
+        scrollbar = table.verticalScrollBar()
+        if scrollbar.value() < max(0, scrollbar.maximum() - 4):
+            return
+        state["limit"] = min(len(filtered_rows), current_limit + LAZY_TABLE_BATCH_SIZE)
+        render_callback()
 
     def build_dashboard_tab(self) -> QWidget:
         page = QWidget()
@@ -1937,6 +1985,9 @@ class SmsReminderWindow(QMainWindow):
         self.recall_table.setAlternatingRowColors(True)
         self.recall_table.setShowGrid(False)
         self.recall_table.verticalHeader().setDefaultSectionSize(38)
+        self.recall_table.verticalScrollBar().valueChanged.connect(
+            lambda _value: self.maybe_load_more_lazy_rows(self.recall_table, "recall", self.render_recall_patients)
+        )
         table_layout.addWidget(self.recall_table)
         layout.addWidget(table_card, 1)
         return page
@@ -2046,6 +2097,9 @@ class SmsReminderWindow(QMainWindow):
         self.treatment_table.setAlternatingRowColors(True)
         self.treatment_table.setShowGrid(False)
         self.treatment_table.verticalHeader().setDefaultSectionSize(38)
+        self.treatment_table.verticalScrollBar().valueChanged.connect(
+            lambda _value: self.maybe_load_more_lazy_rows(self.treatment_table, "treatment", self.render_treatment_patients)
+        )
         table_layout.addWidget(self.treatment_table)
         layout.addWidget(table_card, 1)
         return page
@@ -2120,6 +2174,9 @@ class SmsReminderWindow(QMainWindow):
         self.review_table.setAlternatingRowColors(True)
         self.review_table.setShowGrid(False)
         self.review_table.verticalHeader().setDefaultSectionSize(38)
+        self.review_table.verticalScrollBar().valueChanged.connect(
+            lambda _value: self.maybe_load_more_lazy_rows(self.review_table, "review_google", self.render_review_patients)
+        )
         table_layout.addWidget(self.review_table)
         layout.addWidget(table_card, 1)
         return page
@@ -2244,6 +2301,9 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_table.setAlternatingRowColors(True)
         self.holiday_table.setShowGrid(False)
         self.holiday_table.verticalHeader().setDefaultSectionSize(38)
+        self.holiday_table.verticalScrollBar().valueChanged.connect(
+            lambda _value: self.maybe_load_more_lazy_rows(self.holiday_table, "holiday_birthday", self.render_holiday_patients)
+        )
         table_layout.addWidget(self.holiday_table)
         layout.addWidget(table_card, 1)
         self.update_holiday_campaign_controls()
@@ -3558,9 +3618,12 @@ class SmsReminderWindow(QMainWindow):
     def render_recall_patients(self) -> None:
         self.recall_template_combos = {}
         query = self.recall_search.text().strip().lower() if hasattr(self, "recall_search") else ""
-        visible_rows = [row for row in self.recall_patients if self.patient_matches_query(row, query, ("LastProcDate", "ProcedureCodes", "RecallSentCount", "LastRecallSentAt"))]
+        filtered_rows = [row for row in self.recall_patients if self.patient_matches_query(row, query, ("LastProcDate", "ProcedureCodes", "RecallSentCount", "LastRecallSentAt"))]
+        visible_rows, filtered_rows = self.lazy_rows_for_table("recall", filtered_rows, query)
+        self.recall_table.setUpdatesEnabled(False)
         self.recall_table.setRowCount(len(visible_rows))
         self.recall_table.setProperty("_visible_patients", visible_rows)
+        self.recall_table.setProperty("_filtered_patients", filtered_rows)
         for row_index, row in enumerate(visible_rows):
             values = [
                 display_date(row.get("LastProcDate")),
@@ -3591,17 +3654,21 @@ class SmsReminderWindow(QMainWindow):
                 if int(row.get("RecallSentCount") or 0) >= 2:
                     item.setForeground(QColor("#9aa3ad"))
                 self.recall_table.setItem(row_index, col, item)
+        self.recall_table.setUpdatesEnabled(True)
         QTimer.singleShot(0, lambda: self.fill_table_width(self.recall_table, "recall/patient_column_widths"))
 
     def render_treatment_patients(self) -> None:
         self.treatment_template_combos = {}
         query = self.treatment_search.text().strip().lower() if hasattr(self, "treatment_search") else ""
-        visible_rows = [
+        filtered_rows = [
             row for row in self.treatment_patients
             if self.patient_matches_query(row, query, ("LastPendingProcDate", "LastProcDate", "ProcedureCodes", "ProcedureDescriptions", "TreatmentSentCount", "LastTreatmentSentAt"))
         ]
+        visible_rows, filtered_rows = self.lazy_rows_for_table("treatment", filtered_rows, query)
+        self.treatment_table.setUpdatesEnabled(False)
         self.treatment_table.setRowCount(len(visible_rows))
         self.treatment_table.setProperty("_visible_patients", visible_rows)
+        self.treatment_table.setProperty("_filtered_patients", filtered_rows)
         for row_index, row in enumerate(visible_rows):
             values = [
                 display_date(row.get("LastPendingProcDate") or row.get("LastProcDate")),
@@ -3630,14 +3697,18 @@ class SmsReminderWindow(QMainWindow):
                 if col in {6, 8}:
                     item.setTextAlignment(Qt.AlignCenter)
                 self.treatment_table.setItem(row_index, col, item)
+        self.treatment_table.setUpdatesEnabled(True)
         QTimer.singleShot(0, lambda: self.fill_table_width(self.treatment_table, "treatment/patient_column_widths"))
 
     def render_review_patients(self) -> None:
         self.review_template_combos = {}
         query = self.review_search.text().strip().lower() if hasattr(self, "review_search") else ""
-        visible_rows = [row for row in self.review_patients if self.patient_matches_query(row, query, ("LastAppointment", "DateTimeLastAppt"))]
+        filtered_rows = [row for row in self.review_patients if self.patient_matches_query(row, query, ("LastAppointment", "DateTimeLastAppt"))]
+        visible_rows, filtered_rows = self.lazy_rows_for_table("review_google", filtered_rows, query)
+        self.review_table.setUpdatesEnabled(False)
         self.review_table.setRowCount(len(visible_rows))
         self.review_table.setProperty("_visible_patients", visible_rows)
+        self.review_table.setProperty("_filtered_patients", filtered_rows)
         for row_index, row in enumerate(visible_rows):
             values = [
                 patient_name(row),
@@ -3663,12 +3734,13 @@ class SmsReminderWindow(QMainWindow):
                 if col == 5:
                     item.setTextAlignment(Qt.AlignCenter)
                 self.review_table.setItem(row_index, col, item)
+        self.review_table.setUpdatesEnabled(True)
         QTimer.singleShot(0, lambda: self.fill_table_width(self.review_table, "review_google/patient_column_widths"))
 
     def render_holiday_patients(self) -> None:
         self.holiday_template_combos = {}
         query = self.holiday_search.text().strip().lower() if hasattr(self, "holiday_search") else ""
-        visible_rows: list[dict[str, Any]] = []
+        filtered_rows: list[dict[str, Any]] = []
         for row in self.holiday_patients:
             haystack = " ".join(
                 str(value or "")
@@ -3684,10 +3756,13 @@ class SmsReminderWindow(QMainWindow):
             ).lower()
             if query and query not in haystack:
                 continue
-            visible_rows.append(row)
+            filtered_rows.append(row)
 
+        visible_rows, filtered_rows = self.lazy_rows_for_table("holiday_birthday", filtered_rows, query)
+        self.holiday_table.setUpdatesEnabled(False)
         self.holiday_table.setRowCount(len(visible_rows))
         self.holiday_table.setProperty("_visible_patients", visible_rows)
+        self.holiday_table.setProperty("_filtered_patients", filtered_rows)
         for row_index, row in enumerate(visible_rows):
             values = [
                 patient_name(row),
@@ -3722,10 +3797,29 @@ class SmsReminderWindow(QMainWindow):
                 if col in {5, 8}:
                     item.setTextAlignment(Qt.AlignCenter)
                 self.holiday_table.setItem(row_index, col, item)
+        self.holiday_table.setUpdatesEnabled(True)
         QTimer.singleShot(0, lambda: self.fill_table_width(self.holiday_table, "holiday_birthday/patient_column_widths"))
 
     def holiday_visible_patients(self) -> list[dict[str, Any]]:
         return list(self.holiday_table.property("_visible_patients") or [])
+
+    def campaign_recipient_key(self, row: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+        phones = [
+            digits_only(target.get("phone", ""))
+            for target in row.get("PhoneTargets", [])
+            if digits_only(target.get("phone", ""))
+        ]
+        if not phones and digits_only(row.get("Phone", "")):
+            phones = [digits_only(row.get("Phone", ""))]
+        phone_key = ",".join(sorted(set(phones)))
+        return (
+            str(row.get("_CampaignType") or "").strip().lower(),
+            str(row.get("_CampaignName") or row.get("_HolidayName") or "").strip().lower(),
+            str(row.get("PatNum") or row.get("PatientNumber") or "").strip(),
+            phone_key,
+            str(row.get("Birthdate") or row.get("DOB") or "").strip(),
+            patient_name(row).strip().lower(),
+        )
 
     def patient_matches_query(self, row: dict[str, Any], query: str, extra_fields: tuple[str, ...] = ()) -> bool:
         if not query:
@@ -3751,10 +3845,13 @@ class SmsReminderWindow(QMainWindow):
     def make_open_dental_view_button(self, row: dict[str, Any]) -> QPushButton:
         button = QPushButton("View")
         button.setObjectName("SmallActionButton")
-        button.clicked.connect(lambda _checked=False, patient=dict(row): self.view_patient_in_open_dental(patient))
+        button.clicked.connect(lambda _checked=False, patient=dict(row), view_button=button: self.view_patient_in_open_dental(patient, view_button))
         return button
 
-    def view_patient_in_open_dental(self, row: dict[str, Any]) -> None:
+    def view_patient_in_open_dental(self, row: dict[str, Any], button: QPushButton | None = None) -> None:
+        if self.view_worker and self.view_worker.isRunning():
+            QMessageBox.information(self, "Open Dental view is running", "Please wait for the current Open Dental lookup to finish.")
+            return
         first_name = str(row.get("FName") or "").strip()
         last_name = str(row.get("LName") or "").strip()
         if not first_name or not last_name:
@@ -3773,12 +3870,34 @@ class SmsReminderWindow(QMainWindow):
                 "This row needs first name, last name, and date of birth before it can be opened in Open Dental.",
             )
             return
-        try:
-            OpenDentalPatientViewer.open_patient(first_name, last_name, birthdate, pat_num)
-            self.append_activity(f"Opened Open Dental patient lookup for {first_name} {last_name}.")
-        except Exception as exc:  # noqa: BLE001
-            self.append_activity(f"Open Dental view failed for {first_name} {last_name}: {exc}")
-            QMessageBox.warning(self, "Open Dental view failed", str(exc))
+        if button:
+            button.setEnabled(False)
+            button.setText("Opening...")
+            self.active_view_button = button
+
+        worker = OpenDentalViewWorker(first_name, last_name, birthdate, pat_num)
+        self.view_worker = worker
+        self.statusBar().showMessage(f"Opening Open Dental patient lookup for {first_name} {last_name}...")
+
+        def on_success(patient: str) -> None:
+            self.append_activity(f"Opened Open Dental patient lookup for {patient}.")
+            self.statusBar().showMessage(f"Opened Open Dental patient lookup for {patient}.", 5000)
+
+        def on_failed(message: str) -> None:
+            self.append_activity(f"Open Dental view failed for {message}")
+            QMessageBox.warning(self, "Open Dental view failed", message)
+
+        def on_finished() -> None:
+            if self.active_view_button:
+                self.active_view_button.setText("View")
+                self.active_view_button.setEnabled(True)
+            self.active_view_button = None
+            self.view_worker = None
+
+        worker.succeeded.connect(on_success)
+        worker.failed.connect(on_failed)
+        worker.finished.connect(on_finished)
+        worker.start()
 
     def recall_visible_patients(self) -> list[dict[str, Any]]:
         return list(self.recall_table.property("_visible_patients") or [])
@@ -3844,7 +3963,7 @@ class SmsReminderWindow(QMainWindow):
     def selected_holiday_patients(self) -> list[dict[str, Any]]:
         rows = {index.row() for index in self.holiday_table.selectedIndexes()}
         current_row = self.holiday_table.currentRow()
-        if current_row >= 0:
+        if not rows and current_row >= 0:
             rows.add(current_row)
         visible = self.holiday_visible_patients()
         selected: list[dict[str, Any]] = []
@@ -4268,10 +4387,14 @@ class SmsReminderWindow(QMainWindow):
         self.start_holiday_send(selected)
 
     def send_all_holiday_sms(self) -> None:
-        visible = self.holiday_visible_patients()
-        if not visible:
+        filtered = list(self.holiday_table.property("_filtered_patients") or self.holiday_visible_patients())
+        if not filtered:
             QMessageBox.information(self, "Nothing to send", "There are no patients in the Holiday & Birthday list.")
             return
+        state = self.lazy_table_state.setdefault("holiday_birthday", {"query": "", "limit": LAZY_TABLE_BATCH_SIZE})
+        if int(state.get("limit") or LAZY_TABLE_BATCH_SIZE) < len(filtered):
+            state["limit"] = len(filtered)
+            self.render_holiday_patients()
         rows_to_select = []
         self.holiday_table.clearSelection()
         for row in range(self.holiday_table.rowCount()):
@@ -4780,6 +4903,7 @@ class SmsReminderWindow(QMainWindow):
         self.save_settings(silent=True)
         self.set_send_enabled(False)
         self.active_send_kind = "campaign"
+        self.active_campaign_recipient_keys = {self.campaign_recipient_key(patient) for patient in patients}
         self.worker = CampaignSendWorker(self.config, patients)
         self.worker.progress.connect(self.append_activity)
         self.worker.finished.connect(self.send_finished)
@@ -4842,10 +4966,19 @@ class SmsReminderWindow(QMainWindow):
             self.update_monitoring_status()
             self.load_treatment_patients()
         elif self.active_send_kind in {"campaign", "campaign-monitor"}:
-            for row in range(self.holiday_table.rowCount()):
-                item = self.holiday_table.item(row, 8)
-                if item and item.text().strip() == "":
-                    item.setText("sent" if failed == 0 else "check log")
+            status_text = "sent" if failed == 0 else "check log"
+            visible_patients = self.holiday_visible_patients()
+            for row_index, patient in enumerate(visible_patients):
+                if self.campaign_recipient_key(patient) not in self.active_campaign_recipient_keys:
+                    continue
+                patient["_CampaignStatus"] = status_text
+                item = self.holiday_table.item(row_index, 8)
+                if item:
+                    item.setText(status_text)
+            for patient in self.holiday_patients:
+                if self.campaign_recipient_key(patient) in self.active_campaign_recipient_keys:
+                    patient["_CampaignStatus"] = status_text
+            self.active_campaign_recipient_keys = set()
             if self.active_send_kind == "campaign-monitor":
                 if failed:
                     self.holiday_monitor_batch_failed = True
@@ -5291,6 +5424,10 @@ class SmsReminderWindow(QMainWindow):
             campaign = self.holiday_campaign_queue.pop(0)
             self.holiday_active_campaign_id = str(campaign.get("id") or "")
             self.active_send_kind = "campaign-monitor"
+            self.active_campaign_recipient_keys = {
+                self.campaign_recipient_key(patient)
+                for patient in campaign.get("recipients") or []
+            }
             self.set_send_enabled(False)
             self.append_activity(
                 f"Sending campaign automation: {campaign.get('name')} ({len(campaign.get('recipients') or [])} recipient(s))."
