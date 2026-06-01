@@ -684,13 +684,7 @@ class OpenDentalPatientViewer:
 
         window.set_focus()
         time.sleep(1.0)
-        OpenDentalPatientViewer.slow_keys("^p", 1.5)
-
-        popup = desktop.window(title_re=r".*(Select Patient|Patient Select).*")
-        if not popup.exists(timeout=10):
-            raise RuntimeError("Open Dental Select Patient popup did not appear.")
-        popup.set_focus()
-        time.sleep(0.5)
+        OpenDentalPatientViewer.slow_keys("^p", 2.0)
 
         # Select Patient opens with focus already in Last Name.
         OpenDentalPatientViewer.type_text(last_name, 0.25)
