@@ -1454,13 +1454,33 @@ class SmsReminderWindow(QMainWindow):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(10)
 
+        hero = self.card("HeroCard")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(18, 14, 18, 14)
+        eyebrow = QLabel("SETTINGS")
+        eyebrow.setObjectName("Eyebrow")
         heading = QLabel("Reminder settings")
         heading.setObjectName("HeroTitle")
-        layout.addWidget(heading)
+        subtitle = QLabel("Manage bridge connection, SMS defaults, and Windows Task Scheduler BAT timing.")
+        subtitle.setObjectName("HeroSubtitle")
+        hero_layout.addWidget(eyebrow)
+        hero_layout.addWidget(heading)
+        hero_layout.addWidget(subtitle)
+        layout.addWidget(hero)
 
-        bridge_box = QGroupBox("Bridge API")
-        bridge_form = QFormLayout(bridge_box)
-        bridge_form.setContentsMargins(14, 14, 14, 14)
+        cards = QGridLayout()
+        cards.setHorizontalSpacing(16)
+        cards.setVerticalSpacing(16)
+
+        bridge_card = self.card()
+        bridge_layout = QVBoxLayout(bridge_card)
+        bridge_layout.setContentsMargins(16, 14, 16, 14)
+        bridge_layout.setSpacing(10)
+        bridge_title = QLabel("Bridge API")
+        bridge_title.setObjectName("SectionTitle")
+        bridge_layout.addWidget(bridge_title)
+        bridge_form = QFormLayout()
+        bridge_form.setContentsMargins(0, 0, 0, 0)
         bridge_form.setSpacing(8)
         self.bridge_url = QLineEdit(self.config.bridge_url)
         self.bridge_url.setPlaceholderText("http://SERVER-IP:3008")
@@ -1468,10 +1488,18 @@ class SmsReminderWindow(QMainWindow):
         self.api_token.setEchoMode(QLineEdit.Password)
         bridge_form.addRow("Bridge URL", self.bridge_url)
         bridge_form.addRow("API token", self.api_token)
+        bridge_layout.addLayout(bridge_form)
+        bridge_layout.addStretch()
 
-        sms_box = QGroupBox("SMS and schedule")
-        sms_form = QFormLayout(sms_box)
-        sms_form.setContentsMargins(14, 14, 14, 14)
+        sms_card = self.card()
+        sms_layout = QVBoxLayout(sms_card)
+        sms_layout.setContentsMargins(16, 14, 16, 14)
+        sms_layout.setSpacing(10)
+        sms_title = QLabel("SMS and schedule")
+        sms_title.setObjectName("SectionTitle")
+        sms_layout.addWidget(sms_title)
+        sms_form = QFormLayout()
+        sms_form.setContentsMargins(0, 0, 0, 0)
         sms_form.setSpacing(8)
         self.clinic_name = QLineEdit(self.config.clinic_name)
         self.clinic_phone = QLineEdit(self.config.clinic_phone)
@@ -1490,26 +1518,38 @@ class SmsReminderWindow(QMainWindow):
         sms_form.addRow("Daily send time", self.schedule_time)
         sms_form.addRow("Appointment statuses", self.statuses)
         sms_form.addRow("Send mode", QLabel("REAL SMS only. Dry-run mode is disabled."))
+        sms_layout.addLayout(sms_form)
+        sms_layout.addStretch()
 
-        scheduler_box = QGroupBox("Windows scheduler BAT")
-        scheduler_form = QFormLayout(scheduler_box)
-        scheduler_form.setContentsMargins(14, 14, 14, 14)
-        scheduler_form.setSpacing(8)
+        scheduler_card = self.card()
+        scheduler_layout = QGridLayout(scheduler_card)
+        scheduler_layout.setContentsMargins(16, 14, 16, 14)
+        scheduler_layout.setHorizontalSpacing(14)
+        scheduler_layout.setVerticalSpacing(10)
+        scheduler_title = QLabel("Windows scheduler BAT")
+        scheduler_title.setObjectName("SectionTitle")
+        scheduler_layout.addWidget(scheduler_title, 0, 0, 1, 4)
         self.scheduler_bat_status = QLabel(str(SCHEDULER_ON_PATH))
         self.scheduler_bat_status.setObjectName("Muted")
-        scheduler_form.addRow("File", self.scheduler_bat_status)
+        self.scheduler_bat_status.setWordWrap(True)
+        scheduler_layout.addWidget(QLabel("File"), 1, 0)
+        scheduler_layout.addWidget(self.scheduler_bat_status, 1, 1, 1, 3)
         self.scheduler_time_edits: dict[str, QTimeEdit] = {}
         scheduler_times = self.safe_read_scheduler_bat_times()
-        for name, label in SCHEDULER_TIME_FIELDS:
+        for index, (name, label) in enumerate(SCHEDULER_TIME_FIELDS):
             time_edit = QTimeEdit(qtime_from_hhmm(scheduler_times.get(name), DEFAULT_SCHEDULER_TIMES[name]))
             time_edit.setDisplayFormat("HH:mm")
             time_edit.setMinimumWidth(110)
             self.scheduler_time_edits[name] = time_edit
-            scheduler_form.addRow(label, time_edit)
-        scheduler_note = QLabel("These four values are read from scheduler-on.bat. Saving here rewrites the SET lines in that BAT file; run scheduler-on.bat as Administrator again if Windows Task Scheduler already has old times.")
+            row = 2 + index // 2
+            col = (index % 2) * 2
+            scheduler_layout.addWidget(QLabel(label), row, col)
+            scheduler_layout.addWidget(time_edit, row, col + 1)
+        scheduler_note = QLabel("Reads and rewrites the four SET time lines in scheduler-on.bat. After changing these times, run scheduler-on.bat as Administrator again so Windows Task Scheduler receives the new schedule.")
         scheduler_note.setObjectName("Muted")
         scheduler_note.setWordWrap(True)
-        scheduler_form.addRow("Note", scheduler_note)
+        scheduler_layout.addWidget(QLabel("Note"), 4, 0, Qt.AlignTop)
+        scheduler_layout.addWidget(scheduler_note, 4, 1, 1, 3)
 
         scheduler_actions = QHBoxLayout()
         reload_scheduler_button = QPushButton("Reload BAT times")
@@ -1519,21 +1559,26 @@ class SmsReminderWindow(QMainWindow):
         scheduler_actions.addStretch()
         scheduler_actions.addWidget(reload_scheduler_button)
         scheduler_actions.addWidget(save_scheduler_button)
-        scheduler_form.addRow("", scheduler_actions)
+        scheduler_layout.addLayout(scheduler_actions, 5, 0, 1, 4)
+        scheduler_layout.setColumnStretch(1, 1)
+        scheduler_layout.setColumnStretch(3, 1)
 
         buttons = QHBoxLayout()
         self.test_bridge_button = QPushButton("Test bridge connection")
         self.test_bridge_button.clicked.connect(self.test_bridge_connection)
         self.save_button = QPushButton("Save settings")
         self.save_button.setObjectName("PrimaryButton")
-        self.save_button.clicked.connect(self.save_settings)
+        self.save_button.clicked.connect(self.save_settings_clicked)
         buttons.addStretch()
         buttons.addWidget(self.test_bridge_button)
         buttons.addWidget(self.save_button)
 
-        layout.addWidget(bridge_box)
-        layout.addWidget(sms_box)
-        layout.addWidget(scheduler_box)
+        cards.addWidget(bridge_card, 0, 0)
+        cards.addWidget(sms_card, 0, 1)
+        cards.addWidget(scheduler_card, 1, 0, 1, 2)
+        cards.setColumnStretch(0, 1)
+        cards.setColumnStretch(1, 1)
+        layout.addLayout(cards)
         layout.addLayout(buttons)
         layout.addStretch()
         return page
@@ -2934,7 +2979,7 @@ class SmsReminderWindow(QMainWindow):
                 self.scheduler_time_edits[name].setTime(qtime_from_hhmm(times.get(name), DEFAULT_SCHEDULER_TIMES[name]))
         self.statusBar().showMessage("Scheduler BAT times reloaded.", 4000)
 
-    def save_scheduler_bat_times(self, silent: bool = False) -> bool:
+    def save_scheduler_bat_times(self, silent: bool = False, notify: bool = True) -> bool:
         if not hasattr(self, "scheduler_time_edits"):
             return True
         times = {
@@ -2950,9 +2995,18 @@ class SmsReminderWindow(QMainWindow):
             return False
         if not silent:
             self.statusBar().showMessage("Scheduler BAT times saved.", 4000)
+            if notify:
+                QMessageBox.information(
+                    self,
+                    "Scheduler BAT saved",
+                    "scheduler-on.bat was updated.\n\nRun scheduler-on.bat as Administrator again to recreate Windows scheduled tasks with the new times.",
+                )
         return True
 
-    def save_settings(self, silent: bool = False) -> None:
+    def save_settings_clicked(self) -> None:
+        self.save_settings(silent=False, notify=True)
+
+    def save_settings(self, silent: bool = False, notify: bool = False) -> None:
         try:
             statuses = [int(part.strip()) for part in self.statuses.text().split(",") if part.strip()]
         except ValueError:
@@ -2982,7 +3036,8 @@ class SmsReminderWindow(QMainWindow):
         self.config.sms_template = default_template(self.config)
         self.config.recall_template = self.config.recall_templates.get("US", "")
         self.config.save()
-        self.save_scheduler_bat_times(silent=silent)
+        if not self.save_scheduler_bat_times(silent=silent, notify=False):
+            return
         self.repo = BridgeClient(self.config)
         if hasattr(self, "review_link"):
             try:
@@ -2996,9 +3051,11 @@ class SmsReminderWindow(QMainWindow):
         self.refresh_table_template_combos()
         if not silent:
             self.statusBar().showMessage("Settings saved.", 4000)
+            if notify:
+                QMessageBox.information(self, "Settings saved", "Settings and scheduler BAT times were saved.")
 
     def test_bridge_connection(self) -> None:
-        self.save_settings()
+        self.save_settings(silent=True)
         try:
             self.repo.health_check()
             QMessageBox.information(self, "Bridge OK", "Connected to the Open Dental bridge.")
