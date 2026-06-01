@@ -2021,7 +2021,7 @@ class SmsReminderWindow(QMainWindow):
         filter_row.setSpacing(8)
         filter_row.addWidget(QLabel("Procedure date before"))
         self.treatment_days = QSpinBox()
-        self.treatment_days.setRange(1, 365)
+        self.treatment_days.setRange(0, 365)
         self.treatment_days.setValue(self.config.treatment_days)
         self.treatment_days.setSuffix(" days")
         self.treatment_days.setMinimumHeight(34)
@@ -5789,9 +5789,11 @@ def main() -> int:
     app.setFont(font)
     window = SmsReminderWindow()
     window.showMaximized()
-    if "--start-monitoring" in sys.argv:
+    if "--start-monitoring" in sys.argv or "--start-reminder-monitoring" in sys.argv:
         QTimer.singleShot(1500, window.start_monitoring)
+    if "--start-monitoring" in sys.argv or "--start-holiday-monitoring" in sys.argv:
         QTimer.singleShot(2200, window.start_holiday_monitoring)
+    if "--start-monitoring" in sys.argv or "--start-treatment-monitoring" in sys.argv:
         QTimer.singleShot(2900, window.start_treatment_monitoring)
     return app.exec()
 
