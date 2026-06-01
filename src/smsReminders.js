@@ -318,6 +318,7 @@ export async function getSmsRecallCandidates(query = {}) {
         p.Email,
         p.Language,
         p.Gender,
+        DATE_FORMAT(p.Birthdate, '%Y-%m-%d') AS Birthdate,
         DATE_FORMAT(MAX(pl.ProcDate), '%Y-%m-%d') AS LastProcDate,
         GROUP_CONCAT(DISTINCT pc.ProcCode ORDER BY pc.ProcCode SEPARATOR ', ') AS ProcedureCodes,
         COALESCE(rl.RecallSentCount, 0) AS RecallSentCount,
@@ -347,6 +348,7 @@ export async function getSmsRecallCandidates(query = {}) {
         p.Email,
         p.Language,
         p.Gender,
+        p.Birthdate,
         rl.RecallSentCount,
         rl.LastRecallSentAt
       HAVING MAX(pl.ProcDate) <= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
@@ -404,6 +406,7 @@ export async function getSmsTreatmentCandidates(query = {}) {
         p.Email,
         p.Language,
         p.Gender,
+        DATE_FORMAT(p.Birthdate, '%Y-%m-%d') AS Birthdate,
         DATE_FORMAT(MAX(pl.ProcDate), '%Y-%m-%d') AS LastPendingProcDate,
         GROUP_CONCAT(DISTINCT pc.ProcCode ORDER BY pc.ProcCode SEPARATOR ', ') AS ProcedureCodes,
         GROUP_CONCAT(DISTINCT COALESCE(NULLIF(pc.Descript, ''), pc.ProcCode) ORDER BY pc.ProcCode SEPARATOR ', ') AS ProcedureDescriptions,
@@ -436,6 +439,7 @@ export async function getSmsTreatmentCandidates(query = {}) {
         p.Email,
         p.Language,
         p.Gender,
+        p.Birthdate,
         tl.TreatmentSentCount,
         tl.LastTreatmentSentAt
       HAVING MAX(pl.ProcDate) <= DATE_SUB(CURDATE(), INTERVAL ? DAY)

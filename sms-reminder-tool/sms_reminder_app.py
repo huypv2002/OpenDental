@@ -3754,8 +3754,9 @@ class SmsReminderWindow(QMainWindow):
         first_name = str(row.get("FName") or "").strip()
         last_name = str(row.get("LName") or "").strip()
         if not first_name or not last_name:
-            parts = patient_name(row).split(" ", 1)
-            if not first_name and parts:
+            full_name = str(row.get("PatientName") or row.get("Name") or patient_name(row)).strip()
+            parts = full_name.split(" ", 1)
+            if not first_name and parts and not parts[0].startswith("Patient #"):
                 first_name = parts[0]
             if not last_name and len(parts) > 1:
                 last_name = parts[1]
