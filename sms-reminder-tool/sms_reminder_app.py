@@ -619,6 +619,13 @@ class OpenDentalPatientViewer:
         time.sleep(OpenDentalPatientViewer.STEP_DELAY_SECONDS if delay is None else delay)
 
     @staticmethod
+    def type_text(text: str, delay: float | None = None) -> None:
+        from pywinauto.keyboard import send_keys
+
+        send_keys(str(text), with_spaces=True)
+        time.sleep(OpenDentalPatientViewer.STEP_DELAY_SECONDS if delay is None else delay)
+
+    @staticmethod
     def format_birthdate(value: Any) -> str:
         text = str(value or "").strip()
         if not text:
@@ -685,17 +692,13 @@ class OpenDentalPatientViewer:
         popup.set_focus()
         time.sleep(0.5)
 
-        pyperclip.copy(last_name)
-        OpenDentalPatientViewer.slow_keys("^v", 0.35)
+        # Select Patient opens with focus already in Last Name.
+        OpenDentalPatientViewer.type_text(last_name, 0.25)
         OpenDentalPatientViewer.slow_keys("{TAB}", 0.2)
-        pyperclip.copy(first_name)
-        OpenDentalPatientViewer.slow_keys("^v", 0.35)
-        OpenDentalPatientViewer.slow_keys("{TAB 8}", 0.25)
-        pyperclip.copy(birthdate)
-        OpenDentalPatientViewer.slow_keys("^v", 1.2)
-
-        rect = popup.rectangle()
-        mouse.double_click(button="left", coords=(rect.left + 72, rect.top + 58))
+        OpenDentalPatientViewer.type_text(first_name, 0.25)
+        OpenDentalPatientViewer.slow_keys("{TAB 9}", 0.25)
+        OpenDentalPatientViewer.type_text(birthdate, 1.0)
+        OpenDentalPatientViewer.slow_keys("{ENTER}", 1.5)
         time.sleep(1.5)
 
         main = desktop.window(title_re=r".*Open Dental.*")
