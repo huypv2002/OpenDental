@@ -3927,7 +3927,7 @@ class SmsReminderWindow(QMainWindow):
     def selected_treatment_patients(self) -> list[dict[str, Any]]:
         rows = sorted({index.row() for index in self.treatment_table.selectedIndexes()})
         current_row = self.treatment_table.currentRow()
-        if current_row >= 0:
+        if not rows and current_row >= 0:
             rows.append(current_row)
         visible = self.treatment_visible_patients()
         selected: list[dict[str, Any]] = []
@@ -4606,7 +4606,7 @@ class SmsReminderWindow(QMainWindow):
     def selected_appointments(self) -> list[dict[str, Any]]:
         rows = {index.row() for index in self.appointment_table.selectedIndexes()}
         current_row = self.appointment_table.currentRow()
-        if current_row >= 0:
+        if not rows and current_row >= 0:
             rows.add(current_row)
         focus_widget = QApplication.focusWidget()
         for row, combo in self.row_template_combos.items():
