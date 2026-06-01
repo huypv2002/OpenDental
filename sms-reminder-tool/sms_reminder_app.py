@@ -609,7 +609,7 @@ class PhoneLinkSender:
 
 
 class OpenDentalPatientViewer:
-    STEP_DELAY_SECONDS = 0.8
+    STEP_DELAY_SECONDS = 0.45
 
     @staticmethod
     def slow_keys(keys: str, delay: float | None = None) -> None:
@@ -683,17 +683,17 @@ class OpenDentalPatientViewer:
             window = app.top_window()
 
         window.set_focus()
-        time.sleep(1.0)
-        OpenDentalPatientViewer.slow_keys("^p", 2.0)
+        time.sleep(0.5)
+        OpenDentalPatientViewer.slow_keys("^p", 1.2)
 
         # Select Patient opens with focus already in Last Name.
-        OpenDentalPatientViewer.type_text(last_name, 0.25)
-        OpenDentalPatientViewer.slow_keys("{TAB}", 0.2)
-        OpenDentalPatientViewer.type_text(first_name, 0.25)
-        OpenDentalPatientViewer.slow_keys("{TAB 9}", 0.25)
-        OpenDentalPatientViewer.type_text(birthdate, 1.0)
-        OpenDentalPatientViewer.slow_keys("{ENTER}", 1.5)
-        time.sleep(1.5)
+        OpenDentalPatientViewer.type_text(last_name, 0.12)
+        OpenDentalPatientViewer.slow_keys("{TAB}", 0.12)
+        OpenDentalPatientViewer.type_text(first_name, 0.12)
+        OpenDentalPatientViewer.slow_keys("{TAB 8}", 0.12)
+        OpenDentalPatientViewer.type_text(birthdate, 0.45)
+        OpenDentalPatientViewer.slow_keys("{ENTER}", 0.9)
+        time.sleep(0.8)
 
         main = desktop.window(title_re=r".*Open Dental.*")
         if main.exists(timeout=5):
