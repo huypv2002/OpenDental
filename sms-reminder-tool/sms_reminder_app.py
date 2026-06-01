@@ -573,6 +573,7 @@ class SendWorker(QThread):
         sender = PhoneLinkSender(self.config.dry_run)
         sent = 0
         failed = 0
+        skipped = 0
         for appointment in self.appointments:
             message = render_message(self.config, appointment, appointment.get("_TemplateText") or default_template(self.config))
             patient = patient_name(appointment)
@@ -583,12 +584,8 @@ class SendWorker(QThread):
             if "PhoneTargets" not in appointment and not targets and digits_only(appointment.get("Phone", "")):
                 targets = [{"source": appointment.get("PhoneSource") or "Phone", "phone": appointment.get("Phone", "")}]
             if not targets:
-                failed += 1
-                if appointment.get("_Treatment"):
-                    repo.log_treatment_result(appointment, message, "failed", "Missing patient phone number.")
-                elif not appointment.get("_Recall"):
-                    repo.log_result(appointment, message, "failed", "Missing patient phone number.")
-                self.progress.emit(f"Failed: {patient} has no phone number.")
+                skipped += 1
+                self.progress.emit(f"Skipped: {patient} has no valid phone number.")
                 continue
             for target in targets:
                 phone = target.get("phone", "")
@@ -613,6 +610,8 @@ class SendWorker(QThread):
                     else:
                         repo.log_result(appointment, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed: {patient} {source} -> {exc}")
+        if skipped:
+            self.progress.emit(f"Skipped {skipped} row(s) with no valid phone number.")
         self.finished.emit(sent, failed)
 
 
@@ -630,6 +629,7 @@ class CampaignSendWorker(QThread):
         sender = PhoneLinkSender(self.config.dry_run)
         sent = 0
         failed = 0
+        skipped = 0
         for patient in self.recipients:
             message = render_message(self.config, patient, patient.get("_TemplateText") or "")
             name = patient_name(patient)
@@ -640,9 +640,8 @@ class CampaignSendWorker(QThread):
             if not targets and digits_only(patient.get("Phone", "")):
                 targets = [{"source": patient.get("PhoneSource") or "Phone", "phone": patient.get("Phone", "")}]
             if not targets:
-                failed += 1
-                repo.log_campaign_result(patient, message, "failed", "Missing patient phone number.")
-                self.progress.emit(f"Failed campaign SMS: {name} has no phone number.")
+                skipped += 1
+                self.progress.emit(f"Skipped campaign SMS: {name} has no valid phone number.")
                 continue
             for target in targets:
                 phone = target.get("phone", "")
@@ -657,6 +656,8 @@ class CampaignSendWorker(QThread):
                     failed += 1
                     repo.log_campaign_result(patient, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed campaign SMS: {name} {source} -> {exc}")
+        if skipped:
+            self.progress.emit(f"Skipped {skipped} campaign row(s) with no valid phone number.")
         self.finished.emit(sent, failed)
 
 
@@ -4355,6 +4356,11 @@ class SmsReminderWindow(QMainWindow):
             if not silent:
                 QMessageBox.information(self, "Sending", "A send job is already running.")
             return False
+        missing_phone_count = sum(
+            1 for appointment in appointments
+            if not any(digits_only(target.get("phone", "")) for target in appointment.get("PhoneTargets", []))
+            and not digits_only(appointment.get("Phone", ""))
+        )
         sms_count = sum(
             len([
                 target for target in appointment.get("PhoneTargets", [])
@@ -4364,9 +4370,15 @@ class SmsReminderWindow(QMainWindow):
         )
         if sms_count == 0:
             if not silent:
-                QMessageBox.information(self, "Nothing to send", "There are no pending phone numbers for this selection.")
+                detail = (
+                    f"\n\nSkipped {missing_phone_count} row(s) with no valid phone number."
+                    if missing_phone_count else ""
+                )
+                QMessageBox.information(self, "Nothing to send", "There are no pending phone numbers for this selection." + detail)
             else:
                 self.append_activity("No pending phone numbers for this target date.")
+                if missing_phone_count:
+                    self.append_activity(f"Skipped {missing_phone_count} row(s) with no valid phone number.")
             return False
         if not self.config.dry_run and confirm_real:
             confirm = QMessageBox.question(
@@ -4394,13 +4406,22 @@ class SmsReminderWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             QMessageBox.information(self, "Sending", "A send job is already running.")
             return False
+        missing_phone_count = sum(
+            1 for patient in patients
+            if not any(digits_only(target.get("phone", "")) for target in patient.get("PhoneTargets", []))
+            and not digits_only(patient.get("Phone", ""))
+        )
         sms_count = sum(
             len([target for target in patient.get("PhoneTargets", []) if digits_only(target.get("phone", ""))])
             or (1 if digits_only(patient.get("Phone", "")) else 0)
             for patient in patients
         )
         if sms_count == 0:
-            QMessageBox.information(self, "Nothing to send", "There are no valid phone numbers in this campaign selection.")
+            detail = (
+                f"\n\nSkipped {missing_phone_count} row(s) with no valid phone number."
+                if missing_phone_count else ""
+            )
+            QMessageBox.information(self, "Nothing to send", "There are no valid phone numbers in this campaign selection." + detail)
             return False
         missing_templates = [patient_name(patient) for patient in patients if not str(patient.get("_TemplateText") or "").strip()]
         if missing_templates:
@@ -4797,6 +4818,8 @@ class SmsReminderWindow(QMainWindow):
             self.append_activity(f"Treatment monitoring load failed: {exc}")
             return
         prepared: list[dict[str, Any]] = []
+        missing_phone_count = 0
+        missing_template_count = 0
         for patient in patients:
             row = self.normalize_patient_phone_targets(patient)
             key = treatment_template_key_for_language(self.config, row.get("Language"))
@@ -4804,8 +4827,20 @@ class SmsReminderWindow(QMainWindow):
             row["_TemplateText"] = self.config.treatment_templates.get(key) or ""
             row["_TemplateCountry"] = str(self.config.treatment_template_countries.get(key) or infer_template_country(key)).upper()
             row["_Treatment"] = True
+            if not row.get("PhoneTargets"):
+                missing_phone_count += 1
+                self.append_activity(f"Skipped treatment SMS: {patient_name(row)} has no valid phone number.")
+                continue
+            if not row.get("_TemplateText"):
+                missing_template_count += 1
+                self.append_activity(f"Skipped treatment SMS: {patient_name(row)} has no template.")
+                continue
             if row.get("_TemplateText") and row.get("PhoneTargets"):
                 prepared.append(row)
+        if missing_phone_count:
+            self.append_activity(f"Treatment monitoring skipped {missing_phone_count} patient(s) with no valid phone number.")
+        if missing_template_count:
+            self.append_activity(f"Treatment monitoring skipped {missing_template_count} patient(s) with no template.")
         self.treatment_patients = prepared
         if hasattr(self, "treatment_table"):
             self.render_treatment_patients()
@@ -4855,8 +4890,18 @@ class SmsReminderWindow(QMainWindow):
                 continue
             if str(campaign.get("last_sent_date") or "") == today_key:
                 continue
-            recipients = [self.prepare_campaign_recipient(campaign, patient) for patient in campaign.get("recipients") or []]
-            recipients = [patient for patient in recipients if patient.get("_TemplateText") and patient.get("PhoneTargets")]
+            prepared_recipients = [self.prepare_campaign_recipient(campaign, patient) for patient in campaign.get("recipients") or []]
+            missing_phone = [patient for patient in prepared_recipients if not patient.get("PhoneTargets")]
+            missing_template = [patient for patient in prepared_recipients if patient.get("PhoneTargets") and not patient.get("_TemplateText")]
+            for patient in missing_phone:
+                self.append_activity(f"Skipped campaign SMS: {campaign.get('name')} / {patient_name(patient)} has no valid phone number.")
+            for patient in missing_template:
+                self.append_activity(f"Skipped campaign SMS: {campaign.get('name')} / {patient_name(patient)} has no template.")
+            if missing_phone:
+                self.append_activity(f"Campaign {campaign.get('name')} skipped {len(missing_phone)} recipient(s) with no valid phone number.")
+            if missing_template:
+                self.append_activity(f"Campaign {campaign.get('name')} skipped {len(missing_template)} recipient(s) with no template.")
+            recipients = [patient for patient in prepared_recipients if patient.get("_TemplateText") and patient.get("PhoneTargets")]
             if not recipients:
                 self.append_activity(f"Skipped campaign {campaign.get('name')}: no valid recipients/templates.")
                 continue
