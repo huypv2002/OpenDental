@@ -659,11 +659,12 @@ class OpenDentalPatientViewer:
         )
 
     @staticmethod
-    def open_patient(first_name: str, last_name: str, birthdate: str) -> None:
+    def open_patient(first_name: str, last_name: str, birthdate: str, pat_num: str = "") -> None:
         if platform.system() != "Windows":
             raise RuntimeError("Open Dental automation only runs on the Windows clinic workstation.")
         first_name = first_name.strip()
         last_name = last_name.strip()
+        pat_num = str(pat_num or "").strip()
         birthdate = OpenDentalPatientViewer.format_birthdate(birthdate)
         if not first_name or not last_name or not birthdate:
             raise RuntimeError("Missing first name, last name, or date of birth for Open Dental lookup.")
@@ -690,7 +691,10 @@ class OpenDentalPatientViewer:
         OpenDentalPatientViewer.type_text(last_name, 0.12)
         OpenDentalPatientViewer.slow_keys("{TAB}", 0.12)
         OpenDentalPatientViewer.type_text(first_name, 0.12)
-        OpenDentalPatientViewer.slow_keys("{TAB 8}", 0.12)
+        OpenDentalPatientViewer.slow_keys("{TAB 6}", 0.12)
+        if pat_num:
+            OpenDentalPatientViewer.type_text(pat_num, 0.12)
+        OpenDentalPatientViewer.slow_keys("{TAB 2}", 0.12)
         OpenDentalPatientViewer.type_text(birthdate, 0.45)
         OpenDentalPatientViewer.slow_keys("{ENTER}", 0.9)
         time.sleep(0.8)
@@ -3761,6 +3765,7 @@ class SmsReminderWindow(QMainWindow):
             if not last_name and len(parts) > 1:
                 last_name = parts[1]
         birthdate = str(row.get("Birthdate") or row.get("DOB") or "").strip()
+        pat_num = str(row.get("PatNum") or row.get("PatientNumber") or "").strip()
         if not first_name or not last_name or not birthdate:
             QMessageBox.warning(
                 self,
@@ -3769,7 +3774,7 @@ class SmsReminderWindow(QMainWindow):
             )
             return
         try:
-            OpenDentalPatientViewer.open_patient(first_name, last_name, birthdate)
+            OpenDentalPatientViewer.open_patient(first_name, last_name, birthdate, pat_num)
             self.append_activity(f"Opened Open Dental patient lookup for {first_name} {last_name}.")
         except Exception as exc:  # noqa: BLE001
             self.append_activity(f"Open Dental view failed for {first_name} {last_name}: {exc}")
