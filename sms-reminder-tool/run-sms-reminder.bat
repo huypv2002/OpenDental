@@ -2,6 +2,19 @@
 setlocal
 cd /d "%~dp0"
 
+where git >nul 2>nul
+if errorlevel 1 (
+  echo Git was not found. Skipping update and opening the app.
+) else (
+  echo Updating OpenDental repository...
+  git -C "%~dp0.." pull --ff-only
+  if errorlevel 1 (
+    echo.
+    echo WARNING: git pull failed. Opening the app with the current local version.
+    echo.
+  )
+)
+
 if not exist ".venv\Scripts\python.exe" (
   echo Creating Python virtual environment...
   python -m venv .venv
