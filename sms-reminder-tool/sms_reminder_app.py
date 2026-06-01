@@ -5791,6 +5791,8 @@ def main() -> int:
     window.showMaximized()
     if "--start-monitoring" in sys.argv:
         QTimer.singleShot(1500, window.start_monitoring)
+        QTimer.singleShot(2200, window.start_holiday_monitoring)
+        QTimer.singleShot(2900, window.start_treatment_monitoring)
     return app.exec()
 
 
