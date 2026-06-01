@@ -699,7 +699,7 @@ class OpenDentalPatientViewer:
         if main.exists(timeout=5):
             main.set_focus()
             main_rect = main.rectangle()
-            mouse.click(button="left", coords=(main_rect.left + 48, main_rect.top + 226))
+            mouse.click(button="left", coords=(main_rect.left + 48, main_rect.top + 134))
 
 
 class SendWorker(QThread):
