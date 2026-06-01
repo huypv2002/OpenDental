@@ -53,6 +53,7 @@ APP_DIR = Path(__file__).resolve().parent
 APP_ICON_PATH = APP_DIR / "tooth.ico"
 FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
+SCHEDULER_ON_PATH = APP_DIR / "scheduler-on.bat"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
 DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
@@ -76,6 +77,54 @@ HOLIDAY_EVENTS = [
     "Christmas",
     "New Year Promotion",
 ]
+SCHEDULER_TIME_FIELDS = [
+    ("ENABLE_LOGIN_TIME", "Enable auto-login"),
+    ("RESTART_TIME", "Restart Windows"),
+    ("START_TOOL_TIME", "Open Phone Link and tool"),
+    ("LOCK_TIME", "Disable auto-login and lock"),
+]
+DEFAULT_SCHEDULER_TIMES = {
+    "ENABLE_LOGIN_TIME": "08:59",
+    "RESTART_TIME": "09:00",
+    "START_TOOL_TIME": "10:55",
+    "LOCK_TIME": "11:05",
+}
+
+
+def qtime_from_hhmm(value: str, fallback: str = "00:00") -> QTime:
+    time_value = QTime.fromString(str(value or "").strip(), "HH:mm")
+    if time_value.isValid():
+        return time_value
+    return QTime.fromString(fallback, "HH:mm")
+
+
+def read_scheduler_bat_times() -> dict[str, str]:
+    if not SCHEDULER_ON_PATH.exists():
+        raise FileNotFoundError(f"Missing scheduler file: {SCHEDULER_ON_PATH}")
+    text = SCHEDULER_ON_PATH.read_text(encoding="utf-8")
+    times = dict(DEFAULT_SCHEDULER_TIMES)
+    for name, _label in SCHEDULER_TIME_FIELDS:
+        pattern = re.compile(rf'(?m)^set[ \t]+"{re.escape(name)}=(\d{{1,2}}:\d{{2}})"[ \t]*$')
+        match = pattern.search(text)
+        if match:
+            times[name] = match.group(1)
+    return times
+
+
+def write_scheduler_bat_times(times: dict[str, str]) -> None:
+    if not SCHEDULER_ON_PATH.exists():
+        raise FileNotFoundError(f"Missing scheduler file: {SCHEDULER_ON_PATH}")
+    text = SCHEDULER_ON_PATH.read_text(encoding="utf-8")
+    for name, _label in SCHEDULER_TIME_FIELDS:
+        time_value = str(times.get(name) or DEFAULT_SCHEDULER_TIMES[name]).strip()
+        if not QTime.fromString(time_value, "HH:mm").isValid():
+            raise ValueError(f"{name} must use HH:MM format.")
+        pattern = re.compile(rf'(?m)^set[ \t]+"{re.escape(name)}=\d{{1,2}}:\d{{2}}"[ \t]*$')
+        replacement = f'set "{name}={time_value}"'
+        text, count = pattern.subn(replacement, text, count=1)
+        if count == 0:
+            raise ValueError(f"Could not find {name} in {SCHEDULER_ON_PATH.name}.")
+    SCHEDULER_ON_PATH.write_text(text, encoding="utf-8")
 
 
 def clinic_now() -> datetime:
@@ -1442,6 +1491,36 @@ class SmsReminderWindow(QMainWindow):
         sms_form.addRow("Appointment statuses", self.statuses)
         sms_form.addRow("Send mode", QLabel("REAL SMS only. Dry-run mode is disabled."))
 
+        scheduler_box = QGroupBox("Windows scheduler BAT")
+        scheduler_form = QFormLayout(scheduler_box)
+        scheduler_form.setContentsMargins(14, 14, 14, 14)
+        scheduler_form.setSpacing(8)
+        self.scheduler_bat_status = QLabel(str(SCHEDULER_ON_PATH))
+        self.scheduler_bat_status.setObjectName("Muted")
+        scheduler_form.addRow("File", self.scheduler_bat_status)
+        self.scheduler_time_edits: dict[str, QTimeEdit] = {}
+        scheduler_times = self.safe_read_scheduler_bat_times()
+        for name, label in SCHEDULER_TIME_FIELDS:
+            time_edit = QTimeEdit(qtime_from_hhmm(scheduler_times.get(name), DEFAULT_SCHEDULER_TIMES[name]))
+            time_edit.setDisplayFormat("HH:mm")
+            time_edit.setMinimumWidth(110)
+            self.scheduler_time_edits[name] = time_edit
+            scheduler_form.addRow(label, time_edit)
+        scheduler_note = QLabel("These four values are read from scheduler-on.bat. Saving here rewrites the SET lines in that BAT file; run scheduler-on.bat as Administrator again if Windows Task Scheduler already has old times.")
+        scheduler_note.setObjectName("Muted")
+        scheduler_note.setWordWrap(True)
+        scheduler_form.addRow("Note", scheduler_note)
+
+        scheduler_actions = QHBoxLayout()
+        reload_scheduler_button = QPushButton("Reload BAT times")
+        reload_scheduler_button.clicked.connect(self.reload_scheduler_bat_times)
+        save_scheduler_button = QPushButton("Save BAT times")
+        save_scheduler_button.clicked.connect(lambda: self.save_scheduler_bat_times(silent=False))
+        scheduler_actions.addStretch()
+        scheduler_actions.addWidget(reload_scheduler_button)
+        scheduler_actions.addWidget(save_scheduler_button)
+        scheduler_form.addRow("", scheduler_actions)
+
         buttons = QHBoxLayout()
         self.test_bridge_button = QPushButton("Test bridge connection")
         self.test_bridge_button.clicked.connect(self.test_bridge_connection)
@@ -1454,6 +1533,7 @@ class SmsReminderWindow(QMainWindow):
 
         layout.addWidget(bridge_box)
         layout.addWidget(sms_box)
+        layout.addWidget(scheduler_box)
         layout.addLayout(buttons)
         layout.addStretch()
         return page
@@ -2837,6 +2917,41 @@ class SmsReminderWindow(QMainWindow):
         refresh("US_HOLIDAY")
         dialog.exec()
 
+    def safe_read_scheduler_bat_times(self) -> dict[str, str]:
+        try:
+            return read_scheduler_bat_times()
+        except Exception:
+            return dict(DEFAULT_SCHEDULER_TIMES)
+
+    def reload_scheduler_bat_times(self) -> None:
+        try:
+            times = read_scheduler_bat_times()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Scheduler BAT error", str(exc))
+            return
+        for name, _label in SCHEDULER_TIME_FIELDS:
+            if name in self.scheduler_time_edits:
+                self.scheduler_time_edits[name].setTime(qtime_from_hhmm(times.get(name), DEFAULT_SCHEDULER_TIMES[name]))
+        self.statusBar().showMessage("Scheduler BAT times reloaded.", 4000)
+
+    def save_scheduler_bat_times(self, silent: bool = False) -> bool:
+        if not hasattr(self, "scheduler_time_edits"):
+            return True
+        times = {
+            name: self.scheduler_time_edits[name].time().toString("HH:mm")
+            for name, _label in SCHEDULER_TIME_FIELDS
+            if name in self.scheduler_time_edits
+        }
+        try:
+            write_scheduler_bat_times(times)
+        except Exception as exc:  # noqa: BLE001
+            if not silent:
+                QMessageBox.critical(self, "Scheduler BAT save failed", str(exc))
+            return False
+        if not silent:
+            self.statusBar().showMessage("Scheduler BAT times saved.", 4000)
+        return True
+
     def save_settings(self, silent: bool = False) -> None:
         try:
             statuses = [int(part.strip()) for part in self.statuses.text().split(",") if part.strip()]
@@ -2867,6 +2982,7 @@ class SmsReminderWindow(QMainWindow):
         self.config.sms_template = default_template(self.config)
         self.config.recall_template = self.config.recall_templates.get("US", "")
         self.config.save()
+        self.save_scheduler_bat_times(silent=silent)
         self.repo = BridgeClient(self.config)
         if hasattr(self, "review_link"):
             try:
