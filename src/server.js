@@ -24,6 +24,16 @@ import {
 import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
+import {
+  ensurePatientPortalTables,
+  listPatientAccounts,
+  loginPatientAccount,
+  parsePatientAccountStatusBody,
+  parsePatientLoginBody,
+  parsePatientRegisterBody,
+  registerPatientAccount,
+  updatePatientAccountStatus
+} from './patientPortal.js';
 import { exportAppointmentReport, parseAppointmentReportBody } from './reports.js';
 import {
   addSmsTemplate,
@@ -191,6 +201,45 @@ app.post('/api/appointments/cancel', requireApiToken, async (req, res, next) => 
   try {
     const body = parseCancelAppointmentBody(req.body ?? {});
     const data = await cancelAppointment(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/register', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientRegisterBody(req.body ?? {});
+    const data = await registerPatientAccount(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/login', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientLoginBody(req.body ?? {});
+    const data = await loginPatientAccount(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/patient-portal/accounts', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await listPatientAccounts(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/accounts/status', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientAccountStatusBody(req.body ?? {});
+    const data = await updatePatientAccountStatus(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
@@ -418,7 +467,7 @@ app.use((error, _req, res, _next) => {
 });
 
 // Auto-create SMS template/settings tables and seed defaults on startup
-ensureSmsTemplatesTable().then(() => ensureSmsSettingsTable()).then(() => ensureSmsCampaignLogTable()).then(() => ensureSmsTreatmentLogTable()).then(() => initDefaultSmsTemplates()).then((init) => {
+ensurePatientPortalTables().then(() => ensureSmsTemplatesTable()).then(() => ensureSmsSettingsTable()).then(() => ensureSmsCampaignLogTable()).then(() => ensureSmsTreatmentLogTable()).then(() => initDefaultSmsTemplates()).then((init) => {
   if (init.initialized) {
     console.log(`SMS templates: seeded ${init.count} default templates.`);
   } else {
