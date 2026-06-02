@@ -255,7 +255,6 @@ class AppConfig:
     holiday_templates: dict[str, str] = field(default_factory=dict)
     holiday_template_countries: dict[str, str] = field(default_factory=dict)
     holiday_events: list[str] = field(default_factory=lambda: list(HOLIDAY_EVENTS))
-    holiday_campaigns: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -267,7 +266,7 @@ class AppConfig:
                 "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
                 "treatment_templates", "treatment_template_countries",
                 "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
-                "holiday_templates", "holiday_template_countries", "holiday_events", "holiday_campaigns", "default_template_key", "template_schema_version",
+                "holiday_templates", "holiday_template_countries", "holiday_events", "default_template_key", "template_schema_version",
             }
             known = {key: value for key, value in raw.items() if key in defaults and key not in template_keys}
             cfg = cls(**{**defaults, **known})
@@ -299,7 +298,7 @@ class AppConfig:
             "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
             "treatment_templates", "treatment_template_countries",
             "review_templates", "review_template_countries", "review_link", "sms_template", "recall_template",
-            "holiday_templates", "holiday_template_countries", "holiday_events", "holiday_campaigns", "default_template_key", "template_schema_version",
+            "holiday_templates", "holiday_template_countries", "holiday_events", "default_template_key", "template_schema_version",
         ):
             data.pop(key, None)
         CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -1189,15 +1188,6 @@ class SmsReminderWindow(QMainWindow):
         self.monitor_batch_failed = False
         self.active_schedule_key = ""
         self.monitoring_active = False
-        self.holiday_monitoring_active = False
-        self.holiday_monitor_batch_active = False
-        self.holiday_monitor_batch_failed = False
-        self.holiday_campaign_queue: list[dict[str, Any]] = []
-        self.holiday_active_campaign_id = ""
-        self.holiday_active_schedule_key = ""
-        self.treatment_monitoring_active = False
-        self.treatment_monitor_batch_active = False
-        self.treatment_active_schedule_key = ""
         self.row_template_combos: dict[int, QComboBox] = {}
         self.recall_template_combos: dict[int, QComboBox] = {}
         self.treatment_template_combos: dict[int, QComboBox] = {}
@@ -1242,8 +1232,6 @@ class SmsReminderWindow(QMainWindow):
 
         self.scheduler_timer = QTimer(self)
         self.scheduler_timer.timeout.connect(self.check_schedule)
-        self.scheduler_timer.timeout.connect(self.check_holiday_schedule)
-        self.scheduler_timer.timeout.connect(self.check_treatment_schedule)
         self.scheduler_timer.start(60_000)
         self.update_dry_run_badge()
         self.update_monitoring_status()
@@ -1281,7 +1269,6 @@ class SmsReminderWindow(QMainWindow):
             self.config.holiday_template_countries = countries.get("holiday_birthday") or {}
             self.config.review_link = str(sms_settings.get("review_link") or "")
             self.config.holiday_events = self.parse_holiday_events_setting(sms_settings.get("holiday_events"))
-            self.config.holiday_campaigns = self.parse_holiday_campaigns_setting(sms_settings.get("holiday_campaigns"))
             self.config.sms_template = default_template(self.config)
             self.config.recall_template = self.config.recall_templates.get("US", "")
         except Exception:
@@ -1297,7 +1284,6 @@ class SmsReminderWindow(QMainWindow):
             self.config.holiday_template_countries = {}
             self.config.review_link = ""
             self.config.holiday_events = list(HOLIDAY_EVENTS)
-            self.config.holiday_campaigns = []
 
     def parse_holiday_events_setting(self, raw_value: Any) -> list[str]:
         events: list[str] = []
@@ -1327,39 +1313,6 @@ class SmsReminderWindow(QMainWindow):
     def save_holiday_events_to_bridge(self) -> None:
         self.config.holiday_events = self.unique_holiday_events(self.config.holiday_events)
         self.repo.save_sms_setting("holiday_events", json.dumps(self.config.holiday_events, ensure_ascii=False))
-
-    def parse_holiday_campaigns_setting(self, raw_value: Any) -> list[dict[str, Any]]:
-        if not raw_value:
-            return []
-        try:
-            parsed = json.loads(str(raw_value))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
-        if not isinstance(parsed, list):
-            return []
-        campaigns: list[dict[str, Any]] = []
-        for campaign in parsed:
-            if not isinstance(campaign, dict):
-                continue
-            recipients = campaign.get("recipients")
-            if not isinstance(recipients, list):
-                recipients = []
-            campaign_type = str(campaign.get("type") or "").strip().lower()
-            if campaign_type not in {"holiday", "birthday"}:
-                continue
-            campaigns.append({
-                "id": str(campaign.get("id") or f"{campaign_type}-{int(time.time())}"),
-                "type": campaign_type,
-                "name": str(campaign.get("name") or ("Birthday" if campaign_type == "birthday" else "Holiday")).strip(),
-                "run_date": str(campaign.get("run_date") or "").strip(),
-                "enabled": bool(campaign.get("enabled", True)),
-                "last_sent_date": str(campaign.get("last_sent_date") or "").strip(),
-                "recipients": [item for item in recipients if isinstance(item, dict)],
-            })
-        return campaigns
-
-    def save_holiday_campaigns_to_bridge(self) -> None:
-        self.repo.save_sms_setting("holiday_campaigns", json.dumps(self.config.holiday_campaigns, ensure_ascii=False))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override name
         super().resizeEvent(event)
@@ -1744,7 +1697,7 @@ class SmsReminderWindow(QMainWindow):
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("Daily SMS monitoring")
         title.setObjectName("HeroTitle")
-        subtitle = QLabel("Start monitoring when Phone Link is ready. The app will load tomorrow's appointments and send pending reminders at the configured time.")
+        subtitle = QLabel("Start monitoring when Phone Link is ready. The app will send only appointment reminders for tomorrow and 8-day targets at the configured time.")
         subtitle.setObjectName("HeroSubtitle")
         hero_layout.addWidget(eyebrow)
         hero_layout.addWidget(title)
@@ -1798,97 +1751,8 @@ class SmsReminderWindow(QMainWindow):
         action_row.addWidget(self.start_monitoring_button)
         monitor_layout.addLayout(action_row, 6, 0, 1, 2)
 
-        holiday_card = self.card()
-        holiday_layout = QGridLayout(holiday_card)
-        holiday_layout.setContentsMargins(16, 14, 16, 14)
-        holiday_layout.setHorizontalSpacing(12)
-        holiday_layout.setVerticalSpacing(8)
-        holiday_title = QLabel("Holiday & Birthday")
-        holiday_title.setObjectName("SectionTitle")
-        holiday_subtitle = QLabel("Separate monitoring for saved Holiday and Birthday campaign automations.")
-        holiday_subtitle.setObjectName("Muted")
-        holiday_subtitle.setWordWrap(True)
-        self.monitor_holiday_status_value = QLabel("Waiting")
-        self.monitor_holiday_status_value.setObjectName("MonitorStatus")
-        self.monitor_holiday_saved_value = QLabel("")
-        self.monitor_holiday_saved_value.setObjectName("Muted")
-        self.monitor_birthday_saved_value = QLabel("")
-        self.monitor_birthday_saved_value.setObjectName("Muted")
-        self.monitor_holiday_due_value = QLabel("")
-        self.monitor_holiday_due_value.setObjectName("Muted")
-        self.monitor_holiday_note_value = QLabel("")
-        self.monitor_holiday_note_value.setObjectName("Muted")
-        self.monitor_holiday_note_value.setWordWrap(True)
-        holiday_layout.addWidget(holiday_title, 0, 0, 1, 2)
-        holiday_layout.addWidget(holiday_subtitle, 1, 0, 1, 2)
-        holiday_layout.addWidget(QLabel("Status"), 2, 0)
-        holiday_layout.addWidget(self.monitor_holiday_status_value, 2, 1)
-        holiday_layout.addWidget(QLabel("Holiday saved"), 3, 0)
-        holiday_layout.addWidget(self.monitor_holiday_saved_value, 3, 1)
-        holiday_layout.addWidget(QLabel("Birthday saved"), 4, 0)
-        holiday_layout.addWidget(self.monitor_birthday_saved_value, 4, 1)
-        holiday_layout.addWidget(QLabel("Due today"), 5, 0)
-        holiday_layout.addWidget(self.monitor_holiday_due_value, 5, 1)
-        holiday_layout.addWidget(QLabel("Behavior"), 6, 0, Qt.AlignTop)
-        holiday_layout.addWidget(self.monitor_holiday_note_value, 6, 1)
-        holiday_action_row = QHBoxLayout()
-        self.start_holiday_monitoring_button = QPushButton("Start Holiday/Birthday")
-        self.start_holiday_monitoring_button.setObjectName("PrimaryButton")
-        self.start_holiday_monitoring_button.clicked.connect(self.start_holiday_monitoring)
-        self.stop_holiday_monitoring_button = QPushButton("Stop")
-        self.stop_holiday_monitoring_button.clicked.connect(self.stop_holiday_monitoring)
-        holiday_action_row.addStretch()
-        holiday_action_row.addWidget(self.stop_holiday_monitoring_button)
-        holiday_action_row.addWidget(self.start_holiday_monitoring_button)
-        holiday_layout.addLayout(holiday_action_row, 7, 0, 1, 2)
-
-        treatment_card = self.card()
-        treatment_layout = QGridLayout(treatment_card)
-        treatment_layout.setContentsMargins(16, 14, 16, 14)
-        treatment_layout.setHorizontalSpacing(12)
-        treatment_layout.setVerticalSpacing(8)
-        treatment_title = QLabel("Treatment")
-        treatment_title.setObjectName("SectionTitle")
-        treatment_subtitle = QLabel("Separate monitoring for overdue planned procedure codes.")
-        treatment_subtitle.setObjectName("Muted")
-        treatment_subtitle.setWordWrap(True)
-        self.monitor_treatment_status_value = QLabel("Stopped")
-        self.monitor_treatment_status_value.setObjectName("MonitorStatus")
-        self.monitor_treatment_due_value = QLabel("")
-        self.monitor_treatment_due_value.setObjectName("Muted")
-        self.monitor_treatment_time_value = QLabel("")
-        self.monitor_treatment_time_value.setObjectName("Muted")
-        self.monitor_treatment_note_value = QLabel("")
-        self.monitor_treatment_note_value.setObjectName("Muted")
-        self.monitor_treatment_note_value.setWordWrap(True)
-        treatment_layout.addWidget(treatment_title, 0, 0, 1, 2)
-        treatment_layout.addWidget(treatment_subtitle, 1, 0, 1, 2)
-        treatment_layout.addWidget(QLabel("Status"), 2, 0)
-        treatment_layout.addWidget(self.monitor_treatment_status_value, 2, 1)
-        treatment_layout.addWidget(QLabel("Miss window"), 3, 0)
-        treatment_layout.addWidget(self.monitor_treatment_due_value, 3, 1)
-        treatment_layout.addWidget(QLabel("Send time"), 4, 0)
-        treatment_layout.addWidget(self.monitor_treatment_time_value, 4, 1)
-        treatment_layout.addWidget(QLabel("Behavior"), 5, 0, Qt.AlignTop)
-        treatment_layout.addWidget(self.monitor_treatment_note_value, 5, 1)
-        treatment_action_row = QHBoxLayout()
-        self.start_treatment_monitoring_button = QPushButton("Start Treatment")
-        self.start_treatment_monitoring_button.setObjectName("PrimaryButton")
-        self.start_treatment_monitoring_button.clicked.connect(self.start_treatment_monitoring)
-        self.stop_treatment_monitoring_button = QPushButton("Stop")
-        self.stop_treatment_monitoring_button.clicked.connect(self.stop_treatment_monitoring)
-        treatment_action_row.addStretch()
-        treatment_action_row.addWidget(self.stop_treatment_monitoring_button)
-        treatment_action_row.addWidget(self.start_treatment_monitoring_button)
-        treatment_layout.addLayout(treatment_action_row, 6, 0, 1, 2)
-        treatment_layout.setRowStretch(7, 1)
-
         panels.addWidget(monitor_card, 0, 0)
-        panels.addWidget(holiday_card, 0, 1)
-        panels.addWidget(treatment_card, 0, 2)
         panels.setColumnStretch(0, 1)
-        panels.setColumnStretch(1, 1)
-        panels.setColumnStretch(2, 1)
         layout.addLayout(panels)
         layout.addStretch()
         return page
@@ -2237,10 +2101,6 @@ class SmsReminderWindow(QMainWindow):
         self.manage_holiday_templates_button.clicked.connect(self.open_holiday_templates_popup)
         self.preview_holiday_button = QPushButton("Preview selected")
         self.preview_holiday_button.clicked.connect(self.preview_holiday_selected)
-        self.save_holiday_automation_button = QPushButton("Save automation")
-        self.save_holiday_automation_button.clicked.connect(self.save_current_holiday_automation)
-        self.manage_holiday_automation_button = QPushButton("Saved automations")
-        self.manage_holiday_automation_button.clicked.connect(self.open_saved_holiday_automations)
         self.send_holiday_selected_button = QPushButton("Send selected")
         self.send_holiday_selected_button.clicked.connect(self.send_selected_holiday_sms)
         self.send_holiday_all_button = QPushButton("Send all in list")
@@ -2265,8 +2125,6 @@ class SmsReminderWindow(QMainWindow):
         action_row.addWidget(self.add_custom_holiday_button)
         action_row.addWidget(self.remove_holiday_button)
         action_row.addWidget(self.manage_holiday_templates_button)
-        action_row.addWidget(self.save_holiday_automation_button)
-        action_row.addWidget(self.manage_holiday_automation_button)
         action_row.addStretch()
         action_row.addWidget(self.preview_holiday_button)
         action_row.addWidget(self.send_holiday_selected_button)
@@ -4069,154 +3927,6 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_patients.append(self.normalize_holiday_patient(row))
         self.render_holiday_patients()
 
-    def holiday_campaign_recipients_from_visible_rows(self) -> list[dict[str, Any]]:
-        self.holiday_table.clearSelection()
-        for row in range(self.holiday_table.rowCount()):
-            self.holiday_table.selectRow(row)
-        recipients = self.selected_holiday_patients()
-        self.holiday_table.clearSelection()
-        safe_recipients: list[dict[str, Any]] = []
-        for patient in recipients:
-            safe_recipients.append({
-                "PatNum": patient.get("PatNum") or 0,
-                "FName": patient.get("FName") or "",
-                "LName": patient.get("LName") or "",
-                "Phone": patient.get("Phone") or "",
-                "PhoneTargets": patient.get("PhoneTargets") or [],
-                "Email": patient.get("Email") or "",
-                "Language": patient.get("Language") or "",
-                "Gender": patient.get("Gender") or "",
-                "Birthdate": patient.get("Birthdate") or "",
-                "_TemplateKey": patient.get("_TemplateKey") or "",
-            })
-        return safe_recipients
-
-    def save_current_holiday_automation(self) -> None:
-        recipients = self.holiday_campaign_recipients_from_visible_rows()
-        if not recipients:
-            QMessageBox.information(self, "No recipients", "Please load or add patients before saving automation.")
-            return
-        campaign_type = str(self.holiday_campaign_type.currentData() or "holiday")
-        run_date = self.holiday_birthday_date.date().toPython().isoformat()
-        name = (
-            "Birthday"
-            if campaign_type == "birthday"
-            else self.current_holiday_event() or "Holiday"
-        )
-        confirm = QMessageBox.question(
-            self,
-            "Save campaign automation?",
-            f"Save {len(recipients)} recipient(s) for {name} on {display_date(run_date)}?\n\n"
-            "When Monitoring is running at the daily send time, this campaign will be sent automatically on that date.",
-        )
-        if confirm != QMessageBox.Yes:
-            return
-        campaign = {
-            "id": f"{campaign_type}-{run_date}-{int(time.time())}",
-            "type": campaign_type,
-            "name": name,
-            "run_date": run_date,
-            "enabled": True,
-            "last_sent_date": "",
-            "recipients": recipients,
-        }
-        self.config.holiday_campaigns.append(campaign)
-        try:
-            self.save_holiday_campaigns_to_bridge()
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Failed to save automation", str(exc))
-            return
-        self.append_activity(f"Saved campaign automation: {name} on {display_date(run_date)} ({len(recipients)} recipient(s)).")
-        self.update_monitoring_status()
-        QMessageBox.information(self, "Automation saved", "Campaign automation was saved. Keep Monitoring running for automatic sending.")
-
-    def open_saved_holiday_automations(self) -> None:
-        self.load_templates_from_bridge()
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Saved Holiday & Birthday automations")
-        dialog.resize(820, 520)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(18, 16, 18, 18)
-        title = QLabel("Saved campaign automations")
-        title.setObjectName("HeroTitle")
-        layout.addWidget(title)
-        table = QTableWidget(0, 6)
-        table.setHorizontalHeaderLabels(["Enabled", "Type", "Campaign", "Run date", "Recipients", "Last sent"])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        table.verticalHeader().setVisible(False)
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        table.setSelectionMode(QTableWidget.SingleSelection)
-        table.setAlternatingRowColors(True)
-        layout.addWidget(table, 1)
-
-        def render() -> None:
-            table.setRowCount(len(self.config.holiday_campaigns))
-            for row_index, campaign in enumerate(self.config.holiday_campaigns):
-                values = [
-                    "Yes" if campaign.get("enabled", True) else "No",
-                    str(campaign.get("type") or ""),
-                    str(campaign.get("name") or ""),
-                    display_date(campaign.get("run_date") or ""),
-                    str(len(campaign.get("recipients") or [])),
-                    display_date(campaign.get("last_sent_date") or ""),
-                ]
-                for col, value in enumerate(values):
-                    item = QTableWidgetItem(value)
-                    if col in {0, 4}:
-                        item.setTextAlignment(Qt.AlignCenter)
-                    table.setItem(row_index, col, item)
-
-        def selected_campaign_index() -> int:
-            row = table.currentRow()
-            return row if 0 <= row < len(self.config.holiday_campaigns) else -1
-
-        def toggle_enabled() -> None:
-            row = selected_campaign_index()
-            if row < 0:
-                QMessageBox.information(dialog, "No selection", "Please select one campaign.")
-                return
-            self.config.holiday_campaigns[row]["enabled"] = not bool(self.config.holiday_campaigns[row].get("enabled", True))
-            try:
-                self.save_holiday_campaigns_to_bridge()
-            except Exception as exc:  # noqa: BLE001
-                QMessageBox.critical(dialog, "Failed to save automation", str(exc))
-                return
-            self.update_monitoring_status()
-            render()
-
-        def delete_campaign() -> None:
-            row = selected_campaign_index()
-            if row < 0:
-                QMessageBox.information(dialog, "No selection", "Please select one campaign.")
-                return
-            campaign = self.config.holiday_campaigns[row]
-            confirm = QMessageBox.question(dialog, "Delete automation?", f"Delete automation for {campaign.get('name')}?")
-            if confirm != QMessageBox.Yes:
-                return
-            self.config.holiday_campaigns.pop(row)
-            try:
-                self.save_holiday_campaigns_to_bridge()
-            except Exception as exc:  # noqa: BLE001
-                QMessageBox.critical(dialog, "Failed to delete automation", str(exc))
-                return
-            self.update_monitoring_status()
-            render()
-
-        actions = QHBoxLayout()
-        toggle = QPushButton("Enable / disable")
-        delete = QPushButton("Delete")
-        close = QPushButton("Close")
-        toggle.clicked.connect(toggle_enabled)
-        delete.clicked.connect(delete_campaign)
-        close.clicked.connect(dialog.accept)
-        actions.addStretch()
-        actions.addWidget(toggle)
-        actions.addWidget(delete)
-        actions.addWidget(close)
-        layout.addLayout(actions)
-        render()
-        dialog.exec()
-
     def remove_selected_holiday_patients(self) -> None:
         rows = sorted({index.row() for index in self.holiday_table.selectedIndexes()}, reverse=True)
         if not rows:
@@ -4936,10 +4646,6 @@ class SmsReminderWindow(QMainWindow):
             self.send_holiday_selected_button.setEnabled(enabled)
         if hasattr(self, "send_holiday_all_button"):
             self.send_holiday_all_button.setEnabled(enabled)
-        if hasattr(self, "save_holiday_automation_button"):
-            self.save_holiday_automation_button.setEnabled(enabled)
-        if hasattr(self, "manage_holiday_automation_button"):
-            self.manage_holiday_automation_button.setEnabled(enabled)
 
     def append_activity(self, message: str) -> None:
         entry = f"[{clinic_now().strftime('%H:%M:%S')}] {message}"
@@ -4955,17 +4661,7 @@ class SmsReminderWindow(QMainWindow):
             self.load_recall_patients()
         elif self.active_send_kind == "treatment":
             self.load_treatment_patients()
-        elif self.active_send_kind == "treatment-monitor":
-            if failed:
-                self.treatment_monitor_batch_active = False
-                self.treatment_active_schedule_key = ""
-            else:
-                if self.treatment_active_schedule_key:
-                    self.settings.setValue("last_successful_treatment_schedule_run", self.treatment_active_schedule_key)
-                self.treatment_monitor_batch_active = False
-            self.update_monitoring_status()
-            self.load_treatment_patients()
-        elif self.active_send_kind in {"campaign", "campaign-monitor"}:
+        elif self.active_send_kind == "campaign":
             status_text = "sent" if failed == 0 else "check log"
             visible_patients = self.holiday_visible_patients()
             for row_index, patient in enumerate(visible_patients):
@@ -4979,14 +4675,6 @@ class SmsReminderWindow(QMainWindow):
                 if self.campaign_recipient_key(patient) in self.active_campaign_recipient_keys:
                     patient["_CampaignStatus"] = status_text
             self.active_campaign_recipient_keys = set()
-            if self.active_send_kind == "campaign-monitor":
-                if failed:
-                    self.holiday_monitor_batch_failed = True
-                    self.holiday_active_campaign_id = ""
-                else:
-                    self.mark_active_campaign_sent()
-                if self.holiday_monitor_batch_active:
-                    self.process_next_holiday_campaign()
         elif self.monitor_batch_active:
             self.process_next_monitor_target()
         else:
@@ -5038,46 +4726,8 @@ class SmsReminderWindow(QMainWindow):
             "At that time it sends pending SMS reminders for tomorrow's patients and patients with appointments 8 days away. "
             f"It will only send within {SCHEDULE_SEND_GRACE_MINUTES} minutes after the configured time."
         )
-        if hasattr(self, "monitor_holiday_status_value"):
-            campaigns = self.config.holiday_campaigns or []
-            today_key = clinic_today().isoformat()
-            holiday_count = sum(1 for campaign in campaigns if str(campaign.get("type") or "holiday") == "holiday")
-            birthday_count = sum(1 for campaign in campaigns if str(campaign.get("type") or "") == "birthday")
-            due_count = sum(
-                1
-                for campaign in campaigns
-                if campaign.get("enabled", True)
-                and str(campaign.get("run_date") or "") == today_key
-                and str(campaign.get("last_sent_date") or "") != today_key
-            )
-            self.monitor_holiday_status_value.setText("Running" if self.holiday_monitoring_active else "Stopped")
-            self.monitor_holiday_status_value.setProperty("running", "true" if self.holiday_monitoring_active else "false")
-            self.monitor_holiday_status_value.style().unpolish(self.monitor_holiday_status_value)
-            self.monitor_holiday_status_value.style().polish(self.monitor_holiday_status_value)
-            self.monitor_holiday_saved_value.setText(f"{holiday_count} automation(s)")
-            self.monitor_birthday_saved_value.setText(f"{birthday_count} automation(s)")
-            self.monitor_holiday_due_value.setText(f"{due_count} due today")
-            self.monitor_holiday_note_value.setText(
-                "Holiday and birthday campaigns are saved separately from the Holiday & Birthday tab. "
-                "This panel has its own Start/Stop state and sends saved Holiday/Birthday campaigns only on their configured send date."
-            )
         self.start_monitoring_button.setEnabled(not self.monitoring_active)
         self.stop_monitoring_button.setEnabled(self.monitoring_active)
-        if hasattr(self, "start_holiday_monitoring_button"):
-            self.start_holiday_monitoring_button.setEnabled(not self.holiday_monitoring_active)
-            self.stop_holiday_monitoring_button.setEnabled(self.holiday_monitoring_active)
-        if hasattr(self, "monitor_treatment_status_value"):
-            self.monitor_treatment_status_value.setText("Running" if self.treatment_monitoring_active else "Stopped")
-            self.monitor_treatment_status_value.setProperty("running", "true" if self.treatment_monitoring_active else "false")
-            self.monitor_treatment_status_value.style().unpolish(self.monitor_treatment_status_value)
-            self.monitor_treatment_status_value.style().polish(self.monitor_treatment_status_value)
-            self.monitor_treatment_due_value.setText(f"Pending procedure date is {self.config.treatment_days}+ days before today")
-            self.monitor_treatment_time_value.setText(self.config.scheduled_send_time)
-            self.monitor_treatment_note_value.setText(
-                "Treatment monitoring uses its own Start/Stop state. At the configured send time, it loads unfinished planned procedure codes dated before the miss window and sends treatment templates."
-            )
-            self.start_treatment_monitoring_button.setEnabled(not self.treatment_monitoring_active)
-            self.stop_treatment_monitoring_button.setEnabled(self.treatment_monitoring_active)
 
     def monitor_target_dates(self) -> list[date]:
         today = clinic_qdate()
@@ -5139,54 +4789,6 @@ class SmsReminderWindow(QMainWindow):
         self.append_activity("Monitoring stopped.")
         self.statusBar().showMessage("Monitoring stopped.", 4000)
 
-    def start_holiday_monitoring(self) -> None:
-        self.save_settings(silent=True)
-        if not self.config.bridge_url or not self.config.api_token:
-            QMessageBox.warning(self, "Bridge settings required", "Please set Bridge URL and API token in Settings first.")
-            return
-        self.holiday_monitoring_active = True
-        self.holiday_monitor_batch_active = False
-        self.holiday_monitor_batch_failed = False
-        self.holiday_campaign_queue = []
-        self.holiday_active_campaign_id = ""
-        self.holiday_active_schedule_key = ""
-        self.update_monitoring_status()
-        self.append_activity("Holiday/Birthday monitoring started.")
-        self.statusBar().showMessage("Holiday/Birthday monitoring started.", 4000)
-
-    def stop_holiday_monitoring(self) -> None:
-        self.holiday_monitoring_active = False
-        self.holiday_monitor_batch_active = False
-        self.holiday_monitor_batch_failed = False
-        self.holiday_campaign_queue = []
-        self.holiday_active_campaign_id = ""
-        self.holiday_active_schedule_key = ""
-        self.update_monitoring_status()
-        self.append_activity("Holiday/Birthday monitoring stopped.")
-        self.statusBar().showMessage("Holiday/Birthday monitoring stopped.", 4000)
-
-    def start_treatment_monitoring(self) -> None:
-        self.save_settings(silent=True)
-        if not self.config.bridge_url or not self.config.api_token:
-            QMessageBox.warning(self, "Bridge settings required", "Please set Bridge URL and API token in Settings first.")
-            return
-        self.treatment_monitoring_active = True
-        self.treatment_monitor_batch_active = False
-        self.treatment_active_schedule_key = ""
-        self.update_monitoring_status()
-        self.append_activity("Treatment monitoring started.")
-        self.statusBar().showMessage("Treatment monitoring started.", 4000)
-        if hasattr(self, "treatment_table"):
-            self.load_treatment_patients()
-
-    def stop_treatment_monitoring(self) -> None:
-        self.treatment_monitoring_active = False
-        self.treatment_monitor_batch_active = False
-        self.treatment_active_schedule_key = ""
-        self.update_monitoring_status()
-        self.append_activity("Treatment monitoring stopped.")
-        self.statusBar().showMessage("Treatment monitoring stopped.", 4000)
-
     def check_schedule(self) -> None:
         if not self.monitoring_active:
             return
@@ -5218,117 +4820,6 @@ class SmsReminderWindow(QMainWindow):
         self.active_schedule_key = now_key
         self.start_monitoring_batch()
 
-    def check_holiday_schedule(self) -> None:
-        if not self.holiday_monitoring_active:
-            return
-        if self.holiday_monitor_batch_active:
-            return
-        if self.worker and self.worker.isRunning():
-            return
-        now = clinic_now()
-        target_time = self.config.scheduled_send_time
-        try:
-            schedule_hour, schedule_minute = [int(part) for part in target_time.split(":", 1)]
-        except ValueError:
-            self.append_activity(f"Invalid scheduled send time: {target_time}")
-            return
-        scheduled_today = now.replace(hour=schedule_hour, minute=schedule_minute, second=0, microsecond=0)
-        if now < scheduled_today:
-            return
-        if now > scheduled_today + timedelta(minutes=SCHEDULE_SEND_GRACE_MINUTES):
-            return
-        now_key = f"{now.strftime('%Y-%m-%d')} {target_time}"
-        if self.settings.value("last_successful_holiday_schedule_run", "") == now_key:
-            return
-        if self.holiday_active_schedule_key == now_key:
-            return
-        self.holiday_active_schedule_key = now_key
-        self.start_holiday_monitoring_batch()
-
-    def check_treatment_schedule(self) -> None:
-        if not self.treatment_monitoring_active:
-            return
-        if self.treatment_monitor_batch_active:
-            return
-        if self.worker and self.worker.isRunning():
-            return
-        if self.treatment_load_worker and self.treatment_load_worker.isRunning():
-            return
-        now = clinic_now()
-        target_time = self.config.scheduled_send_time
-        try:
-            schedule_hour, schedule_minute = [int(part) for part in target_time.split(":", 1)]
-        except ValueError:
-            self.append_activity(f"Invalid scheduled send time: {target_time}")
-            return
-        scheduled_today = now.replace(hour=schedule_hour, minute=schedule_minute, second=0, microsecond=0)
-        if now < scheduled_today:
-            return
-        if now > scheduled_today + timedelta(minutes=SCHEDULE_SEND_GRACE_MINUTES):
-            return
-        now_key = f"{now.strftime('%Y-%m-%d')} {target_time}"
-        if self.settings.value("last_successful_treatment_schedule_run", "") == now_key:
-            return
-        if self.treatment_active_schedule_key == now_key:
-            return
-        self.treatment_active_schedule_key = now_key
-        self.start_treatment_monitoring_batch()
-
-    def start_treatment_monitoring_batch(self) -> None:
-        self.treatment_monitor_batch_active = True
-        self.append_activity("Scheduled treatment monitoring started.")
-        try:
-            patients = self.repo.fetch_treatment_candidates(
-                self.config.treatment_days,
-                self.config.treatment_codes,
-                self.config.treatment_statuses,
-            )
-        except Exception as exc:  # noqa: BLE001
-            self.treatment_monitor_batch_active = False
-            self.treatment_active_schedule_key = ""
-            self.append_activity(f"Treatment monitoring load failed: {exc}")
-            return
-        prepared: list[dict[str, Any]] = []
-        missing_phone_count = 0
-        missing_template_count = 0
-        for patient in patients:
-            row = self.normalize_patient_phone_targets(patient)
-            key = treatment_template_key_for_language(self.config, row.get("Language"))
-            row["_TemplateKey"] = key
-            row["_TemplateText"] = self.config.treatment_templates.get(key) or ""
-            row["_TemplateCountry"] = str(self.config.treatment_template_countries.get(key) or infer_template_country(key)).upper()
-            row["_Treatment"] = True
-            if not row.get("PhoneTargets"):
-                missing_phone_count += 1
-                self.append_activity(f"Skipped treatment SMS: {patient_name(row)} has no valid phone number.")
-                continue
-            if not row.get("_TemplateText"):
-                missing_template_count += 1
-                self.append_activity(f"Skipped treatment SMS: {patient_name(row)} has no template.")
-                continue
-            if row.get("_TemplateText") and row.get("PhoneTargets"):
-                prepared.append(row)
-        if missing_phone_count:
-            self.append_activity(f"Treatment monitoring skipped {missing_phone_count} patient(s) with no valid phone number.")
-        if missing_template_count:
-            self.append_activity(f"Treatment monitoring skipped {missing_template_count} patient(s) with no template.")
-        self.treatment_patients = prepared
-        if hasattr(self, "treatment_table"):
-            self.render_treatment_patients()
-        if not prepared:
-            self.treatment_monitor_batch_active = False
-            if self.treatment_active_schedule_key:
-                self.settings.setValue("last_successful_treatment_schedule_run", self.treatment_active_schedule_key)
-            self.append_activity("Treatment monitoring found no pending patients to send.")
-            self.update_monitoring_status()
-            return
-        self.active_send_kind = "treatment-monitor"
-        self.set_send_enabled(False)
-        self.worker = SendWorker(self.config, prepared)
-        self.worker.progress.connect(self.append_activity)
-        self.worker.finished.connect(self.send_finished)
-        self.worker.start()
-
     def start_monitoring_batch(self) -> None:
         self.monitor_send_queue = self.monitor_target_dates()
         self.monitor_batch_active = True
@@ -5339,115 +4830,6 @@ class SmsReminderWindow(QMainWindow):
             + "."
         )
         self.process_next_monitor_target()
-
-    def start_holiday_monitoring_batch(self) -> None:
-        self.holiday_campaign_queue = self.due_holiday_campaigns()
-        self.holiday_monitor_batch_active = True
-        self.holiday_monitor_batch_failed = False
-        if self.holiday_campaign_queue:
-            self.append_activity(f"Queued {len(self.holiday_campaign_queue)} Holiday/Birthday campaign automation(s).")
-        else:
-            self.append_activity("Holiday/Birthday monitoring found no campaign due today.")
-        self.process_next_holiday_campaign()
-
-    def due_holiday_campaigns(self) -> list[dict[str, Any]]:
-        self.load_templates_from_bridge()
-        today_key = clinic_today().isoformat()
-        due: list[dict[str, Any]] = []
-        for campaign in self.config.holiday_campaigns:
-            if not campaign.get("enabled", True):
-                continue
-            if str(campaign.get("run_date") or "") != today_key:
-                continue
-            if str(campaign.get("last_sent_date") or "") == today_key:
-                continue
-            prepared_recipients = [self.prepare_campaign_recipient(campaign, patient) for patient in campaign.get("recipients") or []]
-            missing_phone = [patient for patient in prepared_recipients if not patient.get("PhoneTargets")]
-            missing_template = [patient for patient in prepared_recipients if patient.get("PhoneTargets") and not patient.get("_TemplateText")]
-            for patient in missing_phone:
-                self.append_activity(f"Skipped campaign SMS: {campaign.get('name')} / {patient_name(patient)} has no valid phone number.")
-            for patient in missing_template:
-                self.append_activity(f"Skipped campaign SMS: {campaign.get('name')} / {patient_name(patient)} has no template.")
-            if missing_phone:
-                self.append_activity(f"Campaign {campaign.get('name')} skipped {len(missing_phone)} recipient(s) with no valid phone number.")
-            if missing_template:
-                self.append_activity(f"Campaign {campaign.get('name')} skipped {len(missing_template)} recipient(s) with no template.")
-            recipients = [patient for patient in prepared_recipients if patient.get("_TemplateText") and patient.get("PhoneTargets")]
-            if not recipients:
-                self.append_activity(f"Skipped campaign {campaign.get('name')}: no valid recipients/templates.")
-                continue
-            due_campaign = dict(campaign)
-            due_campaign["recipients"] = recipients
-            due.append(due_campaign)
-        return due
-
-    def prepare_campaign_recipient(self, campaign: dict[str, Any], patient: dict[str, Any]) -> dict[str, Any]:
-        row = dict(patient)
-        campaign_type = str(campaign.get("type") or row.get("_CampaignType") or "holiday")
-        key = str(row.get("_TemplateKey") or holiday_template_key_for_language(self.config, row.get("Language"), campaign_type))
-        row["_CampaignType"] = campaign_type
-        row["_CampaignName"] = str(campaign.get("name") or row.get("_CampaignName") or "")
-        row["_HolidayName"] = row["_CampaignName"]
-        row["_TemplateKey"] = key
-        row["_TemplateText"] = self.config.holiday_templates.get(key, "")
-        row["_TemplateCountry"] = str(self.config.holiday_template_countries.get(key) or infer_template_country(key)).upper()
-        targets = [
-            {"source": target.get("source") or "Phone", "phone": target.get("phone", ""), "status": ""}
-            for target in row.get("PhoneTargets", [])
-            if digits_only(target.get("phone", ""))
-        ]
-        if not targets and digits_only(row.get("Phone", "")):
-            targets = [{"source": "Phone", "phone": format_us_phone(row.get("Phone", "")), "status": ""}]
-        row["PhoneTargets"] = targets
-        row["Phone"] = self.phone_targets_display(targets)
-        return row
-
-    def mark_active_campaign_sent(self) -> None:
-        if not self.holiday_active_campaign_id:
-            return
-        today_key = clinic_today().isoformat()
-        for campaign in self.config.holiday_campaigns:
-            if str(campaign.get("id") or "") == self.holiday_active_campaign_id:
-                campaign["last_sent_date"] = today_key
-                break
-        try:
-            self.save_holiday_campaigns_to_bridge()
-        except Exception as exc:  # noqa: BLE001
-            self.holiday_monitor_batch_failed = True
-            self.append_activity(f"Campaign sent but failed to update saved automation: {exc}")
-        self.holiday_active_campaign_id = ""
-
-    def process_next_holiday_campaign(self) -> None:
-        if not self.holiday_monitor_batch_active:
-            return
-        if self.holiday_campaign_queue:
-            campaign = self.holiday_campaign_queue.pop(0)
-            self.holiday_active_campaign_id = str(campaign.get("id") or "")
-            self.active_send_kind = "campaign-monitor"
-            self.active_campaign_recipient_keys = {
-                self.campaign_recipient_key(patient)
-                for patient in campaign.get("recipients") or []
-            }
-            self.set_send_enabled(False)
-            self.append_activity(
-                f"Sending campaign automation: {campaign.get('name')} ({len(campaign.get('recipients') or [])} recipient(s))."
-            )
-            self.worker = CampaignSendWorker(self.config, campaign.get("recipients") or [])
-            self.worker.progress.connect(self.append_activity)
-            self.worker.finished.connect(self.send_finished)
-            self.worker.start()
-            return
-        self.holiday_monitor_batch_active = False
-        if self.holiday_monitor_batch_failed:
-            self.append_activity("Holiday/Birthday monitoring finished with errors. It will retry on the next scheduler check.")
-            self.statusBar().showMessage("Holiday/Birthday monitoring finished with errors.", 5000)
-            self.holiday_active_schedule_key = ""
-        else:
-            if self.holiday_active_schedule_key:
-                self.settings.setValue("last_successful_holiday_schedule_run", self.holiday_active_schedule_key)
-            self.append_activity("Holiday/Birthday monitoring finished.")
-            self.statusBar().showMessage("Holiday/Birthday monitoring finished.", 5000)
-        self.update_monitoring_status()
 
     def process_next_monitor_target(self) -> None:
         if not self.monitor_batch_active:
@@ -5791,10 +5173,6 @@ def main() -> int:
     window.showMaximized()
     if "--start-monitoring" in sys.argv or "--start-reminder-monitoring" in sys.argv:
         QTimer.singleShot(1500, window.start_monitoring)
-    if "--start-monitoring" in sys.argv or "--start-holiday-monitoring" in sys.argv:
-        QTimer.singleShot(2200, window.start_holiday_monitoring)
-    if "--start-monitoring" in sys.argv or "--start-treatment-monitoring" in sys.argv:
-        QTimer.singleShot(2900, window.start_treatment_monitoring)
     return app.exec()
 
 

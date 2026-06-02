@@ -18,8 +18,6 @@ set "THIS_FILE=%~f0"
 set "AUTOLOGON_EXE=%~dp0Autologon64.exe"
 set "SETUP_SCRIPT=%~dp0setup-scheduler-tasks.ps1"
 set "START_REMINDER_FLAG=%~dp0scheduler-start-reminder.flag"
-set "START_HOLIDAY_FLAG=%~dp0scheduler-start-holiday.flag"
-set "START_TREATMENT_FLAG=%~dp0scheduler-start-treatment.flag"
 
 echo Creating LUK Dental SMS scheduled tasks...
 echo.
@@ -67,18 +65,8 @@ if /i "%START_REMINDER_CHOICE%"=="n" (
 ) else (
   > "%START_REMINDER_FLAG%" echo 1
 )
-set /p "START_HOLIDAY_CHOICE=Auto start Holiday/Birthday monitoring when the tool opens? [Y/n]: "
-if /i "%START_HOLIDAY_CHOICE%"=="n" (
-  > "%START_HOLIDAY_FLAG%" echo 0
-) else (
-  > "%START_HOLIDAY_FLAG%" echo 1
-)
-set /p "START_TREATMENT_CHOICE=Auto start Treatment monitoring when the tool opens? [Y/n]: "
-if /i "%START_TREATMENT_CHOICE%"=="n" (
-  > "%START_TREATMENT_FLAG%" echo 0
-) else (
-  > "%START_TREATMENT_FLAG%" echo 1
-)
+del "%~dp0scheduler-start-holiday.flag" >nul 2>nul
+del "%~dp0scheduler-start-treatment.flag" >nul 2>nul
 
 rem Remove old tasks before recreating them.
 schtasks /Delete /TN "%TASK_PREFIX% - Screen Off" /F >nul 2>nul
@@ -143,25 +131,11 @@ if not exist "sms_config.json" (
 echo [%date% %time%] Starting SMS reminder app. >> "%RUN_LOG%"
 set "MONITORING_ARGS="
 set "AUTO_START_REMINDER=1"
-set "AUTO_START_HOLIDAY=1"
-set "AUTO_START_TREATMENT=1"
 if exist "%START_REMINDER_FLAG%" (
   set /p "AUTO_START_REMINDER="<"%START_REMINDER_FLAG%"
 )
-if exist "%START_HOLIDAY_FLAG%" (
-  set /p "AUTO_START_HOLIDAY="<"%START_HOLIDAY_FLAG%"
-)
-if exist "%START_TREATMENT_FLAG%" (
-  set /p "AUTO_START_TREATMENT="<"%START_TREATMENT_FLAG%"
-)
 if not "%AUTO_START_REMINDER%"=="0" (
   set "MONITORING_ARGS=%MONITORING_ARGS% --start-reminder-monitoring"
-)
-if not "%AUTO_START_HOLIDAY%"=="0" (
-  set "MONITORING_ARGS=%MONITORING_ARGS% --start-holiday-monitoring"
-)
-if not "%AUTO_START_TREATMENT%"=="0" (
-  set "MONITORING_ARGS=%MONITORING_ARGS% --start-treatment-monitoring"
 )
 echo [%date% %time%] Monitoring args:%MONITORING_ARGS% >> "%RUN_LOG%"
 python sms_reminder_app.py %MONITORING_ARGS% >> "%RUN_LOG%" 2>&1

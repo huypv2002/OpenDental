@@ -70,7 +70,9 @@ The dashboard also has a `Template` column so a staff member can choose the corr
 
 The `Review Google` tab searches patients and fills Phone Link with a review request message. It does not auto-send SMS and does not run under monitoring.
 
-The `Holiday & Birthday` tab uses its own `holiday_birthday` template category in `luk_sms_templates`. Staff can load birthday patients for a selected date or search/load patients for a holiday promotion, then manually add, edit, or remove recipients before sending. The holiday event list can also be added, edited, and deleted from the tab; it is stored in the bridge settings table so workstations share the same list. Click `Save automation` to store the current recipient list and send date in the bridge database. When Monitoring is running at the daily send time, the app sends any saved Holiday & Birthday automation due for that date after the regular appointment reminder queue.
+The `Holiday & Birthday` tab uses its own `holiday_birthday` template category in `luk_sms_templates`. Staff can load birthday patients for a selected date or search/load patients for a holiday promotion, then manually add, edit, or remove recipients before sending. This tab is manual only and does not run under Monitoring.
+
+The `Treatment` tab is also manual only. Staff load the matching patients, review the list, choose the template, and send selected messages from the tab.
 
 ## SMS Template Placeholders
 
