@@ -26,12 +26,18 @@ import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
 import {
   ensurePatientPortalTables,
+  linkPatientAccount,
   listPatientAccounts,
   loginPatientAccount,
+  parsePatientAccountLinkBody,
+  parsePatientAccountMembershipBody,
+  parsePatientAccountPasswordBody,
   parsePatientAccountStatusBody,
   parsePatientLoginBody,
   parsePatientRegisterBody,
   registerPatientAccount,
+  updatePatientAccountMembership,
+  updatePatientAccountPassword,
   updatePatientAccountStatus
 } from './patientPortal.js';
 import { exportAppointmentReport, parseAppointmentReportBody } from './reports.js';
@@ -240,6 +246,36 @@ app.post('/api/patient-portal/accounts/status', requireApiToken, async (req, res
   try {
     const body = parsePatientAccountStatusBody(req.body ?? {});
     const data = await updatePatientAccountStatus(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/accounts/membership', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientAccountMembershipBody(req.body ?? {});
+    const data = await updatePatientAccountMembership(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/accounts/link', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientAccountLinkBody(req.body ?? {});
+    const data = await linkPatientAccount(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/accounts/password', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientAccountPasswordBody(req.body ?? {});
+    const data = await updatePatientAccountPassword(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
