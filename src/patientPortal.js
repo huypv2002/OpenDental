@@ -65,6 +65,32 @@ function publicAccount(row) {
   };
 }
 
+function publicMembershipPlan(row) {
+  return {
+    planId: row.PlanId,
+    planKey: row.PlanKey || '',
+    badge: row.Badge || '',
+    title: row.Title || '',
+    priceLabel: row.PriceLabel || '',
+    content: row.Content || '',
+    checkoutUrl: row.CheckoutUrl || '',
+    cost: Number(row.Cost || 0),
+    isFeatured: Boolean(row.IsFeatured),
+    isActive: Boolean(row.IsActive),
+    displayOrder: Number(row.DisplayOrder || 0),
+    createdAt: row.CreatedAt,
+    updatedAt: row.UpdatedAt
+  };
+}
+
+function normalizePlanKey(value, fallback = '') {
+  const source = String(value || fallback || '').trim().toLowerCase();
+  return source
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 100) || `plan-${Date.now()}`;
+}
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('base64url');
   const hash = crypto.pbkdf2Sync(password, salt, PASSWORD_ITERATIONS, PASSWORD_KEY_LENGTH, PASSWORD_DIGEST).toString('base64url');
@@ -108,6 +134,66 @@ async function ensureColumn(columns, tableName, columnName, definition) {
   columns.add(columnName);
 }
 
+async function ensureMembershipPlanDefaults() {
+  const [rows] = await pool.execute('SELECT COUNT(*) AS total FROM luk_membership_plans');
+  if (Number(rows[0]?.total || 0) > 0) {
+    return;
+  }
+
+  const defaults = [
+    {
+      planKey: 'annual',
+      badge: 'Annual',
+      title: 'Annual Membership Plan',
+      priceLabel: '$140/year',
+      cost: 140,
+      checkoutUrl: '3YHUJ4ZLFDM5J7BM',
+      displayOrder: 10,
+      content: '<p><strong>Annual Membership Plan includes:</strong></p><ul><li>1 Dental Cleaning Per Year</li><li>Unlimited Diagnostic X-Rays</li><li>Unlimited Consultations</li></ul>'
+    },
+    {
+      planKey: 'gold-annual',
+      badge: 'Gold',
+      title: 'Gold Annual Membership Plan',
+      priceLabel: '$190/year',
+      cost: 190,
+      checkoutUrl: 'TGD4NDP3MJLQ6MM',
+      displayOrder: 20,
+      isFeatured: 1,
+      content: '<p><strong>Annual Membership Plan includes:</strong></p><ul><li>2 Dental Cleanings Per Year</li><li>Unlimited Diagnostic X-Rays</li><li>Unlimited Consultations</li></ul>'
+    },
+    {
+      planKey: 'vip-annual',
+      badge: 'VIP',
+      title: 'VIP Annual Membership Plan',
+      priceLabel: '$240/year',
+      cost: 240,
+      checkoutUrl: 'TGD4NDP3MJLQ6MM',
+      displayOrder: 30,
+      content: '<p><strong>Annual Membership Plan includes:</strong></p><ul><li>3 Dental Cleanings Per Year</li><li>Unlimited Diagnostic X-Rays</li><li>Unlimited Consultations</li></ul>'
+    }
+  ];
+
+  for (const plan of defaults) {
+    await pool.execute(
+      `INSERT INTO luk_membership_plans
+        (PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, Cost, IsFeatured, IsActive, DisplayOrder)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      [
+        plan.planKey,
+        plan.badge,
+        plan.title,
+        plan.priceLabel,
+        plan.content,
+        plan.checkoutUrl,
+        plan.cost,
+        plan.isFeatured ? 1 : 0,
+        plan.displayOrder
+      ]
+    );
+  }
+}
+
 export async function ensurePatientPortalTables() {
   await pool.execute(
     `CREATE TABLE IF NOT EXISTS luk_patient_accounts (
@@ -146,6 +232,41 @@ export async function ensurePatientPortalTables() {
   await ensureColumn(columns, 'luk_patient_accounts', 'CreatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn(columns, 'luk_patient_accounts', 'UpdatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
   await ensureColumn(columns, 'luk_patient_accounts', 'LastLoginAt', 'DATETIME NULL');
+
+  await pool.execute(
+    `CREATE TABLE IF NOT EXISTS luk_membership_plans (
+      PlanId BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      PlanKey VARCHAR(100) NOT NULL,
+      Badge VARCHAR(100) NOT NULL DEFAULT '',
+      Title VARCHAR(190) NOT NULL DEFAULT '',
+      PriceLabel VARCHAR(100) NOT NULL DEFAULT '',
+      Content TEXT NULL,
+      CheckoutUrl VARCHAR(500) NOT NULL DEFAULT '',
+      Cost DECIMAL(10,2) NOT NULL DEFAULT 0,
+      IsFeatured TINYINT(1) NOT NULL DEFAULT 0,
+      IsActive TINYINT(1) NOT NULL DEFAULT 1,
+      DisplayOrder INT NOT NULL DEFAULT 0,
+      CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_luk_membership_plans_key (PlanKey),
+      KEY idx_luk_membership_plans_active_order (IsActive, DisplayOrder)
+    )`
+  );
+
+  const planColumns = await tableColumnNames('luk_membership_plans');
+  await ensureColumn(planColumns, 'luk_membership_plans', 'PlanKey', "VARCHAR(100) NOT NULL DEFAULT ''");
+  await ensureColumn(planColumns, 'luk_membership_plans', 'Badge', "VARCHAR(100) NOT NULL DEFAULT ''");
+  await ensureColumn(planColumns, 'luk_membership_plans', 'Title', "VARCHAR(190) NOT NULL DEFAULT ''");
+  await ensureColumn(planColumns, 'luk_membership_plans', 'PriceLabel', "VARCHAR(100) NOT NULL DEFAULT ''");
+  await ensureColumn(planColumns, 'luk_membership_plans', 'Content', 'TEXT NULL');
+  await ensureColumn(planColumns, 'luk_membership_plans', 'CheckoutUrl', "VARCHAR(500) NOT NULL DEFAULT ''");
+  await ensureColumn(planColumns, 'luk_membership_plans', 'Cost', 'DECIMAL(10,2) NOT NULL DEFAULT 0');
+  await ensureColumn(planColumns, 'luk_membership_plans', 'IsFeatured', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn(planColumns, 'luk_membership_plans', 'IsActive', 'TINYINT(1) NOT NULL DEFAULT 1');
+  await ensureColumn(planColumns, 'luk_membership_plans', 'DisplayOrder', 'INT NOT NULL DEFAULT 0');
+  await ensureColumn(planColumns, 'luk_membership_plans', 'CreatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
+  await ensureColumn(planColumns, 'luk_membership_plans', 'UpdatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+  await ensureMembershipPlanDefaults();
 }
 
 export function parsePatientRegisterBody(body) {
@@ -196,6 +317,41 @@ export function parsePatientAccountMembershipBody(body) {
     throw badRequest('accountId is required.');
   }
   return { accountId, membershipPlan };
+}
+
+export function parseMembershipPlanBody(body) {
+  const planId = Number.parseInt(body.planId ?? body.PlanId ?? '', 10) || 0;
+  const title = requiredString(body, 'title', 'Plan title').slice(0, 190);
+  const planKey = normalizePlanKey(optionalString(body, 'planKey'), title);
+  const badge = optionalString(body, 'badge').slice(0, 100);
+  const priceLabel = optionalString(body, 'priceLabel').slice(0, 100);
+  const content = optionalString(body, 'content');
+  const checkoutUrl = optionalString(body, 'checkoutUrl').slice(0, 500);
+  const cost = Number.parseFloat(body.cost ?? '0') || 0;
+  const displayOrder = Number.parseInt(body.displayOrder ?? '0', 10) || 0;
+  const isFeatured = ['1', 'true', 'yes', 'on'].includes(String(body.isFeatured ?? '').toLowerCase()) ? 1 : 0;
+  const isActive = ['0', 'false', 'no', 'off'].includes(String(body.isActive ?? '').toLowerCase()) ? 0 : 1;
+  return {
+    planId,
+    planKey,
+    badge,
+    title,
+    priceLabel,
+    content,
+    checkoutUrl,
+    cost,
+    displayOrder,
+    isFeatured,
+    isActive
+  };
+}
+
+export function parseMembershipPlanDeleteBody(body) {
+  const planId = Number.parseInt(body.planId ?? body.PlanId ?? '', 10);
+  if (!Number.isInteger(planId) || planId <= 0) {
+    throw badRequest('planId is required.');
+  }
+  return { planId };
 }
 
 export function parsePatientAccountPasswordBody(body) {
@@ -424,6 +580,96 @@ export async function listPatientAccounts(query = {}) {
   return {
     accounts: rows.map(publicAccount)
   };
+}
+
+export async function listMembershipPlans(query = {}) {
+  await ensurePatientPortalTables();
+  const includeInactive = ['1', 'true', 'yes'].includes(String(query.includeInactive ?? '').toLowerCase());
+  const where = includeInactive ? '' : 'WHERE IsActive = 1';
+  const [rows] = await pool.execute(
+    `SELECT PlanId, PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, Cost, IsFeatured, IsActive, DisplayOrder, CreatedAt, UpdatedAt
+     FROM luk_membership_plans
+     ${where}
+     ORDER BY DisplayOrder ASC, PlanId ASC`
+  );
+  return {
+    plans: rows.map(publicMembershipPlan)
+  };
+}
+
+export async function saveMembershipPlan(input) {
+  await ensurePatientPortalTables();
+  if (input.planId > 0) {
+    const [result] = await pool.execute(
+      `UPDATE luk_membership_plans
+       SET PlanKey = ?, Badge = ?, Title = ?, PriceLabel = ?, Content = ?, CheckoutUrl = ?, Cost = ?,
+           IsFeatured = ?, IsActive = ?, DisplayOrder = ?
+       WHERE PlanId = ?`,
+      [
+        input.planKey,
+        input.badge,
+        input.title,
+        input.priceLabel,
+        input.content,
+        input.checkoutUrl,
+        input.cost,
+        input.isFeatured,
+        input.isActive,
+        input.displayOrder,
+        input.planId
+      ]
+    );
+    if (result.affectedRows < 1) {
+      const error = new Error('Membership plan was not found.');
+      error.status = 404;
+      throw error;
+    }
+  } else {
+    const [result] = await pool.execute(
+      `INSERT INTO luk_membership_plans
+        (PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, Cost, IsFeatured, IsActive, DisplayOrder)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.planKey,
+        input.badge,
+        input.title,
+        input.priceLabel,
+        input.content,
+        input.checkoutUrl,
+        input.cost,
+        input.isFeatured,
+        input.isActive,
+        input.displayOrder
+      ]
+    );
+    input.planId = result.insertId;
+  }
+
+  const [rows] = await pool.execute(
+    `SELECT PlanId, PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, Cost, IsFeatured, IsActive, DisplayOrder, CreatedAt, UpdatedAt
+     FROM luk_membership_plans
+     WHERE PlanId = ?
+     LIMIT 1`,
+    [input.planId]
+  );
+  return {
+    plan: publicMembershipPlan(rows[0])
+  };
+}
+
+export async function deleteMembershipPlan(input) {
+  await ensurePatientPortalTables();
+  const [result] = await pool.execute(
+    `DELETE FROM luk_membership_plans
+     WHERE PlanId = ?`,
+    [input.planId]
+  );
+  if (result.affectedRows < 1) {
+    const error = new Error('Membership plan was not found.');
+    error.status = 404;
+    throw error;
+  }
+  return { ok: true };
 }
 
 export async function updatePatientAccountStatus(input) {

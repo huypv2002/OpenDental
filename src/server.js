@@ -25,10 +25,14 @@ import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
 import {
+  deleteMembershipPlan,
   ensurePatientPortalTables,
   linkPatientAccount,
+  listMembershipPlans,
   listPatientAccounts,
   loginPatientAccount,
+  parseMembershipPlanBody,
+  parseMembershipPlanDeleteBody,
   parsePatientAccountLinkBody,
   parsePatientAccountMembershipBody,
   parsePatientAccountPasswordBody,
@@ -36,6 +40,7 @@ import {
   parsePatientLoginBody,
   parsePatientRegisterBody,
   registerPatientAccount,
+  saveMembershipPlan,
   updatePatientAccountMembership,
   updatePatientAccountPassword,
   updatePatientAccountStatus
@@ -236,6 +241,35 @@ app.post('/api/patient-portal/login', requireApiToken, async (req, res, next) =>
 app.get('/api/patient-portal/accounts', requireApiToken, async (req, res, next) => {
   try {
     const data = await listPatientAccounts(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/patient-portal/membership-plans', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await listMembershipPlans(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/membership-plans', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parseMembershipPlanBody(req.body ?? {});
+    const data = await saveMembershipPlan(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/membership-plans/delete', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parseMembershipPlanDeleteBody(req.body ?? {});
+    const data = await deleteMembershipPlan(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
