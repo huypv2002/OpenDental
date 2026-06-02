@@ -84,6 +84,19 @@ function verifyPassword(password, storedHash) {
   return crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
 }
 
+async function tableColumnNames(tableName) {
+  const [rows] = await pool.execute(`SHOW COLUMNS FROM ${tableName}`);
+  return new Set(rows.map((row) => row.Field));
+}
+
+async function ensureColumn(columns, tableName, columnName, definition) {
+  if (columns.has(columnName)) {
+    return;
+  }
+  await pool.execute(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  columns.add(columnName);
+}
+
 export async function ensurePatientPortalTables() {
   await pool.execute(
     `CREATE TABLE IF NOT EXISTS luk_patient_accounts (
@@ -106,6 +119,20 @@ export async function ensurePatientPortalTables() {
       KEY idx_luk_patient_accounts_status (Status)
     )`
   );
+
+  const columns = await tableColumnNames('luk_patient_accounts');
+  await ensureColumn(columns, 'luk_patient_accounts', 'PatNum', 'BIGINT NULL');
+  await ensureColumn(columns, 'luk_patient_accounts', 'Email', "VARCHAR(190) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'PasswordHash', "VARCHAR(255) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'FirstName', "VARCHAR(100) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'LastName', "VARCHAR(100) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'Phone', "VARCHAR(30) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'Birthdate', "DATE NOT NULL DEFAULT '0001-01-01'");
+  await ensureColumn(columns, 'luk_patient_accounts', 'DriverLicense', "VARCHAR(190) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'Status', "ENUM('active','inactive','pending') NOT NULL DEFAULT 'active'");
+  await ensureColumn(columns, 'luk_patient_accounts', 'CreatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
+  await ensureColumn(columns, 'luk_patient_accounts', 'UpdatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+  await ensureColumn(columns, 'luk_patient_accounts', 'LastLoginAt', 'DATETIME NULL');
 }
 
 export function parsePatientRegisterBody(body) {
