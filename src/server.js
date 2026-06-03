@@ -28,6 +28,7 @@ import {
   deleteMembershipPlan,
   ensurePatientPortalTables,
   createMembershipCheckoutSession,
+  getPatientAccount,
   handleStripeWebhook,
   linkPatientAccount,
   listMembershipPlans,
@@ -252,6 +253,15 @@ app.post('/api/patient-portal/login', requireApiToken, async (req, res, next) =>
 app.get('/api/patient-portal/accounts', requireApiToken, async (req, res, next) => {
   try {
     const data = await listPatientAccounts(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/patient-portal/accounts/:accountId', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getPatientAccount({ accountId: req.params.accountId });
     res.json({ ok: true, data });
   } catch (error) {
     next(error);

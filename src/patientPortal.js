@@ -12,7 +12,7 @@ let stripeClient = null;
 const ACCOUNT_PUBLIC_COLUMNS = `AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense,
        MembershipPlan, StripeCustomerId, StripeSubscriptionId, MembershipPaymentStatus,
        MembershipCurrentPeriodEnd, MembershipActivatedAt, Status, CreatedAt, UpdatedAt, LastLoginAt`;
-const PLAN_PUBLIC_COLUMNS = `PlanId, PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, StripePriceId,
+const PLAN_PUBLIC_COLUMNS = `PlanId, PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, StripeProductId, StripePriceId,
        Cost, IsFeatured, IsActive, DisplayOrder, CreatedAt, UpdatedAt`;
 
 function badRequest(message) {
@@ -86,6 +86,7 @@ function publicMembershipPlan(row) {
     priceLabel: row.PriceLabel || '',
     content: row.Content || '',
     checkoutUrl: row.CheckoutUrl || '',
+    stripeProductId: row.StripeProductId || '',
     stripePriceId: row.StripePriceId || '',
     cost: Number(row.Cost || 0),
     isFeatured: Boolean(row.IsFeatured),
@@ -121,6 +122,31 @@ function normalizeCheckoutUrl(value, label) {
   } catch (_error) {
     throw badRequest(`${label} must be a valid website URL.`);
   }
+}
+
+function stripeObjectId(value) {
+  if (!value) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  return value.id ? String(value.id) : '';
+}
+
+function plainTextFromHtml(value) {
+  return String(value || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+}
+
+function stripeAmountCents(cost) {
+  const amount = Math.round(Number(cost || 0) * 100);
+  return Number.isFinite(amount) && amount > 0 ? amount : 0;
 }
 
 function mysqlDateTimeFromEpoch(value) {
@@ -306,6 +332,7 @@ export async function ensurePatientPortalTables() {
       PriceLabel VARCHAR(100) NOT NULL DEFAULT '',
       Content TEXT NULL,
       CheckoutUrl VARCHAR(500) NOT NULL DEFAULT '',
+      StripeProductId VARCHAR(190) NOT NULL DEFAULT '',
       StripePriceId VARCHAR(190) NOT NULL DEFAULT '',
       Cost DECIMAL(10,2) NOT NULL DEFAULT 0,
       IsFeatured TINYINT(1) NOT NULL DEFAULT 0,
@@ -325,6 +352,7 @@ export async function ensurePatientPortalTables() {
   await ensureColumn(planColumns, 'luk_membership_plans', 'PriceLabel', "VARCHAR(100) NOT NULL DEFAULT ''");
   await ensureColumn(planColumns, 'luk_membership_plans', 'Content', 'TEXT NULL');
   await ensureColumn(planColumns, 'luk_membership_plans', 'CheckoutUrl', "VARCHAR(500) NOT NULL DEFAULT ''");
+  await ensureColumn(planColumns, 'luk_membership_plans', 'StripeProductId', "VARCHAR(190) NOT NULL DEFAULT ''");
   await ensureColumn(planColumns, 'luk_membership_plans', 'StripePriceId', "VARCHAR(190) NOT NULL DEFAULT ''");
   await ensureColumn(planColumns, 'luk_membership_plans', 'Cost', 'DECIMAL(10,2) NOT NULL DEFAULT 0');
   await ensureColumn(planColumns, 'luk_membership_plans', 'IsFeatured', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -393,6 +421,7 @@ export function parseMembershipPlanBody(body) {
   const priceLabel = optionalString(body, 'priceLabel').slice(0, 100);
   const content = optionalString(body, 'content');
   const checkoutUrl = optionalString(body, 'checkoutUrl').slice(0, 500);
+  const stripeProductId = optionalString(body, 'stripeProductId').slice(0, 190);
   const stripePriceId = optionalString(body, 'stripePriceId').slice(0, 190);
   const cost = Number.parseFloat(body.cost ?? '0') || 0;
   const displayOrder = Number.parseInt(body.displayOrder ?? '0', 10) || 0;
@@ -406,6 +435,7 @@ export function parseMembershipPlanBody(body) {
     priceLabel,
     content,
     checkoutUrl,
+    stripeProductId,
     stripePriceId,
     cost,
     displayOrder,
@@ -670,6 +700,29 @@ export async function listPatientAccounts(query = {}) {
   };
 }
 
+export async function getPatientAccount(input = {}) {
+  await ensurePatientPortalTables();
+  const accountId = Number.parseInt(input.accountId ?? input.AccountId ?? '', 10);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    throw badRequest('accountId is required.');
+  }
+  const [rows] = await pool.execute(
+    `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
+     FROM luk_patient_accounts
+     WHERE AccountId = ?
+     LIMIT 1`,
+    [accountId]
+  );
+  if (!rows.length) {
+    const error = new Error('Patient account was not found.');
+    error.status = 404;
+    throw error;
+  }
+  return {
+    account: publicAccount(rows[0])
+  };
+}
+
 export async function listMembershipPlans(query = {}) {
   await ensurePatientPortalTables();
   const includeInactive = ['1', 'true', 'yes'].includes(String(query.includeInactive ?? '').toLowerCase());
@@ -687,10 +740,26 @@ export async function listMembershipPlans(query = {}) {
 
 export async function saveMembershipPlan(input) {
   await ensurePatientPortalTables();
+  let existingPlan = null;
+  if (input.planId > 0) {
+    const [existingRows] = await pool.execute(
+      `SELECT StripeProductId, StripePriceId
+       FROM luk_membership_plans
+       WHERE PlanId = ?
+       LIMIT 1`,
+      [input.planId]
+    );
+    existingPlan = existingRows[0] || null;
+    if (existingPlan) {
+      input.stripeProductId = input.stripeProductId || existingPlan.StripeProductId || '';
+      input.stripePriceId = input.stripePriceId || existingPlan.StripePriceId || '';
+    }
+  }
+
   if (input.planId > 0) {
     const [result] = await pool.execute(
       `UPDATE luk_membership_plans
-       SET PlanKey = ?, Badge = ?, Title = ?, PriceLabel = ?, Content = ?, CheckoutUrl = ?, StripePriceId = ?, Cost = ?,
+       SET PlanKey = ?, Badge = ?, Title = ?, PriceLabel = ?, Content = ?, CheckoutUrl = ?, StripeProductId = ?, StripePriceId = ?, Cost = ?,
            IsFeatured = ?, IsActive = ?, DisplayOrder = ?
        WHERE PlanId = ?`,
       [
@@ -700,6 +769,7 @@ export async function saveMembershipPlan(input) {
         input.priceLabel,
         input.content,
         input.checkoutUrl,
+        input.stripeProductId,
         input.stripePriceId,
         input.cost,
         input.isFeatured,
@@ -716,8 +786,8 @@ export async function saveMembershipPlan(input) {
   } else {
     const [result] = await pool.execute(
       `INSERT INTO luk_membership_plans
-        (PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, StripePriceId, Cost, IsFeatured, IsActive, DisplayOrder)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, StripeProductId, StripePriceId, Cost, IsFeatured, IsActive, DisplayOrder)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.planKey,
         input.badge,
@@ -725,6 +795,7 @@ export async function saveMembershipPlan(input) {
         input.priceLabel,
         input.content,
         input.checkoutUrl,
+        input.stripeProductId,
         input.stripePriceId,
         input.cost,
         input.isFeatured,
@@ -735,6 +806,25 @@ export async function saveMembershipPlan(input) {
     input.planId = result.insertId;
   }
 
+  const [savedRows] = await pool.execute(
+    `SELECT ${PLAN_PUBLIC_COLUMNS}
+     FROM luk_membership_plans
+     WHERE PlanId = ?
+     LIMIT 1`,
+    [input.planId]
+  );
+  let stripeSync = { ok: false, message: 'Stripe sync was not attempted.' };
+  if (savedRows[0]) {
+    try {
+      stripeSync = await syncMembershipPlanWithStripe(savedRows[0]);
+    } catch (error) {
+      stripeSync = {
+        ok: false,
+        message: error.message || 'Stripe sync failed.'
+      };
+    }
+  }
+
   const [rows] = await pool.execute(
     `SELECT ${PLAN_PUBLIC_COLUMNS}
      FROM luk_membership_plans
@@ -743,7 +833,112 @@ export async function saveMembershipPlan(input) {
     [input.planId]
   );
   return {
-    plan: publicMembershipPlan(rows[0])
+    plan: publicMembershipPlan(rows[0]),
+    stripeSync
+  };
+}
+
+async function syncMembershipPlanWithStripe(row) {
+  if (!config.stripe.secretKey) {
+    return {
+      ok: false,
+      message: 'Stripe secret key is not configured. Save again after adding STRIPE_SECRET_KEY to bridge .env.'
+    };
+  }
+
+  const amount = stripeAmountCents(row.Cost);
+  if (!amount) {
+    return {
+      ok: false,
+      message: 'Plan cost must be greater than 0 before Stripe can create a yearly subscription price.'
+    };
+  }
+
+  const client = stripe();
+  const metadata = {
+    lukMembershipPlanId: String(row.PlanId),
+    planKey: row.PlanKey || ''
+  };
+  const active = Boolean(row.IsActive);
+  const productPayload = {
+    name: row.Title || row.PlanKey || `LUK Dental Membership ${row.PlanId}`,
+    description: plainTextFromHtml(row.Content),
+    active,
+    metadata
+  };
+  let productId = row.StripeProductId || '';
+  if (productId) {
+    try {
+      await client.products.update(productId, productPayload);
+    } catch (error) {
+      if (error && error.statusCode === 404) {
+        productId = '';
+      } else {
+        throw error;
+      }
+    }
+  }
+  if (!productId) {
+    const product = await client.products.create(productPayload);
+    productId = product.id;
+  }
+
+  let priceId = row.StripePriceId || '';
+  let keepExistingPrice = false;
+  if (priceId) {
+    try {
+      const currentPrice = await client.prices.retrieve(priceId);
+      const currentProductId = stripeObjectId(currentPrice.product);
+      keepExistingPrice = currentPrice
+        && currentPrice.unit_amount === amount
+        && currentPrice.currency === 'usd'
+        && currentProductId === productId
+        && currentPrice.recurring
+        && currentPrice.recurring.interval === 'year';
+      if (keepExistingPrice) {
+        await client.prices.update(priceId, {
+          active,
+          nickname: row.Title || row.PlanKey || undefined,
+          metadata
+        });
+      }
+    } catch (error) {
+      if (error && error.statusCode !== 404) {
+        throw error;
+      }
+      keepExistingPrice = false;
+    }
+  }
+
+  if (!keepExistingPrice) {
+    const price = await client.prices.create({
+      product: productId,
+      unit_amount: amount,
+      currency: 'usd',
+      recurring: { interval: 'year' },
+      nickname: row.Title || row.PlanKey || undefined,
+      metadata
+    });
+    if (priceId) {
+      try {
+        await client.prices.update(priceId, { active: false });
+      } catch (_error) {}
+    }
+    priceId = price.id;
+  }
+
+  await pool.execute(
+    `UPDATE luk_membership_plans
+     SET StripeProductId = ?, StripePriceId = ?
+     WHERE PlanId = ?`,
+    [productId, priceId, row.PlanId]
+  );
+
+  return {
+    ok: true,
+    productId,
+    priceId,
+    message: 'Stripe product and yearly price are synced.'
   };
 }
 
@@ -844,7 +1039,7 @@ export async function createMembershipCheckoutSession(input) {
     throw error;
   }
   if (!plan.StripePriceId) {
-    const error = new Error(`Stripe Price ID is missing for "${plan.Title}". Add a yearly Stripe price to this plan in admin.`);
+    const error = new Error(`"${plan.Title}" is not synced with Stripe yet. Open admin Membership Plans, check the cost, and save the plan after STRIPE_SECRET_KEY is configured.`);
     error.status = 400;
     throw error;
   }
@@ -894,7 +1089,7 @@ async function updateSubscriptionStatusBySubscription(subscription, fallbackMeta
   }
   const status = typeof subscription === 'string' ? '' : String(subscription.status || '');
   const periodEnd = typeof subscription === 'string' ? null : mysqlDateTimeFromEpoch(subscription.current_period_end);
-  const customerId = typeof subscription === 'string' ? '' : String(subscription.customer || '');
+  const customerId = typeof subscription === 'string' ? '' : stripeObjectId(subscription.customer);
   const metadata = typeof subscription === 'string' ? fallbackMetadata : (subscription.metadata || fallbackMetadata || {});
   const accountId = Number.parseInt(metadata.accountId ?? '', 10);
   const planKey = String(metadata.planKey || '').slice(0, 100);
@@ -957,7 +1152,7 @@ async function completeCheckoutSession(session) {
            MembershipActivatedAt = COALESCE(MembershipActivatedAt, NOW())
        WHERE AccountId = ?`,
       [
-        String(session.customer || ''),
+        stripeObjectId(session.customer),
         subscriptionId || '',
         String(session.metadata?.planKey || '').slice(0, 100),
         String(session.payment_status || 'paid').slice(0, 50),
