@@ -27,12 +27,15 @@ import { saveBookingFiles } from './files.js';
 import {
   deleteMembershipPlan,
   ensurePatientPortalTables,
+  createMembershipCheckoutSession,
+  handleStripeWebhook,
   linkPatientAccount,
   listMembershipPlans,
   listPatientAccounts,
   loginPatientAccount,
   parseMembershipPlanBody,
   parseMembershipPlanDeleteBody,
+  parsePatientPortalCheckoutBody,
   parsePatientAccountLinkBody,
   parsePatientAccountMembershipBody,
   parsePatientAccountPasswordBody,
@@ -82,6 +85,14 @@ const upload = multer({
 });
 
 app.disable('x-powered-by');
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res, next) => {
+  try {
+    const data = await handleStripeWebhook(req.body, req.headers['stripe-signature']);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
 app.use(express.json({ limit: '256kb' }));
 app.use(cors({
   origin(origin, callback) {
@@ -290,6 +301,16 @@ app.post('/api/patient-portal/accounts/membership', requireApiToken, async (req,
   try {
     const body = parsePatientAccountMembershipBody(req.body ?? {});
     const data = await updatePatientAccountMembership(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/stripe/checkout-session', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientPortalCheckoutBody(req.body ?? {});
+    const data = await createMembershipCheckoutSession(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import Stripe from 'stripe';
 import { config } from './config.js';
 import { pool } from './db.js';
 
@@ -7,6 +8,12 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_ITERATIONS = 120000;
 const PASSWORD_KEY_LENGTH = 32;
 const PASSWORD_DIGEST = 'sha256';
+let stripeClient = null;
+const ACCOUNT_PUBLIC_COLUMNS = `AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense,
+       MembershipPlan, StripeCustomerId, StripeSubscriptionId, MembershipPaymentStatus,
+       MembershipCurrentPeriodEnd, MembershipActivatedAt, Status, CreatedAt, UpdatedAt, LastLoginAt`;
+const PLAN_PUBLIC_COLUMNS = `PlanId, PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, StripePriceId,
+       Cost, IsFeatured, IsActive, DisplayOrder, CreatedAt, UpdatedAt`;
 
 function badRequest(message) {
   const error = new Error(message);
@@ -59,6 +66,11 @@ function publicAccount(row) {
     birthdate: row.Birthdate instanceof Date ? row.Birthdate.toISOString().slice(0, 10) : String(row.Birthdate || ''),
     driverLicense: row.DriverLicense || '',
     membershipPlan: row.MembershipPlan || '',
+    stripeCustomerId: row.StripeCustomerId || '',
+    stripeSubscriptionId: row.StripeSubscriptionId || '',
+    membershipPaymentStatus: row.MembershipPaymentStatus || '',
+    membershipCurrentPeriodEnd: row.MembershipCurrentPeriodEnd || null,
+    membershipActivatedAt: row.MembershipActivatedAt || null,
     status: row.Status,
     createdAt: row.CreatedAt,
     lastLoginAt: row.LastLoginAt || null
@@ -74,6 +86,7 @@ function publicMembershipPlan(row) {
     priceLabel: row.PriceLabel || '',
     content: row.Content || '',
     checkoutUrl: row.CheckoutUrl || '',
+    stripePriceId: row.StripePriceId || '',
     cost: Number(row.Cost || 0),
     isFeatured: Boolean(row.IsFeatured),
     isActive: Boolean(row.IsActive),
@@ -81,6 +94,47 @@ function publicMembershipPlan(row) {
     createdAt: row.CreatedAt,
     updatedAt: row.UpdatedAt
   };
+}
+
+function stripe() {
+  if (!config.stripe.secretKey) {
+    const error = new Error('Stripe is not configured. Add STRIPE_SECRET_KEY to the bridge .env file.');
+    error.status = 500;
+    throw error;
+  }
+  if (!stripeClient) {
+    stripeClient = new Stripe(config.stripe.secretKey, {
+      apiVersion: '2026-02-25.clover'
+    });
+  }
+  return stripeClient;
+}
+
+function normalizeCheckoutUrl(value, label) {
+  const url = requiredString({ value }, 'value', label);
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error('Invalid protocol.');
+    }
+    return parsed.toString();
+  } catch (_error) {
+    throw badRequest(`${label} must be a valid website URL.`);
+  }
+}
+
+function mysqlDateTimeFromEpoch(value) {
+  const seconds = Number(value || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+  return new Date(seconds * 1000).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function addQueryParam(url, key, value) {
+  const parsed = new URL(url);
+  parsed.searchParams.set(key, value);
+  return parsed.toString();
 }
 
 function normalizePlanKey(value, fallback = '') {
@@ -207,6 +261,11 @@ export async function ensurePatientPortalTables() {
       Birthdate DATE NOT NULL,
       DriverLicense VARCHAR(190) NOT NULL DEFAULT '',
       MembershipPlan VARCHAR(100) NOT NULL DEFAULT '',
+      StripeCustomerId VARCHAR(190) NOT NULL DEFAULT '',
+      StripeSubscriptionId VARCHAR(190) NOT NULL DEFAULT '',
+      MembershipPaymentStatus VARCHAR(50) NOT NULL DEFAULT '',
+      MembershipCurrentPeriodEnd DATETIME NULL,
+      MembershipActivatedAt DATETIME NULL,
       Status ENUM('active','inactive','pending') NOT NULL DEFAULT 'active',
       CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -228,6 +287,11 @@ export async function ensurePatientPortalTables() {
   await ensureColumn(columns, 'luk_patient_accounts', 'Birthdate', "DATE NOT NULL DEFAULT '0001-01-01'");
   await ensureColumn(columns, 'luk_patient_accounts', 'DriverLicense', "VARCHAR(190) NOT NULL DEFAULT ''");
   await ensureColumn(columns, 'luk_patient_accounts', 'MembershipPlan', "VARCHAR(100) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'StripeCustomerId', "VARCHAR(190) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'StripeSubscriptionId', "VARCHAR(190) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'MembershipPaymentStatus', "VARCHAR(50) NOT NULL DEFAULT ''");
+  await ensureColumn(columns, 'luk_patient_accounts', 'MembershipCurrentPeriodEnd', 'DATETIME NULL');
+  await ensureColumn(columns, 'luk_patient_accounts', 'MembershipActivatedAt', 'DATETIME NULL');
   await ensureColumn(columns, 'luk_patient_accounts', 'Status', "ENUM('active','inactive','pending') NOT NULL DEFAULT 'active'");
   await ensureColumn(columns, 'luk_patient_accounts', 'CreatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn(columns, 'luk_patient_accounts', 'UpdatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
@@ -242,6 +306,7 @@ export async function ensurePatientPortalTables() {
       PriceLabel VARCHAR(100) NOT NULL DEFAULT '',
       Content TEXT NULL,
       CheckoutUrl VARCHAR(500) NOT NULL DEFAULT '',
+      StripePriceId VARCHAR(190) NOT NULL DEFAULT '',
       Cost DECIMAL(10,2) NOT NULL DEFAULT 0,
       IsFeatured TINYINT(1) NOT NULL DEFAULT 0,
       IsActive TINYINT(1) NOT NULL DEFAULT 1,
@@ -260,6 +325,7 @@ export async function ensurePatientPortalTables() {
   await ensureColumn(planColumns, 'luk_membership_plans', 'PriceLabel', "VARCHAR(100) NOT NULL DEFAULT ''");
   await ensureColumn(planColumns, 'luk_membership_plans', 'Content', 'TEXT NULL');
   await ensureColumn(planColumns, 'luk_membership_plans', 'CheckoutUrl', "VARCHAR(500) NOT NULL DEFAULT ''");
+  await ensureColumn(planColumns, 'luk_membership_plans', 'StripePriceId', "VARCHAR(190) NOT NULL DEFAULT ''");
   await ensureColumn(planColumns, 'luk_membership_plans', 'Cost', 'DECIMAL(10,2) NOT NULL DEFAULT 0');
   await ensureColumn(planColumns, 'luk_membership_plans', 'IsFeatured', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn(planColumns, 'luk_membership_plans', 'IsActive', 'TINYINT(1) NOT NULL DEFAULT 1');
@@ -327,6 +393,7 @@ export function parseMembershipPlanBody(body) {
   const priceLabel = optionalString(body, 'priceLabel').slice(0, 100);
   const content = optionalString(body, 'content');
   const checkoutUrl = optionalString(body, 'checkoutUrl').slice(0, 500);
+  const stripePriceId = optionalString(body, 'stripePriceId').slice(0, 190);
   const cost = Number.parseFloat(body.cost ?? '0') || 0;
   const displayOrder = Number.parseInt(body.displayOrder ?? '0', 10) || 0;
   const isFeatured = ['1', 'true', 'yes', 'on'].includes(String(body.isFeatured ?? '').toLowerCase()) ? 1 : 0;
@@ -339,10 +406,31 @@ export function parseMembershipPlanBody(body) {
     priceLabel,
     content,
     checkoutUrl,
+    stripePriceId,
     cost,
     displayOrder,
     isFeatured,
     isActive
+  };
+}
+
+export function parsePatientPortalCheckoutBody(body) {
+  const accountId = Number.parseInt(body.accountId ?? body.AccountId ?? '', 10);
+  const membershipPlan = requiredString(body, 'membershipPlan', 'Membership plan').slice(0, 100);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    throw badRequest('accountId is required.');
+  }
+  return {
+    accountId,
+    membershipPlan,
+    successUrl: normalizeCheckoutUrl(
+      optionalString(body, 'successUrl') || config.stripe.successUrl,
+      'successUrl'
+    ),
+    cancelUrl: normalizeCheckoutUrl(
+      optionalString(body, 'cancelUrl') || config.stripe.cancelUrl || optionalString(body, 'successUrl') || config.stripe.successUrl,
+      'cancelUrl'
+    )
   };
 }
 
@@ -491,7 +579,7 @@ export async function registerPatientAccount(input) {
     );
 
     const [rows] = await connection.execute(
-      `SELECT AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense, MembershipPlan, Status, CreatedAt, LastLoginAt
+      `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
        FROM luk_patient_accounts
        WHERE AccountId = ?
        LIMIT 1`,
@@ -521,7 +609,7 @@ export async function loginPatientAccount(input) {
   const connection = await pool.getConnection();
   try {
     const [rows] = await connection.execute(
-      `SELECT AccountId, PatNum, Email, PasswordHash, FirstName, LastName, Phone, Birthdate, DriverLicense, MembershipPlan, Status, CreatedAt, LastLoginAt
+      `SELECT ${ACCOUNT_PUBLIC_COLUMNS}, PasswordHash
        FROM luk_patient_accounts
        WHERE Email = ?
        LIMIT 1`,
@@ -570,7 +658,7 @@ export async function listPatientAccounts(query = {}) {
   }
 
   const [rows] = await pool.execute(
-    `SELECT AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense, MembershipPlan, Status, CreatedAt, UpdatedAt, LastLoginAt
+    `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
      FROM luk_patient_accounts
      ${where}
      ORDER BY CreatedAt DESC, AccountId DESC
@@ -587,7 +675,7 @@ export async function listMembershipPlans(query = {}) {
   const includeInactive = ['1', 'true', 'yes'].includes(String(query.includeInactive ?? '').toLowerCase());
   const where = includeInactive ? '' : 'WHERE IsActive = 1';
   const [rows] = await pool.execute(
-    `SELECT PlanId, PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, Cost, IsFeatured, IsActive, DisplayOrder, CreatedAt, UpdatedAt
+    `SELECT ${PLAN_PUBLIC_COLUMNS}
      FROM luk_membership_plans
      ${where}
      ORDER BY DisplayOrder ASC, PlanId ASC`
@@ -602,7 +690,7 @@ export async function saveMembershipPlan(input) {
   if (input.planId > 0) {
     const [result] = await pool.execute(
       `UPDATE luk_membership_plans
-       SET PlanKey = ?, Badge = ?, Title = ?, PriceLabel = ?, Content = ?, CheckoutUrl = ?, Cost = ?,
+       SET PlanKey = ?, Badge = ?, Title = ?, PriceLabel = ?, Content = ?, CheckoutUrl = ?, StripePriceId = ?, Cost = ?,
            IsFeatured = ?, IsActive = ?, DisplayOrder = ?
        WHERE PlanId = ?`,
       [
@@ -612,6 +700,7 @@ export async function saveMembershipPlan(input) {
         input.priceLabel,
         input.content,
         input.checkoutUrl,
+        input.stripePriceId,
         input.cost,
         input.isFeatured,
         input.isActive,
@@ -627,8 +716,8 @@ export async function saveMembershipPlan(input) {
   } else {
     const [result] = await pool.execute(
       `INSERT INTO luk_membership_plans
-        (PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, Cost, IsFeatured, IsActive, DisplayOrder)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, StripePriceId, Cost, IsFeatured, IsActive, DisplayOrder)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.planKey,
         input.badge,
@@ -636,6 +725,7 @@ export async function saveMembershipPlan(input) {
         input.priceLabel,
         input.content,
         input.checkoutUrl,
+        input.stripePriceId,
         input.cost,
         input.isFeatured,
         input.isActive,
@@ -646,7 +736,7 @@ export async function saveMembershipPlan(input) {
   }
 
   const [rows] = await pool.execute(
-    `SELECT PlanId, PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, Cost, IsFeatured, IsActive, DisplayOrder, CreatedAt, UpdatedAt
+    `SELECT ${PLAN_PUBLIC_COLUMNS}
      FROM luk_membership_plans
      WHERE PlanId = ?
      LIMIT 1`,
@@ -686,7 +776,7 @@ export async function updatePatientAccountStatus(input) {
     throw error;
   }
   const [rows] = await pool.execute(
-    `SELECT AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense, MembershipPlan, Status, CreatedAt, UpdatedAt, LastLoginAt
+    `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
      FROM luk_patient_accounts
      WHERE AccountId = ?
      LIMIT 1`,
@@ -711,7 +801,7 @@ export async function updatePatientAccountMembership(input) {
     throw error;
   }
   const [rows] = await pool.execute(
-    `SELECT AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense, MembershipPlan, Status, CreatedAt, UpdatedAt, LastLoginAt
+    `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
      FROM luk_patient_accounts
      WHERE AccountId = ?
      LIMIT 1`,
@@ -719,6 +809,199 @@ export async function updatePatientAccountMembership(input) {
   );
   return {
     account: publicAccount(rows[0])
+  };
+}
+
+export async function createMembershipCheckoutSession(input) {
+  await ensurePatientPortalTables();
+  const [accountRows] = await pool.execute(
+    `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
+     FROM luk_patient_accounts
+     WHERE AccountId = ?
+     LIMIT 1`,
+    [input.accountId]
+  );
+  const account = accountRows[0];
+  if (!account || account.Status !== 'active') {
+    const error = new Error('Patient account was not found or is inactive.');
+    error.status = 404;
+    throw error;
+  }
+
+  const [planRows] = await pool.execute(
+    `SELECT ${PLAN_PUBLIC_COLUMNS}
+     FROM luk_membership_plans
+     WHERE IsActive = 1
+       AND (PlanKey = ? OR Title = ?)
+     ORDER BY DisplayOrder ASC, PlanId ASC
+     LIMIT 1`,
+    [input.membershipPlan, input.membershipPlan]
+  );
+  const plan = planRows[0];
+  if (!plan) {
+    const error = new Error('Membership plan was not found.');
+    error.status = 404;
+    throw error;
+  }
+  if (!plan.StripePriceId) {
+    const error = new Error(`Stripe Price ID is missing for "${plan.Title}". Add a yearly Stripe price to this plan in admin.`);
+    error.status = 400;
+    throw error;
+  }
+
+  const metadata = {
+    accountId: String(account.AccountId),
+    patNum: account.PatNum ? String(account.PatNum) : '',
+    planKey: plan.PlanKey,
+    planTitle: plan.Title
+  };
+  const successBase = addQueryParam(input.successUrl, 'stripe', 'success');
+  const successUrl = `${successBase}${successBase.includes('?') ? '&' : '?'}session_id={CHECKOUT_SESSION_ID}`;
+  const cancelUrl = addQueryParam(input.cancelUrl, 'stripe', 'cancel');
+  const sessionPayload = {
+    mode: 'subscription',
+    line_items: [
+      {
+        price: plan.StripePriceId,
+        quantity: 1
+      }
+    ],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    client_reference_id: String(account.AccountId),
+    metadata,
+    subscription_data: { metadata },
+    allow_promotion_codes: true
+  };
+
+  if (account.StripeCustomerId) {
+    sessionPayload.customer = account.StripeCustomerId;
+  } else {
+    sessionPayload.customer_email = account.Email;
+  }
+
+  const session = await stripe().checkout.sessions.create(sessionPayload);
+  return {
+    sessionId: session.id,
+    url: session.url
+  };
+}
+
+async function updateSubscriptionStatusBySubscription(subscription, fallbackMetadata = {}) {
+  const subscriptionId = typeof subscription === 'string' ? subscription : subscription?.id;
+  if (!subscriptionId) {
+    return false;
+  }
+  const status = typeof subscription === 'string' ? '' : String(subscription.status || '');
+  const periodEnd = typeof subscription === 'string' ? null : mysqlDateTimeFromEpoch(subscription.current_period_end);
+  const customerId = typeof subscription === 'string' ? '' : String(subscription.customer || '');
+  const metadata = typeof subscription === 'string' ? fallbackMetadata : (subscription.metadata || fallbackMetadata || {});
+  const accountId = Number.parseInt(metadata.accountId ?? '', 10);
+  const planKey = String(metadata.planKey || '').slice(0, 100);
+
+  const values = [
+    customerId,
+    subscriptionId,
+    status || 'active',
+    periodEnd
+  ];
+  let where = 'StripeSubscriptionId = ?';
+  let whereValue = subscriptionId;
+  if (Number.isInteger(accountId) && accountId > 0) {
+    where = 'AccountId = ?';
+    whereValue = accountId;
+  }
+  values.push(whereValue);
+
+  await pool.execute(
+    `UPDATE luk_patient_accounts
+     SET StripeCustomerId = COALESCE(NULLIF(?, ''), StripeCustomerId),
+         StripeSubscriptionId = ?,
+         MembershipPaymentStatus = ?,
+         MembershipCurrentPeriodEnd = ?,
+         MembershipActivatedAt = COALESCE(MembershipActivatedAt, NOW())
+     WHERE ${where}`,
+    values
+  );
+
+  if (planKey && Number.isInteger(accountId) && accountId > 0 && status !== 'canceled') {
+    await pool.execute(
+      `UPDATE luk_patient_accounts
+       SET MembershipPlan = ?
+       WHERE AccountId = ?`,
+      [planKey, accountId]
+    );
+  }
+  return true;
+}
+
+async function completeCheckoutSession(session) {
+  const accountId = Number.parseInt(session?.metadata?.accountId ?? session?.client_reference_id ?? '', 10);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    return false;
+  }
+  const subscriptionId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id;
+  let subscription = null;
+  if (subscriptionId) {
+    subscription = await stripe().subscriptions.retrieve(subscriptionId);
+  }
+  if (subscription) {
+    await updateSubscriptionStatusBySubscription(subscription, session.metadata || {});
+  } else {
+    await pool.execute(
+      `UPDATE luk_patient_accounts
+       SET StripeCustomerId = ?,
+           StripeSubscriptionId = ?,
+           MembershipPlan = ?,
+           MembershipPaymentStatus = ?,
+           MembershipActivatedAt = COALESCE(MembershipActivatedAt, NOW())
+       WHERE AccountId = ?`,
+      [
+        String(session.customer || ''),
+        subscriptionId || '',
+        String(session.metadata?.planKey || '').slice(0, 100),
+        String(session.payment_status || 'paid').slice(0, 50),
+        accountId
+      ]
+    );
+  }
+  return true;
+}
+
+export async function handleStripeWebhook(rawBody, signature) {
+  if (!config.stripe.webhookSecret) {
+    const error = new Error('Stripe webhook secret is not configured. Add STRIPE_WEBHOOK_SECRET to the bridge .env file.');
+    error.status = 500;
+    throw error;
+  }
+  let event;
+  try {
+    event = stripe().webhooks.constructEvent(rawBody, signature, config.stripe.webhookSecret);
+  } catch (error) {
+    const wrapped = new Error(`Stripe webhook signature verification failed: ${error.message}`);
+    wrapped.status = 400;
+    throw wrapped;
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    await completeCheckoutSession(event.data.object);
+  } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
+    await updateSubscriptionStatusBySubscription(event.data.object);
+  } else if (event.type === 'invoice.payment_failed') {
+    const subscriptionId = event.data.object?.subscription;
+    if (subscriptionId) {
+      await pool.execute(
+        `UPDATE luk_patient_accounts
+         SET MembershipPaymentStatus = 'past_due'
+         WHERE StripeSubscriptionId = ?`,
+        [subscriptionId]
+      );
+    }
+  }
+
+  return {
+    received: true,
+    type: event.type
   };
 }
 
@@ -754,7 +1037,7 @@ export async function linkPatientAccount(input) {
     }
 
     const [rows] = await connection.execute(
-      `SELECT AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense, MembershipPlan, Status, CreatedAt, UpdatedAt, LastLoginAt
+      `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
        FROM luk_patient_accounts
        WHERE AccountId = ?
        LIMIT 1`,

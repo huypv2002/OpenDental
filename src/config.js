@@ -69,6 +69,12 @@ export const config = {
     clinicName: process.env.CLINIC_NAME ?? 'Luk Dental',
     replyTo: process.env.EMAIL_REPLY_TO ?? process.env.ADMIN_EMAIL ?? ''
   },
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY ?? '',
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
+    successUrl: process.env.STRIPE_SUCCESS_URL ?? '',
+    cancelUrl: process.env.STRIPE_CANCEL_URL ?? ''
+  },
   fileStorage: {
     enabled: (process.env.PATIENT_FILE_STORAGE_ENABLED ?? 'true').toLowerCase() === 'true',
     dir: patientFileStorageDir,
