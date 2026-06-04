@@ -4,6 +4,7 @@ import multer from 'multer';
 import { config } from './config.js';
 import { pool, closePool } from './db.js';
 import { requireApiToken } from './auth.js';
+import { getChatbotModels, proxyChatbotCompletion } from './chatbotProxy.js';
 import {
   cancelAppointment,
   changeAppointment,
@@ -117,6 +118,22 @@ app.get('/health', async (_req, res) => {
 app.get('/api/reference', requireApiToken, async (_req, res, next) => {
   try {
     res.json({ ok: true, data: await getReferenceData() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/chatbot/v1/models', requireApiToken, async (_req, res, next) => {
+  try {
+    res.json(await getChatbotModels());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/chatbot/v1/chat/completions', requireApiToken, async (req, res, next) => {
+  try {
+    res.json(await proxyChatbotCompletion(req.body ?? {}));
   } catch (error) {
     next(error);
   }

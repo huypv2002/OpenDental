@@ -75,6 +75,12 @@ export const config = {
     successUrl: process.env.STRIPE_SUCCESS_URL ?? '',
     cancelUrl: process.env.STRIPE_CANCEL_URL ?? ''
   },
+  chatbot: {
+    baseUrl: process.env.CHATBOT_9ROUTER_BASE_URL ?? '',
+    modelsUrl: process.env.CHATBOT_9ROUTER_MODELS_URL ?? '',
+    apiKey: process.env.CHATBOT_9ROUTER_API_KEY ?? '',
+    timeoutMs: intEnv('CHATBOT_9ROUTER_TIMEOUT_MS', 30000, 1000, 120000)
+  },
   fileStorage: {
     enabled: (process.env.PATIENT_FILE_STORAGE_ENABLED ?? 'true').toLowerCase() === 'true',
     dir: patientFileStorageDir,
