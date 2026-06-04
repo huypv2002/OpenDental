@@ -1066,7 +1066,8 @@ export async function createMembershipCheckoutSession(input) {
     client_reference_id: String(account.AccountId),
     metadata,
     subscription_data: { metadata },
-    allow_promotion_codes: true
+    allow_promotion_codes: true,
+    adaptive_pricing: { enabled: false }
   };
 
   if (account.StripeCustomerId) {
