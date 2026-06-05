@@ -499,9 +499,9 @@ class AuditTrailWindow(QMainWindow):
     def filter_patients_local(self, text: str) -> None:
         if self.suppress_patient_events:
             return
-        query = self.update_filtered_patients(text)
+        self.update_filtered_patients(text)
         self.footer_text.setText(f"{len(self.filtered_patients)} patient(s) match. Choose an option or press Find.")
-        if query and self.filtered_patients:
+        if self.filtered_patients:
             self.show_patient_popup()
         else:
             self.patient_popup.hide()
@@ -509,8 +509,8 @@ class AuditTrailWindow(QMainWindow):
     def show_patient_popup_for_current_text(self) -> None:
         if self.suppress_patient_events or self.loading_patients:
             return
-        query = self.update_filtered_patients(self.patient_search.text())
-        if query and self.filtered_patients:
+        self.update_filtered_patients(self.patient_search.text())
+        if self.filtered_patients:
             self.show_patient_popup()
 
     def update_filtered_patients(self, text: str) -> str:
