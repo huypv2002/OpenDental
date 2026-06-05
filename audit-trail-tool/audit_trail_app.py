@@ -11,10 +11,11 @@ from urllib.parse import urljoin
 
 import requests
 from dotenv import load_dotenv
-from PySide6.QtCore import QDate, QSettings, Qt, QTimer
+from PySide6.QtCore import QDate, QSettings, QStringListModel, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QCompleter,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -231,6 +232,7 @@ class AuditTrailWindow(QMainWindow):
         self.settings = QSettings("LUK Dental", "Audit Trail Tool")
         self.all_patients: list[dict[str, Any]] = []
         self.filtered_patients: list[dict[str, Any]] = []
+        self.patient_label_map: dict[str, dict[str, Any]] = {}
         self.current_patient: dict[str, Any] | None = None
         self.entries: list[dict[str, Any]] = []
         self.deleted_ids: list[int] = []
@@ -295,6 +297,13 @@ class AuditTrailWindow(QMainWindow):
         self.patient_search = QLineEdit()
         self.patient_search.setMinimumWidth(270)
         self.patient_search.setPlaceholderText("Patient name, phone, email, #")
+        self.patient_completer_model = QStringListModel([])
+        self.patient_completer = QCompleter(self.patient_completer_model, self)
+        self.patient_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.patient_completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.patient_completer.setMaxVisibleItems(12)
+        self.patient_completer.activated[str].connect(self.patient_completion_selected)
+        self.patient_search.setCompleter(self.patient_completer)
         self.patient_search.textChanged.connect(self.filter_patients_local)
         self.patient_search.returnPressed.connect(self.find_patient_from_text)
 
@@ -449,6 +458,7 @@ class AuditTrailWindow(QMainWindow):
             self.set_busy("Loading patients...")
             self.all_patients = self.repo.fetch_patients()
             self.filtered_patients = list(self.all_patients)
+            self.update_patient_completions(self.filtered_patients)
             self.statusBar().showMessage(f"Loaded {len(self.all_patients)} patient(s). Search filters locally.", 6000)
             self.footer_text.setText(f"Loaded {len(self.all_patients)} patient(s). Select a patient to load audit entries.")
             if self.filtered_patients:
@@ -465,18 +475,34 @@ class AuditTrailWindow(QMainWindow):
             return
         query = str(text or "").strip().lower()
         self.filtered_patients = [patient for patient in self.all_patients if not query or query in patient_filter_blob(patient)]
-        self.footer_text.setText(f"{len(self.filtered_patients)} patient(s) match. Press Find or choose one from the list.")
+        self.update_patient_completions(self.filtered_patients)
+        self.footer_text.setText(f"{len(self.filtered_patients)} patient(s) match. Choose a dropdown option or press Find.")
+        if query and self.filtered_patients:
+            self.patient_completer.complete()
+
+    def update_patient_completions(self, patients: list[dict[str, Any]]) -> None:
+        visible = patients[:200]
+        labels = [patient_audit_label(patient) for patient in visible]
+        self.patient_label_map = {label: patient for label, patient in zip(labels, visible)}
+        self.patient_completer_model.setStringList(labels)
 
     def show_all_patients(self) -> None:
         self.patient_search.clear()
         self.filtered_patients = list(self.all_patients)
+        self.update_patient_completions(self.filtered_patients)
         self.footer_text.setText(f"Showing all loaded patients: {len(self.all_patients)}.")
+
+    def patient_completion_selected(self, label: str) -> None:
+        patient = self.patient_label_map.get(str(label))
+        if patient:
+            self.set_current_patient(patient, load_entries=True)
 
     def find_patient_from_text(self) -> None:
         if not self.filtered_patients:
             QMessageBox.information(self, "No patient", "No loaded patient matches that filter.")
             return
-        patient = self.filtered_patients[0]
+        label = self.patient_search.text().strip()
+        patient = self.patient_label_map.get(label) or self.filtered_patients[0]
         self.set_current_patient(patient, load_entries=True)
 
     def load_current_patient_entries(self) -> None:
@@ -714,6 +740,17 @@ QLineEdit, QComboBox, QDateEdit, QSpinBox {
   padding: 1px 5px;
   background: #ffffff;
   color: #111827;
+}
+QCompleter QAbstractItemView {
+  border: 1px solid #9aa7b7;
+  background: #ffffff;
+  selection-background-color: #b7d4e8;
+  selection-color: #111827;
+  outline: 0;
+}
+QCompleter QAbstractItemView::item {
+  min-height: 22px;
+  padding: 3px 7px;
 }
 QComboBox::drop-down, QDateEdit::drop-down, QSpinBox::up-button, QSpinBox::down-button {
   width: 18px;
