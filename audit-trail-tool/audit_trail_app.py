@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 
 import requests
 from dotenv import load_dotenv
-from PySide6.QtCore import QDate, QEvent, QPoint, QSettings, Qt, QTimer
+from PySide6.QtCore import QDate, QEvent, QPoint, QRect, QSettings, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -250,6 +250,7 @@ class AuditTrailWindow(QMainWindow):
         self.setStyleSheet(APP_STYLES.replace("__DOWN_ARROW_ICON__", str((APP_DIR / "assets" / "down-arrow.svg").as_posix())))
         self.setStatusBar(QStatusBar())
         self.setCentralWidget(self.build_ui())
+        QApplication.instance().installEventFilter(self)
         QTimer.singleShot(250, self.initial_load)
 
     def build_ui(self) -> QWidget:
@@ -300,7 +301,7 @@ class AuditTrailWindow(QMainWindow):
         self.patient_search.setMinimumWidth(270)
         self.patient_search.setPlaceholderText("Patient name, phone, email, #")
         self.patient_search.installEventFilter(self)
-        self.patient_search.textChanged.connect(self.filter_patients_local)
+        self.patient_search.textChanged.connect(self.schedule_patient_filter)
         self.patient_search.returnPressed.connect(self.find_patient_from_text)
         self.patient_popup = QListWidget(self)
         self.patient_popup.setObjectName("PatientPopup")
@@ -372,7 +373,15 @@ class AuditTrailWindow(QMainWindow):
         return panel
 
     def eventFilter(self, watched: QWidget, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.MouseButtonPress and hasattr(self, "patient_popup") and self.patient_popup.isVisible():
+            global_pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+            search_rect = QRect(self.patient_search.mapToGlobal(QPoint(0, 0)), self.patient_search.size())
+            popup_rect = QRect(self.patient_popup.mapToGlobal(QPoint(0, 0)), self.patient_popup.size())
+            if not search_rect.contains(global_pos) and not popup_rect.contains(global_pos):
+                self.patient_popup.hide()
+            return False
         if watched is self.patient_search and event.type() in (QEvent.FocusIn, QEvent.MouseButtonRelease):
+            self.patient_search.setFocus(Qt.MouseFocusReason)
             QTimer.singleShot(0, self.show_patient_popup_for_current_text)
             return False
         if watched is self.patient_search and event.type() == QEvent.KeyPress:
@@ -494,6 +503,9 @@ class AuditTrailWindow(QMainWindow):
         finally:
             self.loading_patients = False
             self.clear_busy()
+
+    def schedule_patient_filter(self, text: str) -> None:
+        self.filter_patients_local(text)
 
     def filter_patients_local(self, text: str) -> None:
         if self.suppress_patient_events:
