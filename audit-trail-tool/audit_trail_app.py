@@ -401,6 +401,9 @@ class AuditTrailWindow(QMainWindow):
             if self.patient_popup.isVisible() and key == Qt.Key_Escape:
                 self.patient_popup.hide()
                 return True
+        if watched is self.patient_search and event.type() == QEvent.KeyRelease:
+            self.filter_patients_local(self.patient_search.text())
+            return False
         return super().eventFilter(watched, event)
 
     def build_table(self) -> QWidget:
