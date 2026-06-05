@@ -6,6 +6,11 @@ import { pool, closePool } from './db.js';
 import { requireApiToken } from './auth.js';
 import { getChatbotModels, proxyChatbotCompletion } from './chatbotProxy.js';
 import {
+  listAuditPatients,
+  listAuditTrailEntries,
+  saveAuditTrailEntries
+} from './auditTrail.js';
+import {
   cancelAppointment,
   changeAppointment,
   parseCancelAppointmentBody,
@@ -606,6 +611,30 @@ app.get('/api/admin/patients', requireApiToken, async (req, res, next) => {
 app.post('/api/admin/patients/save', requireApiToken, async (req, res, next) => {
   try {
     res.json({ ok: true, data: await saveAdminPatient(req.body ?? {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/audit-trail/patients', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await listAuditPatients(req.query) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/audit-trail/entries', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await listAuditTrailEntries(req.query) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/audit-trail/entries/save', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await saveAuditTrailEntries(req.body ?? {}) });
   } catch (error) {
     next(error);
   }

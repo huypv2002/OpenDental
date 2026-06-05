@@ -4,3 +4,6 @@ node_modules/
 npm-debug.log*
 sms-reminder-tool/sms_config.json
 sms-reminder-tool/__pycache__/
+audit-trail-tool/audit_config.json
+audit-trail-tool/__pycache__/
+audit-trail-tool/.venv/
