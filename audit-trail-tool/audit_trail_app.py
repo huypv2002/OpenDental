@@ -225,6 +225,24 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
 
 
+class PatientSearchEdit(QLineEdit):
+    def __init__(self):
+        super().__init__()
+        self.on_local_text_input = None
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        before = self.text()
+        super().keyPressEvent(event)
+        if self.on_local_text_input and self.text() != before:
+            self.on_local_text_input(self.text())
+
+    def inputMethodEvent(self, event) -> None:  # noqa: N802
+        before = self.text()
+        super().inputMethodEvent(event)
+        if self.on_local_text_input and self.text() != before:
+            self.on_local_text_input(self.text())
+
+
 class AuditTrailWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -302,10 +320,11 @@ class AuditTrailWindow(QMainWindow):
         self.limit_rows.setRange(1, 10000)
         self.limit_rows.setValue(500)
 
-        self.patient_search = QLineEdit()
+        self.patient_search = PatientSearchEdit()
         self.patient_search.setMinimumWidth(270)
         self.patient_search.setPlaceholderText("Patient name, phone, email, #")
         self.patient_search.installEventFilter(self)
+        self.patient_search.on_local_text_input = self.schedule_patient_filter
         self.patient_search.textChanged.connect(self.schedule_patient_filter)
         self.patient_search.returnPressed.connect(self.find_patient_from_text)
         self.patient_popup = QListWidget(self)
@@ -546,7 +565,9 @@ class AuditTrailWindow(QMainWindow):
         self.patient_popup.setUpdatesEnabled(True)
         self.patient_popup.doItemsLayout()
         self.patient_popup.viewport().update()
+        self.patient_popup.viewport().repaint()
         self.show_patient_popup()
+        QApplication.processEvents()
 
     def show_patient_popup_for_current_text(self) -> None:
         if self.suppress_patient_events or self.loading_patients:
