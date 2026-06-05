@@ -29,6 +29,7 @@ import {
   deleteMembershipPlan,
   ensurePatientPortalTables,
   createMembershipCheckoutSession,
+  createMembershipCustomerPortalSession,
   getPatientAccount,
   handleStripeWebhook,
   linkPatientAccount,
@@ -37,7 +38,10 @@ import {
   loginPatientAccount,
   parseMembershipPlanBody,
   parseMembershipPlanDeleteBody,
+  parsePatientPortalAccountBody,
   parsePatientPortalCheckoutBody,
+  parsePatientPortalCheckoutVerifyBody,
+  parsePatientPortalCustomerPortalBody,
   parsePatientAccountLinkBody,
   parsePatientAccountMembershipBody,
   parsePatientAccountPasswordBody,
@@ -48,7 +52,8 @@ import {
   saveMembershipPlan,
   updatePatientAccountMembership,
   updatePatientAccountPassword,
-  updatePatientAccountStatus
+  updatePatientAccountStatus,
+  verifyMembershipCheckoutSession
 } from './patientPortal.js';
 import { exportAppointmentReport, parseAppointmentReportBody } from './reports.js';
 import {
@@ -285,6 +290,16 @@ app.get('/api/patient-portal/accounts/:accountId', requireApiToken, async (req, 
   }
 });
 
+app.post('/api/patient-portal/account', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientPortalAccountBody(req.body ?? {});
+    const data = await getPatientAccount(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/patient-portal/membership-plans', requireApiToken, async (req, res, next) => {
   try {
     const data = await listMembershipPlans(req.query);
@@ -338,6 +353,26 @@ app.post('/api/patient-portal/stripe/checkout-session', requireApiToken, async (
   try {
     const body = parsePatientPortalCheckoutBody(req.body ?? {});
     const data = await createMembershipCheckoutSession(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/stripe/checkout-session/verify', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientPortalCheckoutVerifyBody(req.body ?? {});
+    const data = await verifyMembershipCheckoutSession(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/stripe/customer-portal', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientPortalCustomerPortalBody(req.body ?? {});
+    const data = await createMembershipCustomerPortalSession(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);

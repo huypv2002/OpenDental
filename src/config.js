@@ -73,7 +73,12 @@ export const config = {
     secretKey: process.env.STRIPE_SECRET_KEY ?? '',
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
     successUrl: process.env.STRIPE_SUCCESS_URL ?? '',
-    cancelUrl: process.env.STRIPE_CANCEL_URL ?? ''
+    cancelUrl: process.env.STRIPE_CANCEL_URL ?? '',
+    customerPortalReturnUrl: process.env.STRIPE_CUSTOMER_PORTAL_RETURN_URL ?? process.env.STRIPE_SUCCESS_URL ?? ''
+  },
+  patientPortal: {
+    tokenSecret: process.env.PATIENT_PORTAL_TOKEN_SECRET ?? process.env.API_TOKEN ?? '',
+    tokenTtlSeconds: intEnv('PATIENT_PORTAL_TOKEN_TTL_SECONDS', 60 * 60 * 24 * 14, 300, 60 * 60 * 24 * 90)
   },
   chatbot: {
     baseUrl: process.env.CHATBOT_9ROUTER_BASE_URL ?? '',

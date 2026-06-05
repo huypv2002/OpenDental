@@ -8,6 +8,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_ITERATIONS = 120000;
 const PASSWORD_KEY_LENGTH = 32;
 const PASSWORD_DIGEST = 'sha256';
+const TOKEN_ISSUER = 'luk-patient-portal';
 let stripeClient = null;
 const ACCOUNT_PUBLIC_COLUMNS = `AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense,
        MembershipPlan, StripeCustomerId, StripeSubscriptionId, MembershipPaymentStatus,
@@ -75,6 +76,91 @@ function publicAccount(row) {
     createdAt: row.CreatedAt,
     lastLoginAt: row.LastLoginAt || null
   };
+}
+
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+function signPortalTokenPayload(header, payload) {
+  const signingInput = `${base64UrlJson(header)}.${base64UrlJson(payload)}`;
+  const signature = crypto
+    .createHmac('sha256', config.patientPortal.tokenSecret)
+    .update(signingInput)
+    .digest('base64url');
+  return `${signingInput}.${signature}`;
+}
+
+function issuePortalToken(row) {
+  if (!config.patientPortal.tokenSecret) {
+    const error = new Error('Patient portal token secret is not configured. Set PATIENT_PORTAL_TOKEN_SECRET or API_TOKEN in bridge .env.');
+    error.status = 500;
+    throw error;
+  }
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const expiresAt = issuedAt + config.patientPortal.tokenTtlSeconds;
+  return {
+    portalToken: signPortalTokenPayload(
+      { alg: 'HS256', typ: 'JWT' },
+      {
+        iss: TOKEN_ISSUER,
+        sub: String(row.AccountId),
+        email: row.Email || '',
+        iat: issuedAt,
+        exp: expiresAt
+      }
+    ),
+    tokenExpiresAt: new Date(expiresAt * 1000).toISOString()
+  };
+}
+
+function verifyPortalToken(token) {
+  if (!config.patientPortal.tokenSecret) {
+    const error = new Error('Patient portal token secret is not configured. Set PATIENT_PORTAL_TOKEN_SECRET or API_TOKEN in bridge .env.');
+    error.status = 500;
+    throw error;
+  }
+  const raw = String(token || '').trim();
+  const parts = raw.split('.');
+  if (parts.length !== 3) {
+    const error = new Error('Patient portal session is invalid. Please sign in again.');
+    error.status = 401;
+    throw error;
+  }
+  const signingInput = `${parts[0]}.${parts[1]}`;
+  const expected = crypto.createHmac('sha256', config.patientPortal.tokenSecret).update(signingInput).digest('base64url');
+  if (
+    expected.length !== parts[2].length
+    || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(parts[2]))
+  ) {
+    const error = new Error('Patient portal session is invalid. Please sign in again.');
+    error.status = 401;
+    throw error;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch (_error) {
+    const error = new Error('Patient portal session is invalid. Please sign in again.');
+    error.status = 401;
+    throw error;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const accountId = Number.parseInt(payload.sub ?? '', 10);
+  if (payload.iss !== TOKEN_ISSUER || !Number.isInteger(accountId) || accountId <= 0 || Number(payload.exp || 0) <= now) {
+    const error = new Error('Patient portal session expired. Please sign in again.');
+    error.status = 401;
+    throw error;
+  }
+  return {
+    accountId,
+    email: String(payload.email || ''),
+    tokenExpiresAt: new Date(Number(payload.exp) * 1000).toISOString()
+  };
+}
+
+function authenticatedAccountBody(body) {
+  return verifyPortalToken(requiredString(body, 'portalToken', 'Patient portal session'));
 }
 
 function publicMembershipPlan(row) {
@@ -161,6 +247,23 @@ function addQueryParam(url, key, value) {
   const parsed = new URL(url);
   parsed.searchParams.set(key, value);
   return parsed.toString();
+}
+
+function planMatches(plan, value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return [plan?.PlanKey, plan?.Title]
+    .some((candidate) => String(candidate || '').trim().toLowerCase() === normalized);
+}
+
+function hasUsableMembershipStatus(account) {
+  const status = String(account?.MembershipPaymentStatus || '').trim().toLowerCase();
+  if (!account?.StripeSubscriptionId) {
+    return Boolean(account?.MembershipPlan);
+  }
+  return ['active', 'trialing', 'paid'].includes(status);
 }
 
 function normalizePlanKey(value, fallback = '') {
@@ -445,13 +548,10 @@ export function parseMembershipPlanBody(body) {
 }
 
 export function parsePatientPortalCheckoutBody(body) {
-  const accountId = Number.parseInt(body.accountId ?? body.AccountId ?? '', 10);
   const membershipPlan = requiredString(body, 'membershipPlan', 'Membership plan').slice(0, 100);
-  if (!Number.isInteger(accountId) || accountId <= 0) {
-    throw badRequest('accountId is required.');
-  }
+  const session = authenticatedAccountBody(body);
   return {
-    accountId,
+    accountId: session.accountId,
     membershipPlan,
     successUrl: normalizeCheckoutUrl(
       optionalString(body, 'successUrl') || config.stripe.successUrl,
@@ -460,6 +560,31 @@ export function parsePatientPortalCheckoutBody(body) {
     cancelUrl: normalizeCheckoutUrl(
       optionalString(body, 'cancelUrl') || config.stripe.cancelUrl || optionalString(body, 'successUrl') || config.stripe.successUrl,
       'cancelUrl'
+    )
+  };
+}
+
+export function parsePatientPortalAccountBody(body) {
+  const session = authenticatedAccountBody(body);
+  return { accountId: session.accountId };
+}
+
+export function parsePatientPortalCheckoutVerifyBody(body) {
+  const session = authenticatedAccountBody(body);
+  const sessionId = requiredString(body, 'sessionId', 'Stripe checkout session').slice(0, 190);
+  return {
+    accountId: session.accountId,
+    sessionId
+  };
+}
+
+export function parsePatientPortalCustomerPortalBody(body) {
+  const session = authenticatedAccountBody(body);
+  return {
+    accountId: session.accountId,
+    returnUrl: normalizeCheckoutUrl(
+      optionalString(body, 'returnUrl') || config.stripe.customerPortalReturnUrl || config.stripe.successUrl,
+      'returnUrl'
     )
   };
 }
@@ -617,8 +742,10 @@ export async function registerPatientAccount(input) {
     );
 
     await connection.commit();
+    const account = rows[0];
     return {
-      account: publicAccount(rows[0]),
+      account: publicAccount(account),
+      ...issuePortalToken(account),
       linkedPatient: patient ? {
         patNum: patient.PatNum,
         firstName: patient.FName,
@@ -661,7 +788,8 @@ export async function loginPatientAccount(input) {
     account.LastLoginAt = new Date();
 
     return {
-      account: publicAccount(account)
+      account: publicAccount(account),
+      ...issuePortalToken(account)
     };
   } finally {
     connection.release();
@@ -1043,6 +1171,11 @@ export async function createMembershipCheckoutSession(input) {
     error.status = 400;
     throw error;
   }
+  if (planMatches(plan, account.MembershipPlan) && hasUsableMembershipStatus(account)) {
+    const error = new Error(`"${plan.Title}" is already your current membership plan.`);
+    error.status = 409;
+    throw error;
+  }
 
   const metadata = {
     accountId: String(account.AccountId),
@@ -1079,6 +1212,53 @@ export async function createMembershipCheckoutSession(input) {
   const session = await stripe().checkout.sessions.create(sessionPayload);
   return {
     sessionId: session.id,
+    url: session.url
+  };
+}
+
+export async function verifyMembershipCheckoutSession(input) {
+  await ensurePatientPortalTables();
+  const session = await stripe().checkout.sessions.retrieve(input.sessionId);
+  const sessionAccountId = Number.parseInt(session?.metadata?.accountId ?? session?.client_reference_id ?? '', 10);
+  if (sessionAccountId !== input.accountId) {
+    const error = new Error('Stripe checkout session does not belong to this patient portal account.');
+    error.status = 403;
+    throw error;
+  }
+  if (session.payment_status !== 'paid' && session.status !== 'complete') {
+    const error = new Error('Stripe checkout is not completed yet.');
+    error.status = 409;
+    throw error;
+  }
+  await completeCheckoutSession(session);
+  return getPatientAccount({ accountId: input.accountId });
+}
+
+export async function createMembershipCustomerPortalSession(input) {
+  await ensurePatientPortalTables();
+  const [accountRows] = await pool.execute(
+    `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
+     FROM luk_patient_accounts
+     WHERE AccountId = ?
+     LIMIT 1`,
+    [input.accountId]
+  );
+  const account = accountRows[0];
+  if (!account || account.Status !== 'active') {
+    const error = new Error('Patient account was not found or is inactive.');
+    error.status = 404;
+    throw error;
+  }
+  if (!account.StripeCustomerId) {
+    const error = new Error('No Stripe customer is linked to this membership yet.');
+    error.status = 400;
+    throw error;
+  }
+  const session = await stripe().billingPortal.sessions.create({
+    customer: account.StripeCustomerId,
+    return_url: input.returnUrl
+  });
+  return {
     url: session.url
   };
 }
