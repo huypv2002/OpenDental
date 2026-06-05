@@ -11,11 +11,10 @@ from urllib.parse import urljoin
 
 import requests
 from dotenv import load_dotenv
-from PySide6.QtCore import QDate, QSettings, QStringListModel, Qt, QTimer
+from PySide6.QtCore import QDate, QEvent, QPoint, QSettings, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
-    QCompleter,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -27,6 +26,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -233,6 +234,7 @@ class AuditTrailWindow(QMainWindow):
         self.all_patients: list[dict[str, Any]] = []
         self.filtered_patients: list[dict[str, Any]] = []
         self.patient_label_map: dict[str, dict[str, Any]] = {}
+        self.patient_popup_items: list[dict[str, Any]] = []
         self.current_patient: dict[str, Any] | None = None
         self.entries: list[dict[str, Any]] = []
         self.deleted_ids: list[int] = []
@@ -297,15 +299,16 @@ class AuditTrailWindow(QMainWindow):
         self.patient_search = QLineEdit()
         self.patient_search.setMinimumWidth(270)
         self.patient_search.setPlaceholderText("Patient name, phone, email, #")
-        self.patient_completer_model = QStringListModel([])
-        self.patient_completer = QCompleter(self.patient_completer_model, self)
-        self.patient_completer.setCaseSensitivity(Qt.CaseInsensitive)
-        self.patient_completer.setCompletionMode(QCompleter.UnfilteredPopupCompletion)
-        self.patient_completer.setMaxVisibleItems(12)
-        self.patient_completer.activated[str].connect(self.patient_completion_selected)
-        self.patient_search.setCompleter(self.patient_completer)
+        self.patient_search.installEventFilter(self)
         self.patient_search.textChanged.connect(self.filter_patients_local)
         self.patient_search.returnPressed.connect(self.find_patient_from_text)
+        self.patient_popup = QListWidget(self)
+        self.patient_popup.setObjectName("PatientPopup")
+        self.patient_popup.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.patient_popup.setFocusPolicy(Qt.NoFocus)
+        self.patient_popup.setUniformItemSizes(True)
+        self.patient_popup.itemClicked.connect(self.patient_popup_item_clicked)
+        self.patient_popup.hide()
 
         self.current_button = QPushButton("Current")
         self.current_button.clicked.connect(self.load_current_patient_entries)
@@ -368,6 +371,29 @@ class AuditTrailWindow(QMainWindow):
         grid.addWidget(self.dirty_badge, 2, 12)
         grid.setColumnStretch(5, 1)
         return panel
+
+    def eventFilter(self, watched: QWidget, event) -> bool:  # noqa: N802
+        if watched is self.patient_search and event.type() in (QEvent.FocusIn, QEvent.MouseButtonRelease):
+            QTimer.singleShot(0, self.show_patient_popup_for_current_text)
+            return False
+        if watched is self.patient_search and event.type() == QEvent.KeyPress:
+            key = event.key()
+            if self.patient_popup.isVisible() and key in (Qt.Key_Down, Qt.Key_Up):
+                row_count = self.patient_popup.count()
+                if row_count:
+                    current = self.patient_popup.currentRow()
+                    delta = 1 if key == Qt.Key_Down else -1
+                    self.patient_popup.setCurrentRow(max(0, min(row_count - 1, current + delta)))
+                return True
+            if self.patient_popup.isVisible() and key in (Qt.Key_Return, Qt.Key_Enter):
+                current = self.patient_popup.currentItem()
+                if current:
+                    self.patient_popup_item_clicked(current)
+                    return True
+            if self.patient_popup.isVisible() and key == Qt.Key_Escape:
+                self.patient_popup.hide()
+                return True
+        return super().eventFilter(watched, event)
 
     def build_table(self) -> QWidget:
         panel = QFrame()
@@ -473,29 +499,65 @@ class AuditTrailWindow(QMainWindow):
     def filter_patients_local(self, text: str) -> None:
         if self.suppress_patient_events:
             return
+        query = self.update_filtered_patients(text)
+        self.footer_text.setText(f"{len(self.filtered_patients)} patient(s) match. Choose an option or press Find.")
+        if query and self.filtered_patients:
+            self.show_patient_popup()
+        else:
+            self.patient_popup.hide()
+
+    def show_patient_popup_for_current_text(self) -> None:
+        if self.suppress_patient_events or self.loading_patients:
+            return
+        query = self.update_filtered_patients(self.patient_search.text())
+        if query and self.filtered_patients:
+            self.show_patient_popup()
+
+    def update_filtered_patients(self, text: str) -> str:
         query = str(text or "").strip().lower()
         self.filtered_patients = [patient for patient in self.all_patients if not query or query in patient_filter_blob(patient)]
         self.update_patient_completions(self.filtered_patients)
-        self.footer_text.setText(f"{len(self.filtered_patients)} patient(s) match. Choose a dropdown option or press Find.")
-        if query and self.filtered_patients:
-            self.patient_completer.complete()
+        return query
 
     def update_patient_completions(self, patients: list[dict[str, Any]]) -> None:
-        visible = patients[:200]
+        visible = list(patients)
         labels = [patient_audit_label(patient) for patient in visible]
         self.patient_label_map = {label: patient for label, patient in zip(labels, visible)}
-        self.patient_completer_model.setStringList(labels)
-        self.patient_completer.popup().setMinimumWidth(max(self.patient_search.width(), 360))
+        self.patient_popup_items = visible
+        self.patient_popup.clear()
+        for patient in visible:
+            item = QListWidgetItem(patient_audit_label(patient))
+            item.setData(Qt.UserRole, patient)
+            item.setToolTip(f"Phone: {patient.get('Phone', '')}\nEmail: {patient.get('Email', '')}")
+            self.patient_popup.addItem(item)
+        if self.patient_popup.count():
+            self.patient_popup.setCurrentRow(0)
+
+    def show_patient_popup(self) -> None:
+        if not self.patient_popup.count():
+            self.patient_popup.hide()
+            return
+        width = max(self.patient_search.width(), 420)
+        row_height = 26
+        screen = QApplication.screenAt(self.patient_search.mapToGlobal(QPoint(0, 0))) or QApplication.primaryScreen()
+        pos = self.patient_search.mapToGlobal(QPoint(0, self.patient_search.height() + 2))
+        available_bottom = screen.availableGeometry().bottom() if screen else pos.y() + 720
+        height = min(self.patient_popup.count() * row_height + 4, max(160, available_bottom - pos.y() - 12))
+        self.patient_popup.setGeometry(pos.x(), pos.y(), width, height)
+        self.patient_popup.show()
+        self.patient_popup.raise_()
 
     def show_all_patients(self) -> None:
         self.patient_search.clear()
         self.filtered_patients = list(self.all_patients)
         self.update_patient_completions(self.filtered_patients)
+        self.patient_popup.hide()
         self.footer_text.setText(f"Showing all loaded patients: {len(self.all_patients)}.")
 
-    def patient_completion_selected(self, label: str) -> None:
-        patient = self.patient_label_map.get(str(label))
+    def patient_popup_item_clicked(self, item: QListWidgetItem) -> None:
+        patient = item.data(Qt.UserRole)
         if patient:
+            self.patient_popup.hide()
             self.set_current_patient(patient, load_entries=True)
 
     def find_patient_from_text(self) -> None:
@@ -503,7 +565,9 @@ class AuditTrailWindow(QMainWindow):
             QMessageBox.information(self, "No patient", "No loaded patient matches that filter.")
             return
         label = self.patient_search.text().strip()
-        patient = self.patient_label_map.get(label) or self.filtered_patients[0]
+        current = self.patient_popup.currentItem() if self.patient_popup.isVisible() else None
+        patient = current.data(Qt.UserRole) if current else self.patient_label_map.get(label) or self.filtered_patients[0]
+        self.patient_popup.hide()
         self.set_current_patient(patient, load_entries=True)
 
     def load_current_patient_entries(self) -> None:
@@ -520,6 +584,7 @@ class AuditTrailWindow(QMainWindow):
         if not self.ensure_clean_before_change():
             return
         self.current_patient = patient
+        self.patient_popup.hide()
         self.suppress_patient_events = True
         self.patient_search.setText(patient_audit_label(patient))
         self.suppress_patient_events = False
@@ -742,16 +807,26 @@ QLineEdit, QComboBox, QDateEdit, QSpinBox {
   background: #ffffff;
   color: #111827;
 }
-QCompleter QAbstractItemView {
+#PatientPopup {
   border: 1px solid #9aa7b7;
+  border-radius: 4px;
   background: #ffffff;
-  selection-background-color: #b7d4e8;
-  selection-color: #111827;
+  color: #111827;
   outline: 0;
 }
-QCompleter QAbstractItemView::item {
-  min-height: 22px;
-  padding: 3px 7px;
+#PatientPopup::item {
+  min-height: 24px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #eef2f7;
+}
+#PatientPopup::item:hover {
+  background: #eef5ff;
+}
+#PatientPopup::item:selected {
+  selection-background-color: #b7d4e8;
+  selection-color: #111827;
+  background: #dcecff;
+  color: #0f2f65;
 }
 QComboBox::drop-down, QDateEdit::drop-down, QSpinBox::up-button, QSpinBox::down-button {
   width: 18px;
