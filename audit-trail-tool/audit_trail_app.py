@@ -271,6 +271,7 @@ class AuditTrailWindow(QMainWindow):
         self.current_patient: dict[str, Any] | None = None
         self.entries: list[dict[str, Any]] = []
         self.deleted_ids: list[int] = []
+        self.changed_entry_ids: set[int] = set()
         self.dirty = False
         self.loading_table = False
         self.loading_patients = False
@@ -539,6 +540,8 @@ class AuditTrailWindow(QMainWindow):
             self.footer_text.setText(f"Loaded {len(self.all_patients)} patient(s). Select a patient to load audit entries.")
             self.current_patient = None
             self.entries = []
+            self.changed_entry_ids.clear()
+            self.deleted_ids = []
             self.render_entries()
         except Exception as exc:
             QMessageBox.warning(self, "Patient load error", str(exc))
@@ -693,6 +696,7 @@ class AuditTrailWindow(QMainWindow):
             self.set_busy("Loading audit trail...")
             self.entries = self.repo.fetch_entries(pat_num, from_date, to_date, self.limit_rows.value())
             self.deleted_ids = []
+            self.changed_entry_ids.clear()
             self.render_entries()
             self.set_dirty(False)
             self.statusBar().showMessage(f"Loaded {len(self.entries)} audit row(s) for {patient_audit_label(self.current_patient)}.", 6000)
@@ -781,14 +785,18 @@ class AuditTrailWindow(QMainWindow):
             security_log_num = parse_int(entry.get("SecurityLogNum"))
             if security_log_num:
                 self.deleted_ids.append(security_log_num)
+                self.changed_entry_ids.discard(security_log_num)
             if 0 <= row < len(self.entries):
                 self.entries.pop(row)
         self.render_entries()
         self.set_dirty(True)
 
-    def table_item_changed(self, _item: QTableWidgetItem) -> None:
+    def table_item_changed(self, item: QTableWidgetItem) -> None:
         if self.loading_table:
             return
+        security_log_num = parse_int(self.row_to_entry(item.row()).get("SecurityLogNum"))
+        if security_log_num:
+            self.changed_entry_ids.add(security_log_num)
         self.entries = [self.row_to_entry(row) for row in range(self.table.rowCount())]
         self.set_dirty(True)
 
@@ -801,10 +809,19 @@ class AuditTrailWindow(QMainWindow):
         if hasattr(self, "footer_text"):
             self.footer_text.setText(f"{self.table.rowCount()} visible audit row(s). Deleted pending: {len(self.deleted_ids)}.")
 
-    def validate_entries(self) -> bool:
+    def changed_entries(self) -> list[tuple[int, dict[str, Any]]]:
+        changed: list[tuple[int, dict[str, Any]]] = []
         for row_index in range(self.table.rowCount()):
             raw = self.row_to_entry(row_index)
-            if not raw.get("LogText", "").strip():
+            security_log_num = parse_int(raw.get("SecurityLogNum"))
+            if not security_log_num or security_log_num in self.changed_entry_ids:
+                changed.append((row_index, raw))
+        return changed
+
+    def validate_entries(self, entries: list[tuple[int, dict[str, Any]]]) -> bool:
+        for row_index, raw in entries:
+            security_log_num = parse_int(raw.get("SecurityLogNum"))
+            if not security_log_num and not raw.get("LogText", "").strip():
                 QMessageBox.warning(self, "Missing Log Text", f"Row {row_index + 1} needs Log Text before saving.")
                 self.table.setCurrentCell(row_index, 7)
                 return False
@@ -818,16 +835,18 @@ class AuditTrailWindow(QMainWindow):
         if not self.current_patient:
             QMessageBox.information(self, "No patient", "Please select a patient first.")
             return False
-        if not self.validate_entries():
+        changed_entries = self.changed_entries()
+        if not self.validate_entries(changed_entries):
             return False
         pat_num = parse_int(self.current_patient.get("PatNum"))
-        entries = [self.row_to_entry(row) for row in range(self.table.rowCount())]
+        entries = [entry for _row_index, entry in changed_entries]
         try:
             self.set_busy("Saving audit trail...")
             result = self.repo.save_entries(pat_num, entries, self.deleted_ids)
             from_date, to_date = self.current_date_range()
             self.entries = self.repo.fetch_entries(pat_num, from_date, to_date, self.limit_rows.value())
             self.deleted_ids = []
+            self.changed_entry_ids.clear()
             self.render_entries()
             self.set_dirty(False)
             self.statusBar().showMessage(

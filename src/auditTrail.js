@@ -199,7 +199,7 @@ export async function saveAuditTrailEntries(body = {}) {
     let updated = 0;
     for (const raw of entries) {
       const entry = parseAuditEntry(raw);
-      if (!entry.logText) continue;
+      if (!entry.securityLogNum && !entry.logText) continue;
 
       const writable = {
         LogDateTime: entry.logDateTime,
