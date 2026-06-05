@@ -300,7 +300,7 @@ class AuditTrailWindow(QMainWindow):
         self.patient_completer_model = QStringListModel([])
         self.patient_completer = QCompleter(self.patient_completer_model, self)
         self.patient_completer.setCaseSensitivity(Qt.CaseInsensitive)
-        self.patient_completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.patient_completer.setCompletionMode(QCompleter.UnfilteredPopupCompletion)
         self.patient_completer.setMaxVisibleItems(12)
         self.patient_completer.activated[str].connect(self.patient_completion_selected)
         self.patient_search.setCompleter(self.patient_completer)
@@ -485,6 +485,7 @@ class AuditTrailWindow(QMainWindow):
         labels = [patient_audit_label(patient) for patient in visible]
         self.patient_label_map = {label: patient for label, patient in zip(labels, visible)}
         self.patient_completer_model.setStringList(labels)
+        self.patient_completer.popup().setMinimumWidth(max(self.patient_search.width(), 360))
 
     def show_all_patients(self) -> None:
         self.patient_search.clear()
