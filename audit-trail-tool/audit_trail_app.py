@@ -225,7 +225,7 @@ class AuditTrailWindow(QMainWindow):
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self.resize(1680, 960)
-        self.setStyleSheet(APP_STYLES)
+        self.setStyleSheet(APP_STYLES.replace("__DOWN_ARROW_ICON__", str((APP_DIR / "assets" / "down-arrow.svg").as_posix())))
         self.setStatusBar(QStatusBar())
         self.setCentralWidget(self.build_ui())
         QTimer.singleShot(250, self.initial_load)
@@ -274,12 +274,11 @@ class AuditTrailWindow(QMainWindow):
         self.limit_rows.setRange(1, 10000)
         self.limit_rows.setValue(500)
 
-        self.patient_combo = QComboBox()
-        self.patient_combo.setEditable(True)
-        self.patient_combo.setMinimumWidth(270)
-        self.patient_combo.lineEdit().setPlaceholderText("Patient name, phone, email, #")
-        self.patient_combo.lineEdit().textEdited.connect(self.filter_patients_local)
-        self.patient_combo.activated.connect(self.patient_combo_activated)
+        self.patient_search = QLineEdit()
+        self.patient_search.setMinimumWidth(270)
+        self.patient_search.setPlaceholderText("Patient name, phone, email, #")
+        self.patient_search.textChanged.connect(self.filter_patients_local)
+        self.patient_search.returnPressed.connect(self.find_patient_from_text)
 
         self.current_button = QPushButton("Current")
         self.current_button.clicked.connect(self.load_current_patient_entries)
@@ -317,7 +316,7 @@ class AuditTrailWindow(QMainWindow):
         grid.addWidget(QLabel("Permission"), 0, 2)
         grid.addWidget(self.permission_combo, 0, 3)
         grid.addWidget(QLabel("Patient"), 0, 4)
-        grid.addWidget(self.patient_combo, 0, 5)
+        grid.addWidget(self.patient_search, 0, 5)
         grid.addWidget(QLabel("Previous From Date"), 0, 7)
         grid.addWidget(self.previous_from_date, 0, 8)
         grid.addWidget(self.refresh_button, 0, 9)
@@ -428,11 +427,9 @@ class AuditTrailWindow(QMainWindow):
             self.set_busy("Loading patients...")
             self.all_patients = self.repo.fetch_patients()
             self.filtered_patients = list(self.all_patients)
-            self.populate_patient_combo(self.filtered_patients)
             self.statusBar().showMessage(f"Loaded {len(self.all_patients)} patient(s). Search filters locally.", 6000)
             self.footer_text.setText(f"Loaded {len(self.all_patients)} patient(s). Select a patient to load audit entries.")
             if self.filtered_patients:
-                self.patient_combo.setCurrentIndex(0)
                 self.set_current_patient(self.filtered_patients[0], load_entries=True)
         except Exception as exc:
             QMessageBox.warning(self, "Patient load error", str(exc))
@@ -441,47 +438,27 @@ class AuditTrailWindow(QMainWindow):
             self.loading_patients = False
             self.clear_busy()
 
-    def populate_patient_combo(self, patients: list[dict[str, Any]], preserve_text: str = "") -> None:
-        self.suppress_patient_events = True
-        self.patient_combo.clear()
-        for patient in patients:
-            self.patient_combo.addItem(patient_audit_label(patient), patient)
-        if preserve_text:
-            self.patient_combo.setEditText(preserve_text)
-        self.suppress_patient_events = False
-
     def filter_patients_local(self, text: str) -> None:
+        if self.suppress_patient_events:
+            return
         query = str(text or "").strip().lower()
         self.filtered_patients = [patient for patient in self.all_patients if not query or query in patient_filter_blob(patient)]
-        self.populate_patient_combo(self.filtered_patients[:500], preserve_text=text)
         self.footer_text.setText(f"{len(self.filtered_patients)} patient(s) match. Press Find or choose one from the list.")
 
     def show_all_patients(self) -> None:
-        self.patient_combo.lineEdit().clear()
+        self.patient_search.clear()
         self.filtered_patients = list(self.all_patients)
-        self.populate_patient_combo(self.filtered_patients[:500])
         self.footer_text.setText(f"Showing all loaded patients: {len(self.all_patients)}.")
-
-    def selected_patient_from_combo(self) -> dict[str, Any] | None:
-        data = self.patient_combo.currentData()
-        return data if isinstance(data, dict) else None
-
-    def patient_combo_activated(self, _index: int) -> None:
-        if self.suppress_patient_events or self.loading_patients:
-            return
-        patient = self.selected_patient_from_combo()
-        if patient:
-            self.set_current_patient(patient, load_entries=True)
 
     def find_patient_from_text(self) -> None:
         if not self.filtered_patients:
             QMessageBox.information(self, "No patient", "No loaded patient matches that filter.")
             return
-        patient = self.selected_patient_from_combo() or self.filtered_patients[0]
+        patient = self.filtered_patients[0]
         self.set_current_patient(patient, load_entries=True)
 
     def load_current_patient_entries(self) -> None:
-        patient = self.current_patient or self.selected_patient_from_combo()
+        patient = self.current_patient
         if not patient:
             QMessageBox.information(self, "No patient", "Please select a patient first.")
             return
@@ -495,7 +472,7 @@ class AuditTrailWindow(QMainWindow):
             return
         self.current_patient = patient
         self.suppress_patient_events = True
-        self.patient_combo.setEditText(patient_audit_label(patient))
+        self.patient_search.setText(patient_audit_label(patient))
         self.suppress_patient_events = False
         if load_entries:
             self.reload_entries()
@@ -720,6 +697,21 @@ QComboBox::drop-down, QDateEdit::drop-down, QSpinBox::up-button, QSpinBox::down-
   width: 18px;
   border-left: 1px solid #c9d0d8;
   background: #eef2f7;
+}
+QComboBox::down-arrow, QDateEdit::down-arrow {
+  image: url("__DOWN_ARROW_ICON__");
+  width: 10px;
+  height: 10px;
+}
+QSpinBox::up-arrow {
+  image: url("__DOWN_ARROW_ICON__");
+  width: 10px;
+  height: 10px;
+}
+QSpinBox::down-arrow {
+  image: url("__DOWN_ARROW_ICON__");
+  width: 10px;
+  height: 10px;
 }
 QPushButton {
   border: 1px solid #9aa7b7;
