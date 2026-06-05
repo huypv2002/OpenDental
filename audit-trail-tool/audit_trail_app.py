@@ -242,6 +242,11 @@ class AuditTrailWindow(QMainWindow):
         self.loading_table = False
         self.loading_patients = False
         self.suppress_patient_events = False
+        self.pending_patient_filter_text = ""
+        self.patient_filter_timer = QTimer(self)
+        self.patient_filter_timer.setSingleShot(True)
+        self.patient_filter_timer.setInterval(180)
+        self.patient_filter_timer.timeout.connect(self.apply_pending_patient_filter)
 
         self.setWindowTitle("Audit Trail")
         if APP_ICON_PATH.exists():
@@ -402,7 +407,7 @@ class AuditTrailWindow(QMainWindow):
                 self.patient_popup.hide()
                 return True
         if watched is self.patient_search and event.type() == QEvent.KeyRelease:
-            self.filter_patients_local(self.patient_search.text())
+            self.schedule_patient_filter(self.patient_search.text())
             return False
         return super().eventFilter(watched, event)
 
@@ -508,11 +513,21 @@ class AuditTrailWindow(QMainWindow):
             self.clear_busy()
 
     def schedule_patient_filter(self, text: str) -> None:
-        self.filter_patients_local(text)
+        if self.suppress_patient_events:
+            return
+        self.pending_patient_filter_text = text
+        self.show_patient_filter_loading()
+        self.patient_filter_timer.start()
+
+    def apply_pending_patient_filter(self) -> None:
+        self.filter_patients_local(self.pending_patient_filter_text)
 
     def filter_patients_local(self, text: str) -> None:
         if self.suppress_patient_events:
             return
+        was_visible = self.patient_popup.isVisible()
+        if was_visible:
+            self.patient_popup.hide()
         self.update_filtered_patients(text)
         self.footer_text.setText(f"{len(self.filtered_patients)} patient(s) match. Choose an option or press Find.")
         if self.filtered_patients:
@@ -520,8 +535,23 @@ class AuditTrailWindow(QMainWindow):
         else:
             self.patient_popup.hide()
 
+    def show_patient_filter_loading(self) -> None:
+        self.patient_label_map = {}
+        self.patient_popup_items = []
+        self.patient_popup.setUpdatesEnabled(False)
+        self.patient_popup.clear()
+        item = QListWidgetItem("Loading patients...")
+        item.setFlags(Qt.NoItemFlags)
+        self.patient_popup.addItem(item)
+        self.patient_popup.setUpdatesEnabled(True)
+        self.patient_popup.doItemsLayout()
+        self.patient_popup.viewport().update()
+        self.show_patient_popup()
+
     def show_patient_popup_for_current_text(self) -> None:
         if self.suppress_patient_events or self.loading_patients:
+            return
+        if self.patient_filter_timer.isActive():
             return
         self.update_filtered_patients(self.patient_search.text())
         if self.filtered_patients:
@@ -538,6 +568,7 @@ class AuditTrailWindow(QMainWindow):
         labels = [patient_audit_label(patient) for patient in visible]
         self.patient_label_map = {label: patient for label, patient in zip(labels, visible)}
         self.patient_popup_items = visible
+        self.patient_popup.setUpdatesEnabled(False)
         self.patient_popup.clear()
         for patient in visible:
             item = QListWidgetItem(patient_audit_label(patient))
@@ -546,6 +577,10 @@ class AuditTrailWindow(QMainWindow):
             self.patient_popup.addItem(item)
         if self.patient_popup.count():
             self.patient_popup.setCurrentRow(0)
+        self.patient_popup.setUpdatesEnabled(True)
+        self.patient_popup.doItemsLayout()
+        self.patient_popup.viewport().update()
+        self.patient_popup.repaint()
 
     def show_patient_popup(self) -> None:
         if not self.patient_popup.count():
@@ -559,6 +594,8 @@ class AuditTrailWindow(QMainWindow):
         self.patient_popup.setGeometry(pos.x(), pos.y(), width, height)
         self.patient_popup.show()
         self.patient_popup.raise_()
+        self.patient_popup.doItemsLayout()
+        self.patient_popup.viewport().repaint()
 
     def show_all_patients(self) -> None:
         self.patient_search.clear()
