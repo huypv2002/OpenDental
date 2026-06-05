@@ -304,7 +304,6 @@ class AuditTrailWindow(QMainWindow):
         self.patient_search.returnPressed.connect(self.find_patient_from_text)
         self.patient_popup = QListWidget(self)
         self.patient_popup.setObjectName("PatientPopup")
-        self.patient_popup.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
         self.patient_popup.setFocusPolicy(Qt.NoFocus)
         self.patient_popup.setUniformItemSizes(True)
         self.patient_popup.itemClicked.connect(self.patient_popup_item_clicked)
@@ -539,10 +538,9 @@ class AuditTrailWindow(QMainWindow):
             return
         width = max(self.patient_search.width(), 420)
         row_height = 26
-        screen = QApplication.screenAt(self.patient_search.mapToGlobal(QPoint(0, 0))) or QApplication.primaryScreen()
-        pos = self.patient_search.mapToGlobal(QPoint(0, self.patient_search.height() + 2))
-        available_bottom = screen.availableGeometry().bottom() if screen else pos.y() + 720
-        height = min(self.patient_popup.count() * row_height + 4, max(160, available_bottom - pos.y() - 12))
+        pos = self.patient_search.mapTo(self, QPoint(0, self.patient_search.height() + 2))
+        available_bottom = self.height() - 18
+        height = min(self.patient_popup.count() * row_height + 4, max(160, available_bottom - pos.y()))
         self.patient_popup.setGeometry(pos.x(), pos.y(), width, height)
         self.patient_popup.show()
         self.patient_popup.raise_()
