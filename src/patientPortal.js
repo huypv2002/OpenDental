@@ -326,20 +326,20 @@ async function ensureMembershipPlanDefaults() {
   const defaults = [
     {
       planKey: 'annual',
-      badge: 'Annual',
-      title: 'Annual Membership Plan',
-      priceLabel: '$140/year',
-      cost: 140,
+      badge: 'Discount 10%',
+      title: 'Annual Membership',
+      priceLabel: '$150/year',
+      cost: 150,
       checkoutUrl: '3YHUJ4ZLFDM5J7BM',
       displayOrder: 10,
       content: '<p><strong>Annual Membership Plan includes:</strong></p><ul><li>1 Dental Cleaning Per Year</li><li>Unlimited Diagnostic X-Rays</li><li>Unlimited Consultations</li></ul>'
     },
     {
       planKey: 'gold-annual',
-      badge: 'Gold',
-      title: 'Gold Annual Membership Plan',
-      priceLabel: '$190/year',
-      cost: 190,
+      badge: 'Discount 15%',
+      title: 'Gold Membership',
+      priceLabel: '$220/year',
+      cost: 220,
       checkoutUrl: 'TGD4NDP3MJLQ6MM',
       displayOrder: 20,
       isFeatured: 1,
@@ -347,10 +347,10 @@ async function ensureMembershipPlanDefaults() {
     },
     {
       planKey: 'vip-annual',
-      badge: 'VIP',
-      title: 'VIP Annual Membership Plan',
-      priceLabel: '$240/year',
-      cost: 240,
+      badge: 'Discount 25%',
+      title: 'Diamond Membership',
+      priceLabel: '$350/year',
+      cost: 350,
       checkoutUrl: 'TGD4NDP3MJLQ6MM',
       displayOrder: 30,
       content: '<p><strong>Annual Membership Plan includes:</strong></p><ul><li>3 Dental Cleanings Per Year</li><li>Unlimited Diagnostic X-Rays</li><li>Unlimited Consultations</li></ul>'
