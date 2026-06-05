@@ -4,28 +4,32 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
 import requests
 from dotenv import load_dotenv
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QDate, QSettings, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
-    QFrame,
+    QComboBox,
+    QDateEdit,
+    QDialog,
+    QDialogButtonBox,
     QFormLayout,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QStatusBar,
     QTableWidget,
     QTableWidgetItem,
@@ -41,14 +45,21 @@ BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 
 ENTRY_COLUMNS = [
     ("SecurityLogNum", "ID", False),
-    ("LogDateTime", "Date/time", True),
-    ("PermType", "Perm type", True),
+    ("Date", "Date", True),
+    ("Time", "Time", True),
+    ("Patient", "Patient", False),
     ("UserNum", "User", True),
-    ("FKey", "FKey", True),
-    ("LogText", "Audit text", True),
+    ("PermType", "Permission", True),
     ("CompName", "Computer", True),
-    ("DateTPrevious", "Previous date", True),
+    ("LogText", "Log Text", True),
+    ("LogSource", "Log Source", True),
+    ("DateTPrevious", "Last Edit", True),
 ]
+
+
+def today_qdate(days: int = 0) -> QDate:
+    current = date.today() + timedelta(days=days)
+    return QDate(current.year, current.month, current.day)
 
 
 def now_mysql() -> str:
@@ -57,13 +68,47 @@ def now_mysql() -> str:
 
 def parse_int(value: Any, fallback: int = 0) -> int:
     try:
-        return int(str(value or "").strip())
+        return int(str(value if value is not None else "").strip())
     except ValueError:
         return fallback
 
 
 def patient_name(row: dict[str, Any]) -> str:
     return " ".join(str(row.get(key) or "").strip() for key in ("FName", "LName")).strip() or f"Patient #{row.get('PatNum', '')}"
+
+
+def patient_audit_label(row: dict[str, Any]) -> str:
+    name = f"{str(row.get('LName') or '').strip()}, {str(row.get('FName') or '').strip()}".strip(", ")
+    return f"{row.get('PatNum', '')}-{name}".strip("-")
+
+
+def patient_filter_blob(row: dict[str, Any]) -> str:
+    return " ".join(
+        str(row.get(key) or "")
+        for key in ("PatNum", "FName", "LName", "PatientName", "Phone", "WirelessPhone", "HmPhone", "WkPhone", "Email", "Birthdate")
+    ).lower()
+
+
+def split_datetime(value: Any) -> tuple[str, str]:
+    text = str(value or "").strip().replace("T", " ")
+    if not text:
+        return "", ""
+    if " " not in text:
+        return text[:10], ""
+    date_part, time_part = text.split(" ", 1)
+    return date_part[:10], time_part[:8]
+
+
+def join_datetime(date_text: str, time_text: str) -> str:
+    date_part = str(date_text or "").strip()
+    time_part = str(time_text or "").strip()
+    if not date_part:
+        return now_mysql()
+    if not time_part:
+        time_part = "00:00:00"
+    if len(time_part) == 5:
+        time_part = f"{time_part}:00"
+    return f"{date_part} {time_part[:8]}"
 
 
 @dataclass
@@ -107,7 +152,7 @@ class BridgeClient:
             method,
             self.endpoint(path),
             headers={"Authorization": f"Bearer {self.config.api_token}"},
-            timeout=25,
+            timeout=30,
             **kwargs,
         )
         try:
@@ -121,12 +166,16 @@ class BridgeClient:
     def test(self) -> None:
         self.request("GET", "/health")
 
-    def search_patients(self, query: str) -> list[dict[str, Any]]:
-        data = self.request("GET", "/api/audit-trail/patients", params={"q": query.strip(), "limit": 150})
+    def fetch_patients(self) -> list[dict[str, Any]]:
+        data = self.request("GET", "/api/audit-trail/patients", params={"limit": 5000})
         return data.get("patients") or []
 
-    def fetch_entries(self, pat_num: int) -> list[dict[str, Any]]:
-        data = self.request("GET", "/api/audit-trail/entries", params={"patNum": pat_num, "limit": 400})
+    def fetch_entries(self, pat_num: int, from_date: str, to_date: str, limit: int) -> list[dict[str, Any]]:
+        data = self.request(
+            "GET",
+            "/api/audit-trail/entries",
+            params={"patNum": pat_num, "fromDate": from_date, "toDate": to_date, "limit": limit},
+        )
         return data.get("entries") or []
 
     def save_entries(self, pat_num: int, entries: list[dict[str, Any]], delete_ids: list[int]) -> dict[str, Any]:
@@ -137,181 +186,204 @@ class BridgeClient:
         )
 
 
+class SettingsDialog(QDialog):
+    def __init__(self, config: AppConfig, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Bridge Settings")
+        self.setModal(True)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.bridge_url = QLineEdit(config.bridge_url)
+        self.api_token = QLineEdit(config.api_token)
+        self.api_token.setEchoMode(QLineEdit.Password)
+        form.addRow("Bridge URL", self.bridge_url)
+        form.addRow("API token", self.api_token)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+
 class AuditTrailWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.config = AppConfig.load()
         self.repo = BridgeClient(self.config)
         self.settings = QSettings("LUK Dental", "Audit Trail Tool")
+        self.all_patients: list[dict[str, Any]] = []
+        self.filtered_patients: list[dict[str, Any]] = []
         self.current_patient: dict[str, Any] | None = None
-        self.patients: list[dict[str, Any]] = []
         self.entries: list[dict[str, Any]] = []
         self.deleted_ids: list[int] = []
         self.dirty = False
         self.loading_table = False
+        self.loading_patients = False
+        self.suppress_patient_events = False
 
-        self.setWindowTitle("LUK Dental Audit Trail Tool")
+        self.setWindowTitle("Audit Trail")
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
-        self.resize(1480, 880)
+        self.resize(1680, 960)
         self.setStyleSheet(APP_STYLES)
         self.setStatusBar(QStatusBar())
         self.setCentralWidget(self.build_ui())
         QTimer.singleShot(250, self.initial_load)
 
-    def card(self, object_name: str = "Card") -> QFrame:
-        frame = QFrame()
-        frame.setObjectName(object_name)
-        return frame
-
     def build_ui(self) -> QWidget:
         page = QWidget()
-        root = QVBoxLayout(page)
-        root.setContentsMargins(14, 12, 14, 12)
-        root.setSpacing(9)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(6, 5, 6, 5)
+        layout.setSpacing(4)
 
-        hero = self.card("HeroCard")
-        hero_layout = QHBoxLayout(hero)
-        hero_layout.setContentsMargins(16, 12, 16, 12)
-        title_box = QVBoxLayout()
-        eyebrow = QLabel("LUK DENTAL")
-        eyebrow.setObjectName("Eyebrow")
-        title = QLabel("Audit trail editor")
-        title.setObjectName("HeroTitle")
-        subtitle = QLabel("Search a patient, edit security log rows in the grid, then save all changes to Open Dental through the bridge.")
-        subtitle.setObjectName("HeroSubtitle")
-        title_box.addWidget(eyebrow)
-        title_box.addWidget(title)
-        title_box.addWidget(subtitle)
-        hero_layout.addLayout(title_box)
-        hero_layout.addStretch()
-        self.dirty_badge = QLabel("Saved")
-        self.dirty_badge.setObjectName("Badge")
-        hero_layout.addWidget(self.dirty_badge)
-        root.addWidget(hero)
-
-        body = QHBoxLayout()
-        body.setSpacing(12)
-        body.addWidget(self.build_patient_panel(), 0)
-        body.addWidget(self.build_entry_panel(), 1)
-        root.addLayout(body, 1)
+        self.title_bar = QLabel("  Audit Trail")
+        self.title_bar.setObjectName("TitleBar")
+        layout.addWidget(self.title_bar)
+        layout.addWidget(self.build_filters())
+        layout.addWidget(self.build_table(), 1)
         return page
 
-    def build_patient_panel(self) -> QWidget:
-        panel = self.card()
-        panel.setMinimumWidth(330)
-        panel.setMaximumWidth(430)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(8)
+    def build_filters(self) -> QWidget:
+        panel = QFrame()
+        panel.setObjectName("FilterPanel")
+        grid = QGridLayout(panel)
+        grid.setContentsMargins(12, 9, 12, 9)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(5)
 
-        heading = QLabel("Patients")
-        heading.setObjectName("SectionTitle")
-        layout.addWidget(heading)
+        self.from_date = QDateEdit(today_qdate(-10))
+        self.from_date.setCalendarPopup(True)
+        self.from_date.setDisplayFormat("MM/dd/yyyy")
+        self.to_date = QDateEdit(today_qdate())
+        self.to_date.setCalendarPopup(True)
+        self.to_date.setDisplayFormat("MM/dd/yyyy")
+        self.previous_from_date = QDateEdit(today_qdate(-20))
+        self.previous_from_date.setCalendarPopup(True)
+        self.previous_from_date.setDisplayFormat("MM/dd/yyyy")
+        self.previous_to_date = QDateEdit(today_qdate(-10))
+        self.previous_to_date.setCalendarPopup(True)
+        self.previous_to_date.setDisplayFormat("MM/dd/yyyy")
 
-        search_row = QHBoxLayout()
-        self.patient_search = QLineEdit()
-        self.patient_search.setPlaceholderText("Name, phone, email, patient #")
-        self.patient_search.returnPressed.connect(self.search_patients)
-        search_button = QPushButton("Search")
-        search_button.setObjectName("PrimaryButton")
-        search_button.clicked.connect(self.search_patients)
-        search_row.addWidget(self.patient_search)
-        search_row.addWidget(search_button)
-        layout.addLayout(search_row)
+        self.permission_combo = QComboBox()
+        self.permission_combo.addItems(["All"])
+        self.user_combo = QComboBox()
+        self.user_combo.addItems(["All"])
+        self.log_source_combo = QComboBox()
+        self.log_source_combo.addItems(["All"])
+        self.limit_rows = QSpinBox()
+        self.limit_rows.setRange(1, 10000)
+        self.limit_rows.setValue(500)
 
-        self.patient_list = QListWidget()
-        self.patient_list.setObjectName("PatientList")
-        self.patient_list.currentRowChanged.connect(self.patient_selected)
-        layout.addWidget(self.patient_list, 1)
+        self.patient_combo = QComboBox()
+        self.patient_combo.setEditable(True)
+        self.patient_combo.setMinimumWidth(270)
+        self.patient_combo.lineEdit().setPlaceholderText("Patient name, phone, email, #")
+        self.patient_combo.lineEdit().textEdited.connect(self.filter_patients_local)
+        self.patient_combo.activated.connect(self.patient_combo_activated)
 
-        self.patient_detail = QLabel("No patient selected.")
-        self.patient_detail.setObjectName("Muted")
-        self.patient_detail.setWordWrap(True)
-        layout.addWidget(self.patient_detail)
-
-        settings = self.card("InsetCard")
-        settings_layout = QFormLayout(settings)
-        settings_layout.setContentsMargins(12, 10, 12, 10)
-        settings_layout.setSpacing(7)
-        self.bridge_url = QLineEdit(self.config.bridge_url)
-        self.api_token = QLineEdit(self.config.api_token)
-        self.api_token.setEchoMode(QLineEdit.Password)
-        settings_layout.addRow("Bridge URL", self.bridge_url)
-        settings_layout.addRow("API token", self.api_token)
-        settings_buttons = QHBoxLayout()
-        test_button = QPushButton("Test")
-        test_button.clicked.connect(self.test_bridge)
-        save_button = QPushButton("Save settings")
-        save_button.clicked.connect(self.save_settings)
-        settings_buttons.addStretch()
-        settings_buttons.addWidget(test_button)
-        settings_buttons.addWidget(save_button)
-        settings_layout.addRow(settings_buttons)
-        layout.addWidget(settings)
-        return panel
-
-    def build_entry_panel(self) -> QWidget:
-        panel = self.card()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        top = QFrame()
-        top.setObjectName("Toolbar")
-        top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(12, 10, 12, 10)
-        self.entry_title = QLabel("Audit entries")
-        self.entry_title.setObjectName("SectionTitle")
-        top_layout.addWidget(self.entry_title)
-        top_layout.addStretch()
-        self.reload_button = QPushButton("Reload")
-        self.reload_button.clicked.connect(self.reload_entries)
-        self.add_button = QPushButton("Add row")
+        self.current_button = QPushButton("Current")
+        self.current_button.clicked.connect(self.load_current_patient_entries)
+        self.find_button = QPushButton("Find")
+        self.find_button.clicked.connect(self.find_patient_from_text)
+        self.all_button = QPushButton("All")
+        self.all_button.clicked.connect(self.show_all_patients)
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.clicked.connect(self.reload_entries)
+        self.print_button = QPushButton("Print")
+        self.print_button.clicked.connect(lambda: QMessageBox.information(self, "Print", "Print export is not wired yet."))
+        self.add_button = QPushButton("Add")
         self.add_button.clicked.connect(self.add_entry_row)
-        self.delete_button = QPushButton("Delete selected")
+        self.delete_button = QPushButton("Delete")
         self.delete_button.clicked.connect(self.delete_selected_rows)
         self.save_button = QPushButton("Save")
         self.save_button.setObjectName("PrimaryButton")
         self.save_button.clicked.connect(self.save_entries)
-        top_layout.addWidget(self.reload_button)
-        top_layout.addWidget(self.add_button)
-        top_layout.addWidget(self.delete_button)
-        top_layout.addWidget(self.save_button)
-        layout.addWidget(top)
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.clicked.connect(self.open_settings)
+        self.dirty_badge = QLabel("Saved")
+        self.dirty_badge.setObjectName("DirtyBadge")
+        patient_actions = QWidget()
+        patient_actions.setObjectName("InlineActions")
+        patient_actions_layout = QHBoxLayout(patient_actions)
+        patient_actions_layout.setContentsMargins(0, 0, 0, 0)
+        patient_actions_layout.setSpacing(8)
+        patient_actions_layout.addWidget(self.current_button)
+        patient_actions_layout.addWidget(self.find_button)
+        patient_actions_layout.addWidget(self.all_button)
+        patient_actions_layout.addStretch()
+
+        grid.addWidget(QLabel("From Date"), 0, 0)
+        grid.addWidget(self.from_date, 0, 1)
+        grid.addWidget(QLabel("Permission"), 0, 2)
+        grid.addWidget(self.permission_combo, 0, 3)
+        grid.addWidget(QLabel("Patient"), 0, 4)
+        grid.addWidget(self.patient_combo, 0, 5)
+        grid.addWidget(QLabel("Previous From Date"), 0, 7)
+        grid.addWidget(self.previous_from_date, 0, 8)
+        grid.addWidget(self.refresh_button, 0, 9)
+        grid.addWidget(self.add_button, 0, 10)
+        grid.addWidget(self.delete_button, 0, 11)
+        grid.addWidget(self.save_button, 0, 12)
+
+        grid.addWidget(QLabel("To Date"), 1, 0)
+        grid.addWidget(self.to_date, 1, 1)
+        grid.addWidget(QLabel("User"), 1, 2)
+        grid.addWidget(self.user_combo, 1, 3)
+        grid.addWidget(patient_actions, 1, 5, 1, 3)
+        grid.addWidget(QLabel("To Date"), 1, 8)
+        grid.addWidget(self.previous_to_date, 1, 9)
+        grid.addWidget(QLabel("Limit Rows"), 1, 10)
+        grid.addWidget(self.limit_rows, 1, 11)
+        grid.addWidget(self.print_button, 1, 12)
+
+        grid.addWidget(QLabel("LogSource"), 2, 0)
+        grid.addWidget(self.log_source_combo, 2, 1)
+        grid.addWidget(self.settings_button, 2, 11)
+        grid.addWidget(self.dirty_badge, 2, 12)
+        grid.setColumnStretch(5, 1)
+        return panel
+
+    def build_table(self) -> QWidget:
+        panel = QFrame()
+        panel.setObjectName("TablePanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QLabel("Audit Trail")
+        header.setObjectName("GridTitle")
+        header.setAlignment(Qt.AlignCenter)
+        layout.addWidget(header)
 
         self.table = QTableWidget(0, len(ENTRY_COLUMNS))
         self.table.setHorizontalHeaderLabels([label for _key, label, _editable in ENTRY_COLUMNS])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.ExtendedSelection)
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(False)
+        self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(34)
-        self.table.verticalHeader().setMinimumSectionSize(30)
+        self.table.verticalHeader().setDefaultSectionSize(24)
+        self.table.verticalHeader().setMinimumSectionSize(22)
         self.table.itemChanged.connect(self.table_item_changed)
         self.configure_columns()
         layout.addWidget(self.table, 1)
 
-        footer = QFrame()
-        footer.setObjectName("Footer")
-        footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(12, 8, 12, 8)
-        self.footer_text = QLabel("Select a patient to load audit entries.")
-        self.footer_text.setObjectName("Muted")
-        footer_layout.addWidget(self.footer_text)
-        footer_layout.addStretch()
-        layout.addWidget(footer)
+        self.footer_text = QLabel("Loading patients...")
+        self.footer_text.setObjectName("Footer")
+        layout.addWidget(self.footer_text)
         return panel
 
     def configure_columns(self) -> None:
-        widths = [62, 135, 78, 64, 64, 420, 110, 135]
+        widths = [0, 78, 82, 220, 90, 180, 100, 420, 150, 180]
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        header.setSectionResizeMode(7, QHeaderView.Stretch)
         for index, width in enumerate(widths):
             self.table.setColumnWidth(index, width)
-        header.setStretchLastSection(False)
+        self.table.setColumnHidden(0, True)
+
+    def initial_load(self) -> None:
+        self.load_patients()
 
     def set_busy(self, text: str) -> None:
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -320,10 +392,16 @@ class AuditTrailWindow(QMainWindow):
     def clear_busy(self) -> None:
         QApplication.restoreOverrideCursor()
 
-    def initial_load(self) -> None:
-        query = self.patient_search.text().strip()
-        if query:
-            self.search_patients()
+    def open_settings(self) -> None:
+        dialog = SettingsDialog(self.config, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self.config.bridge_url = dialog.bridge_url.text().strip()
+        self.config.api_token = dialog.api_token.text().strip()
+        self.config.save()
+        self.repo = BridgeClient(self.config)
+        self.statusBar().showMessage("Settings saved.", 4000)
+        self.load_patients()
 
     def ensure_clean_before_change(self) -> bool:
         if not self.dirty:
@@ -331,7 +409,7 @@ class AuditTrailWindow(QMainWindow):
         choice = QMessageBox.question(
             self,
             "Unsaved audit changes",
-            "You have unsaved changes in the audit grid. Save before changing patient?",
+            "You have unsaved changes in the audit grid. Save before continuing?",
             QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
             QMessageBox.Save,
         )
@@ -342,70 +420,88 @@ class AuditTrailWindow(QMainWindow):
             return True
         return False
 
-    def save_settings(self) -> None:
-        self.config.bridge_url = self.bridge_url.text().strip()
-        self.config.api_token = self.api_token.text().strip()
-        self.config.save()
-        self.repo = BridgeClient(self.config)
-        self.statusBar().showMessage("Settings saved.", 4000)
-
-    def test_bridge(self) -> None:
-        self.save_settings()
-        try:
-            self.set_busy("Testing bridge...")
-            self.repo.test()
-            self.statusBar().showMessage("Bridge connection OK.", 5000)
-            QMessageBox.information(self, "Bridge OK", "Bridge connection is working.")
-        except Exception as exc:
-            QMessageBox.warning(self, "Bridge error", str(exc))
-        finally:
-            self.clear_busy()
-
-    def search_patients(self) -> None:
+    def load_patients(self) -> None:
         if not self.ensure_clean_before_change():
             return
-        self.save_settings()
-        query = self.patient_search.text().strip()
         try:
-            self.set_busy("Searching patients...")
-            self.patients = self.repo.search_patients(query)
-            self.patient_list.clear()
-            for patient in self.patients:
-                item = QListWidgetItem(f"{patient_name(patient)}  #{patient.get('PatNum', '')}")
-                item.setData(Qt.UserRole, patient)
-                item.setToolTip(f"Phone: {patient.get('Phone', '')}\nEmail: {patient.get('Email', '')}")
-                self.patient_list.addItem(item)
-            self.current_patient = None
-            self.entries = []
-            self.deleted_ids = []
-            self.render_entries()
-            self.patient_detail.setText(f"{len(self.patients)} patient(s) found.")
-            self.statusBar().showMessage(f"Loaded {len(self.patients)} patient(s).", 5000)
+            self.loading_patients = True
+            self.set_busy("Loading patients...")
+            self.all_patients = self.repo.fetch_patients()
+            self.filtered_patients = list(self.all_patients)
+            self.populate_patient_combo(self.filtered_patients)
+            self.statusBar().showMessage(f"Loaded {len(self.all_patients)} patient(s). Search filters locally.", 6000)
+            self.footer_text.setText(f"Loaded {len(self.all_patients)} patient(s). Select a patient to load audit entries.")
+            if self.filtered_patients:
+                self.patient_combo.setCurrentIndex(0)
+                self.set_current_patient(self.filtered_patients[0], load_entries=True)
         except Exception as exc:
-            QMessageBox.warning(self, "Search error", str(exc))
+            QMessageBox.warning(self, "Patient load error", str(exc))
+            self.footer_text.setText("Patient load failed. Check Settings and bridge connection.")
         finally:
+            self.loading_patients = False
             self.clear_busy()
 
-    def patient_selected(self, row: int) -> None:
-        if row < 0 or row >= len(self.patients):
+    def populate_patient_combo(self, patients: list[dict[str, Any]], preserve_text: str = "") -> None:
+        self.suppress_patient_events = True
+        self.patient_combo.clear()
+        for patient in patients:
+            self.patient_combo.addItem(patient_audit_label(patient), patient)
+        if preserve_text:
+            self.patient_combo.setEditText(preserve_text)
+        self.suppress_patient_events = False
+
+    def filter_patients_local(self, text: str) -> None:
+        query = str(text or "").strip().lower()
+        self.filtered_patients = [patient for patient in self.all_patients if not query or query in patient_filter_blob(patient)]
+        self.populate_patient_combo(self.filtered_patients[:500], preserve_text=text)
+        self.footer_text.setText(f"{len(self.filtered_patients)} patient(s) match. Press Find or choose one from the list.")
+
+    def show_all_patients(self) -> None:
+        self.patient_combo.lineEdit().clear()
+        self.filtered_patients = list(self.all_patients)
+        self.populate_patient_combo(self.filtered_patients[:500])
+        self.footer_text.setText(f"Showing all loaded patients: {len(self.all_patients)}.")
+
+    def selected_patient_from_combo(self) -> dict[str, Any] | None:
+        data = self.patient_combo.currentData()
+        return data if isinstance(data, dict) else None
+
+    def patient_combo_activated(self, _index: int) -> None:
+        if self.suppress_patient_events or self.loading_patients:
             return
-        if self.current_patient and self.current_patient.get("PatNum") == self.patients[row].get("PatNum"):
+        patient = self.selected_patient_from_combo()
+        if patient:
+            self.set_current_patient(patient, load_entries=True)
+
+    def find_patient_from_text(self) -> None:
+        if not self.filtered_patients:
+            QMessageBox.information(self, "No patient", "No loaded patient matches that filter.")
+            return
+        patient = self.selected_patient_from_combo() or self.filtered_patients[0]
+        self.set_current_patient(patient, load_entries=True)
+
+    def load_current_patient_entries(self) -> None:
+        patient = self.current_patient or self.selected_patient_from_combo()
+        if not patient:
+            QMessageBox.information(self, "No patient", "Please select a patient first.")
+            return
+        self.set_current_patient(patient, load_entries=True)
+
+    def set_current_patient(self, patient: dict[str, Any], load_entries: bool = False) -> None:
+        if self.current_patient and self.current_patient.get("PatNum") == patient.get("PatNum") and load_entries:
+            self.reload_entries()
             return
         if not self.ensure_clean_before_change():
-            self.patient_list.blockSignals(True)
-            previous = next((idx for idx, patient in enumerate(self.patients) if patient.get("PatNum") == self.current_patient.get("PatNum")), -1) if self.current_patient else -1
-            self.patient_list.setCurrentRow(previous)
-            self.patient_list.blockSignals(False)
             return
-        self.current_patient = self.patients[row]
-        self.patient_detail.setText(
-            f"{patient_name(self.current_patient)}\n"
-            f"PatNum: {self.current_patient.get('PatNum', '')}\n"
-            f"Phone: {self.current_patient.get('Phone', '')}\n"
-            f"Email: {self.current_patient.get('Email', '')}\n"
-            f"DOB: {self.current_patient.get('Birthdate', '')}"
-        )
-        self.reload_entries()
+        self.current_patient = patient
+        self.suppress_patient_events = True
+        self.patient_combo.setEditText(patient_audit_label(patient))
+        self.suppress_patient_events = False
+        if load_entries:
+            self.reload_entries()
+
+    def current_date_range(self) -> tuple[str, str]:
+        return self.from_date.date().toString("yyyy-MM-dd"), self.to_date.date().toString("yyyy-MM-dd")
 
     def reload_entries(self) -> None:
         if not self.current_patient:
@@ -414,41 +510,66 @@ class AuditTrailWindow(QMainWindow):
         if not self.ensure_clean_before_change():
             return
         pat_num = parse_int(self.current_patient.get("PatNum"))
+        from_date, to_date = self.current_date_range()
         try:
-            self.set_busy("Loading audit entries...")
-            self.entries = self.repo.fetch_entries(pat_num)
+            self.set_busy("Loading audit trail...")
+            self.entries = self.repo.fetch_entries(pat_num, from_date, to_date, self.limit_rows.value())
             self.deleted_ids = []
             self.render_entries()
             self.set_dirty(False)
-            self.statusBar().showMessage(f"Loaded {len(self.entries)} audit entrie(s).", 5000)
+            self.statusBar().showMessage(f"Loaded {len(self.entries)} audit row(s) for {patient_audit_label(self.current_patient)}.", 6000)
         except Exception as exc:
             QMessageBox.warning(self, "Load error", str(exc))
         finally:
             self.clear_busy()
 
+    def entry_to_display_row(self, entry: dict[str, Any]) -> dict[str, Any]:
+        date_text, time_text = split_datetime(entry.get("LogDateTime"))
+        return {
+            "SecurityLogNum": entry.get("SecurityLogNum", ""),
+            "Date": date_text,
+            "Time": time_text,
+            "Patient": patient_audit_label(self.current_patient or {}),
+            "UserNum": entry.get("UserNum", ""),
+            "PermType": entry.get("PermType", ""),
+            "CompName": entry.get("CompName", ""),
+            "LogText": entry.get("LogText", ""),
+            "LogSource": entry.get("LogSource", ""),
+            "DateTPrevious": entry.get("DateTPrevious", ""),
+        }
+
     def render_entries(self) -> None:
         self.loading_table = True
         self.table.setRowCount(len(self.entries))
         for row_index, entry in enumerate(self.entries):
+            display_row = self.entry_to_display_row(entry)
             for col_index, (key, _label, editable) in enumerate(ENTRY_COLUMNS):
-                value = entry.get(key, "")
-                item = QTableWidgetItem(str(value or ""))
+                item = QTableWidgetItem(str(display_row.get(key, "") or ""))
                 flags = item.flags()
                 if not editable:
                     flags &= ~Qt.ItemIsEditable
                 item.setFlags(flags)
                 self.table.setItem(row_index, col_index, item)
         self.loading_table = False
-        name = patient_name(self.current_patient or {}) if self.current_patient else "No patient"
-        self.entry_title.setText(f"Audit entries - {name}")
-        self.footer_text.setText(f"{len(self.entries)} visible row(s). Deleted pending: {len(self.deleted_ids)}.")
+        patient = patient_audit_label(self.current_patient or {}) or "No patient"
+        self.footer_text.setText(f"{len(self.entries)} audit row(s) for {patient}. Deleted pending: {len(self.deleted_ids)}.")
 
     def row_to_entry(self, row_index: int) -> dict[str, Any]:
         row: dict[str, Any] = {}
         for col_index, (key, _label, _editable) in enumerate(ENTRY_COLUMNS):
             item = self.table.item(row_index, col_index)
             row[key] = item.text().strip() if item else ""
-        return row
+        return {
+            "SecurityLogNum": row.get("SecurityLogNum", ""),
+            "LogDateTime": join_datetime(row.get("Date", ""), row.get("Time", "")),
+            "PermType": row.get("PermType", ""),
+            "UserNum": row.get("UserNum", ""),
+            "FKey": 0,
+            "LogText": row.get("LogText", ""),
+            "LogSource": row.get("LogSource", ""),
+            "CompName": row.get("CompName", ""),
+            "DateTPrevious": row.get("DateTPrevious", ""),
+        }
 
     def add_entry_row(self) -> None:
         if not self.current_patient:
@@ -461,12 +582,13 @@ class AuditTrailWindow(QMainWindow):
             "UserNum": 0,
             "FKey": 0,
             "LogText": "",
+            "LogSource": "",
             "CompName": os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or "",
             "DateTPrevious": "",
         })
         self.render_entries()
         self.table.selectRow(0)
-        self.table.setCurrentCell(0, 5)
+        self.table.setCurrentCell(0, 7)
         self.set_dirty(True)
 
     def delete_selected_rows(self) -> None:
@@ -494,22 +616,23 @@ class AuditTrailWindow(QMainWindow):
 
     def set_dirty(self, value: bool) -> None:
         self.dirty = value
-        self.dirty_badge.setText("Unsaved changes" if value else "Saved")
+        self.dirty_badge.setText("Unsaved" if value else "Saved")
         self.dirty_badge.setProperty("dirty", "true" if value else "false")
         self.dirty_badge.style().unpolish(self.dirty_badge)
         self.dirty_badge.style().polish(self.dirty_badge)
-        self.footer_text.setText(f"{self.table.rowCount()} visible row(s). Deleted pending: {len(self.deleted_ids)}.")
+        if hasattr(self, "footer_text"):
+            self.footer_text.setText(f"{self.table.rowCount()} visible audit row(s). Deleted pending: {len(self.deleted_ids)}.")
 
     def validate_entries(self) -> bool:
         for row_index in range(self.table.rowCount()):
-            entry = self.row_to_entry(row_index)
-            if not entry.get("LogText", "").strip():
-                QMessageBox.warning(self, "Missing audit text", f"Row {row_index + 1} needs Audit text before saving.")
-                self.table.setCurrentCell(row_index, 5)
+            raw = self.row_to_entry(row_index)
+            if not raw.get("LogText", "").strip():
+                QMessageBox.warning(self, "Missing Log Text", f"Row {row_index + 1} needs Log Text before saving.")
+                self.table.setCurrentCell(row_index, 7)
                 return False
-            if parse_int(entry.get("PermType"), None) is None:
-                QMessageBox.warning(self, "Invalid Perm type", f"Row {row_index + 1} Perm type must be a number.")
-                self.table.setCurrentCell(row_index, 2)
+            if parse_int(raw.get("PermType"), None) is None:
+                QMessageBox.warning(self, "Invalid Permission", f"Row {row_index + 1} Permission must be a number.")
+                self.table.setCurrentCell(row_index, 5)
                 return False
         return True
 
@@ -522,14 +645,17 @@ class AuditTrailWindow(QMainWindow):
         pat_num = parse_int(self.current_patient.get("PatNum"))
         entries = [self.row_to_entry(row) for row in range(self.table.rowCount())]
         try:
-            self.set_busy("Saving audit entries...")
+            self.set_busy("Saving audit trail...")
             result = self.repo.save_entries(pat_num, entries, self.deleted_ids)
-            self.entries = self.repo.fetch_entries(pat_num)
+            from_date, to_date = self.current_date_range()
+            self.entries = self.repo.fetch_entries(pat_num, from_date, to_date, self.limit_rows.value())
             self.deleted_ids = []
             self.render_entries()
             self.set_dirty(False)
-            message = f"Saved. Created {result.get('created', 0)}, updated {result.get('updated', 0)}, deleted {result.get('deleted', 0)}."
-            self.statusBar().showMessage(message, 6000)
+            self.statusBar().showMessage(
+                f"Saved. Created {result.get('created', 0)}, updated {result.get('updated', 0)}, deleted {result.get('deleted', 0)}.",
+                6000,
+            )
             return True
         except Exception as exc:
             QMessageBox.warning(self, "Save error", str(exc))
@@ -537,7 +663,7 @@ class AuditTrailWindow(QMainWindow):
         finally:
             self.clear_busy()
 
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override name
+    def closeEvent(self, event) -> None:  # noqa: N802
         if not self.dirty:
             event.accept()
             return
@@ -558,140 +684,107 @@ class AuditTrailWindow(QMainWindow):
 
 APP_STYLES = """
 * {
-  background: #f7fbfd;
-  color: #202833;
+  background: #f2f4f8;
+  color: #111827;
   font-family: "Segoe UI", Arial, sans-serif;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 400;
 }
 QMainWindow {
-  background: #f7fbfd;
+  background: #f2f4f8;
+}
+#TitleBar {
+  background: #385a9e;
+  color: #ffffff;
+  border: 1px solid #27437a;
+  min-height: 22px;
+  font-size: 10px;
+}
+#FilterPanel, #InlineActions {
+  background: #f7f8fb;
+  border-left: 1px solid #c7cfdb;
+  border-right: 1px solid #c7cfdb;
 }
 QLabel {
   background: transparent;
 }
-#HeroCard, #Card {
-  border: 1px solid #e2edf3;
-  border-radius: 8px;
+QLineEdit, QComboBox, QDateEdit, QSpinBox {
+  border: 1px solid #b8c0ca;
+  border-radius: 1px;
+  min-height: 20px;
+  padding: 1px 5px;
   background: #ffffff;
+  color: #111827;
 }
-#InsetCard {
-  border: 1px solid #e6eef4;
-  border-radius: 8px;
-  background: #fbfdff;
-}
-#Toolbar, #Footer {
-  background: #ffffff;
-  border: 0;
-}
-#Eyebrow {
-  color: #1359d8;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1px;
-}
-#HeroTitle {
-  color: #1f2933;
-  font-size: 19px;
-  font-weight: 700;
-}
-#HeroSubtitle, #Muted {
-  color: #647381;
-  font-size: 11px;
-  font-weight: 400;
-}
-#SectionTitle {
-  color: #2f3742;
-  font-size: 12px;
-  font-weight: 600;
-}
-#Badge {
-  padding: 5px 10px;
-  border-radius: 7px;
-  background: #e8f8ef;
-  color: #0f7b3a;
-  font-weight: 600;
-}
-#Badge[dirty="true"] {
-  background: #fff7ed;
-  color: #b45309;
+QComboBox::drop-down, QDateEdit::drop-down, QSpinBox::up-button, QSpinBox::down-button {
+  width: 18px;
+  border-left: 1px solid #c9d0d8;
+  background: #eef2f7;
 }
 QPushButton {
-  border: 1px solid #d8e2ea;
-  border-radius: 7px;
-  padding: 6px 11px;
-  background: #ffffff;
-  font-size: 11px;
-  font-weight: 500;
-  color: #26323f;
+  border: 1px solid #9aa7b7;
+  border-radius: 3px;
+  padding: 3px 12px;
+  min-height: 20px;
+  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #e5e9ef);
+  color: #111827;
 }
 QPushButton:hover {
-  background: #f0fbff;
-  border-color: #25c3e6;
+  border-color: #5278b8;
+  background: #eef5ff;
 }
 #PrimaryButton {
-  background: #155bd8;
-  border-color: #155bd8;
+  border-color: #4267a8;
+  background: #dfeaff;
+  color: #0f2f65;
+}
+#DirtyBadge {
+  padding: 3px 10px;
+  border: 1px solid #b7d8bd;
+  background: #eaf7ed;
+  color: #17612a;
+}
+#DirtyBadge[dirty="true"] {
+  border-color: #e4c56a;
+  background: #fff7d7;
+  color: #8a5b00;
+}
+#TablePanel {
+  background: #ffffff;
+  border: 1px solid #8799b8;
+}
+#GridTitle {
   color: #ffffff;
-  font-weight: 600;
-}
-#PrimaryButton:hover {
-  background: #0f4fc4;
-  border-color: #0f4fc4;
-}
-QLineEdit {
-  border: 1px solid #d5dfe8;
-  border-radius: 7px;
+  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6f8dc7, stop:1 #2f5597);
+  border-bottom: 1px solid #2e4778;
   min-height: 18px;
-  padding: 6px 8px;
-  background: #ffffff;
-  color: #202833;
-  selection-background-color: #155bd8;
-  selection-color: #ffffff;
-}
-QLineEdit:focus {
-  border: 2px solid #23c7e8;
-}
-QListWidget {
-  border: 1px solid #e2edf3;
-  border-radius: 8px;
-  background: #ffffff;
-  alternate-background-color: #f8fcff;
-  outline: 0;
-}
-QListWidget::item {
-  padding: 8px;
-  border-bottom: 1px solid #edf3f7;
-  background: #ffffff;
-}
-QListWidget::item:selected {
-  background: #e4f2ff;
-  color: #0f3f9c;
+  font-weight: 700;
 }
 QTableWidget {
   border: 0;
-  border-radius: 8px;
+  gridline-color: #d9dde4;
   background: #ffffff;
-  alternate-background-color: #f8fcff;
-  selection-background-color: #e4f2ff;
-  selection-color: #0f3f9c;
+  alternate-background-color: #ffffff;
+  selection-background-color: #b7d4e8;
+  selection-color: #111827;
 }
 QHeaderView::section {
-  background: #edf9fd;
-  color: #2f3742;
-  padding: 7px;
+  background: #e9f0f7;
+  color: #111827;
+  padding: 2px 4px;
   border: 0;
-  font-size: 11px;
+  border-right: 1px solid #c8ced7;
+  border-bottom: 1px solid #aeb7c5;
   font-weight: 600;
 }
 QTableWidget::item {
-  padding: 4px;
-  border-bottom: 1px solid #edf3f7;
+  padding: 1px 3px;
 }
-QStatusBar {
-  background: #ffffff;
-  color: #68717d;
-  border-top: 1px solid #dce8ef;
+#Footer, QStatusBar {
+  background: #eef2f7;
+  color: #4b5563;
+  border-top: 1px solid #d2d8e1;
+  padding: 3px 6px;
 }
 """
 

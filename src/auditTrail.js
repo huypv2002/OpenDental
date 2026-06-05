@@ -30,7 +30,7 @@ function escapeLike(value) {
 
 function parseLimit(value, fallback = 100) {
   const parsed = intValue(value, fallback);
-  return Math.max(1, Math.min(parsed, 500));
+  return Math.max(1, Math.min(parsed, 10000));
 }
 
 function mysqlDateTime(value, fallbackNow = false) {
@@ -69,6 +69,7 @@ function securitySelectColumns(columns) {
     columns.has('PatNum') ? 'PatNum' : '0 AS PatNum',
     columns.has('FKey') ? 'FKey' : '0 AS FKey',
     columns.has('LogText') ? 'LogText' : "'' AS LogText",
+    columns.has('LogSource') ? 'LogSource' : "'' AS LogSource",
     columns.has('CompName') ? 'CompName' : "'' AS CompName",
     columns.has('DateTPrevious') ? "DATE_FORMAT(DateTPrevious, '%Y-%m-%d %H:%i:%s') AS DateTPrevious" : "'' AS DateTPrevious"
   ];
@@ -136,16 +137,29 @@ export async function listAuditTrailEntries(query = {}) {
   const orderBy = columns.has('LogDateTime')
     ? 'LogDateTime DESC, SecurityLogNum DESC'
     : 'SecurityLogNum DESC';
+  const where = ['PatNum = ?'];
+  const values = [patNum];
+  const fromDate = text(query.fromDate);
+  const toDate = text(query.toDate);
+  if (columns.has('LogDateTime') && /^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+    where.push('LogDateTime >= ?');
+    values.push(`${fromDate} 00:00:00`);
+  }
+  if (columns.has('LogDateTime') && /^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    where.push('LogDateTime <= ?');
+    values.push(`${toDate} 23:59:59`);
+  }
+  values.push(limit);
 
   const [rows] = await pool.execute(
     `
       SELECT ${securitySelectColumns(columns).join(', ')}
       FROM ${SECURITY_LOG_TABLE}
-      WHERE PatNum = ?
+      WHERE ${where.join(' AND ')}
       ORDER BY ${orderBy}
       LIMIT ?
     `,
-    [patNum, limit]
+    values
   );
   return { entries: rows };
 }
@@ -158,6 +172,7 @@ function parseAuditEntry(row = {}) {
     userNum: intValue(row.userNum ?? row.UserNum),
     fKey: intValue(row.fKey ?? row.FKey),
     logText: text(row.logText ?? row.LogText),
+    logSource: text(row.logSource ?? row.LogSource),
     compName: text(row.compName ?? row.CompName),
     dateTPrevious: mysqlDateTime(row.dateTPrevious ?? row.DateTPrevious, false)
   };
@@ -196,6 +211,7 @@ export async function saveAuditTrailEntries(body = {}) {
         PatNum: patNum,
         FKey: entry.fKey,
         LogText: entry.logText,
+        LogSource: entry.logSource,
         CompName: entry.compName,
         DateTPrevious: entry.dateTPrevious
       };
