@@ -2,6 +2,8 @@
 
 Desktop tool for editing Open Dental `securitylog` audit trail rows through the bridge API.
 
+The tool loads the lightweight patient search index once with no row limit. Audit entries are requested only after the user selects a patient.
+
 ## Run
 
 Double-click:

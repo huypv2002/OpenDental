@@ -202,7 +202,7 @@ class BridgeClient:
         self.request("GET", "/health")
 
     def fetch_patients(self) -> list[dict[str, Any]]:
-        data = self.request("GET", "/api/audit-trail/patients", params={"limit": 5000})
+        data = self.request("GET", "/api/audit-trail/patients")
         return data.get("patients") or []
 
     def fetch_entries(self, pat_num: int, from_date: str, to_date: str, limit: int) -> list[dict[str, Any]]:
@@ -537,8 +537,9 @@ class AuditTrailWindow(QMainWindow):
             self.update_patient_completions(self.filtered_patients)
             self.statusBar().showMessage(f"Loaded {len(self.all_patients)} patient(s). Search filters locally.", 6000)
             self.footer_text.setText(f"Loaded {len(self.all_patients)} patient(s). Select a patient to load audit entries.")
-            if self.filtered_patients:
-                self.set_current_patient(self.filtered_patients[0], load_entries=True)
+            self.current_patient = None
+            self.entries = []
+            self.render_entries()
         except Exception as exc:
             QMessageBox.warning(self, "Patient load error", str(exc))
             self.footer_text.setText("Patient load failed. Check Settings and bridge connection.")

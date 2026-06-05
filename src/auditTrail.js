@@ -77,7 +77,6 @@ function securitySelectColumns(columns) {
 
 export async function listAuditPatients(query = {}) {
   const q = text(query.q);
-  const limit = parseLimit(query.limit, 100);
   const values = [];
   let where = '';
   if (q) {
@@ -93,7 +92,6 @@ export async function listAuditPatients(query = {}) {
     `;
     values.push(like, like, like, like, like, like, like);
   }
-  values.push(limit);
   const [rows] = await pool.execute(
     `
       SELECT
@@ -109,7 +107,6 @@ export async function listAuditPatients(query = {}) {
       FROM patient p
       ${where}
       ORDER BY p.PatNum DESC
-      LIMIT ?
     `,
     values
   );
