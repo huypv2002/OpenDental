@@ -42,6 +42,8 @@ APP_DIR = Path(__file__).resolve().parent
 APP_ICON_PATH = APP_DIR / "tooth.ico"
 CONFIG_PATH = APP_DIR / "audit_config.json"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
+SETTINGS_ORG = "LUK Dental"
+SETTINGS_APP = "Audit Trail Tool"
 
 ENTRY_COLUMNS = [
     ("SecurityLogNum", "ID", False),
@@ -123,6 +125,17 @@ class AppConfig:
                 raw = json.load(file)
             defaults = asdict(cls())
             return cls(**{**defaults, **{key: value for key, value in raw.items() if key in defaults}})
+        settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
+        saved_bridge_url = str(settings.value("bridge_url", "") or "").strip()
+        saved_api_token = str(settings.value("api_token", "") or "").strip()
+        if saved_bridge_url or saved_api_token:
+            defaults = cls()
+            cfg = cls(
+                bridge_url=saved_bridge_url or defaults.bridge_url,
+                api_token=saved_api_token or defaults.api_token,
+            )
+            cfg.save()
+            return cfg
         if BRIDGE_ENV_PATH.exists():
             load_dotenv(BRIDGE_ENV_PATH)
         cfg = cls(
@@ -133,7 +146,12 @@ class AppConfig:
         return cfg
 
     def save(self) -> None:
-        CONFIG_PATH.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        data = asdict(self)
+        CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
+        settings.setValue("bridge_url", self.bridge_url)
+        settings.setValue("api_token", self.api_token)
+        settings.sync()
 
 
 class BridgeClient:
@@ -397,9 +415,13 @@ class AuditTrailWindow(QMainWindow):
             return
         self.config.bridge_url = dialog.bridge_url.text().strip()
         self.config.api_token = dialog.api_token.text().strip()
-        self.config.save()
+        try:
+            self.config.save()
+        except Exception as exc:
+            QMessageBox.warning(self, "Settings save error", f"Could not save settings:\n{exc}")
+            return
         self.repo = BridgeClient(self.config)
-        self.statusBar().showMessage("Settings saved.", 4000)
+        self.statusBar().showMessage(f"Settings saved to {CONFIG_PATH}.", 6000)
         self.load_patients()
 
     def ensure_clean_before_change(self) -> bool:
