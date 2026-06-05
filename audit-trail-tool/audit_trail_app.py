@@ -93,6 +93,21 @@ def patient_filter_blob(row: dict[str, Any]) -> str:
     ).lower()
 
 
+def filter_patients(patients: list[dict[str, Any]], text: str) -> list[dict[str, Any]]:
+    query = str(text or "").strip().lower()
+    if not query:
+        return list(patients)
+
+    patient_number = query.removeprefix("#").strip()
+    if patient_number.isdigit():
+        exact = [patient for patient in patients if str(patient.get("PatNum") or "").strip() == patient_number]
+        if exact:
+            return exact
+        return [patient for patient in patients if patient_number in str(patient.get("PatNum") or "").strip()]
+
+    return [patient for patient in patients if query in patient_filter_blob(patient)]
+
+
 def split_datetime(value: Any) -> tuple[str, str]:
     text = str(value or "").strip().replace("T", " ")
     if not text:
@@ -580,7 +595,7 @@ class AuditTrailWindow(QMainWindow):
 
     def update_filtered_patients(self, text: str) -> str:
         query = str(text or "").strip().lower()
-        self.filtered_patients = [patient for patient in self.all_patients if not query or query in patient_filter_blob(patient)]
+        self.filtered_patients = filter_patients(self.all_patients, query)
         self.update_patient_completions(self.filtered_patients)
         return query
 
