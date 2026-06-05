@@ -123,6 +123,40 @@ function escapeLike(value) {
   return String(value).replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
+function mysqlPhoneDigitsExpression(column) {
+  return `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${column}, '(', ''), ')', ''), '-', ''), ' ', ''), '.', '')`;
+}
+
+function phoneMatchValue(phone) {
+  const digits = phoneDigits(phone);
+  return digits ? `%${digits}%` : '';
+}
+
+function strongIdentityFallbackSql() {
+  return `
+         OR (
+           ? <> ''
+           AND ? <> ''
+           AND LOWER(p.FName) = LOWER(?)
+           AND LOWER(p.LName) = LOWER(?)
+           AND (
+             ? = ''
+             OR ${mysqlPhoneDigitsExpression('p.WirelessPhone')} LIKE ?
+           )
+         )`;
+}
+
+function strongIdentityFallbackValues(input) {
+  return [
+    input.firstName || '',
+    input.lastName || '',
+    input.firstName || '',
+    input.lastName || '',
+    phoneMatchValue(input.phone),
+    phoneMatchValue(input.phone)
+  ];
+}
+
 function parseIdentity(body) {
   const phone = String(body.phone ?? '').trim();
   return {
@@ -204,6 +238,7 @@ async function findMatchingAppointment(connection, input) {
          a.Note LIKE ? ESCAPE '\\\\'
          OR af.FieldValue = ?
          OR pf.FieldValue = ?
+         ${strongIdentityFallbackSql()}
        )
      ORDER BY a.AptDateTime
      LIMIT 5`,
@@ -212,7 +247,8 @@ async function findMatchingAppointment(connection, input) {
       clinicNow.dateTime,
       `%${escapeLike(input.driverLicense)}%`,
       input.driverLicense,
-      input.driverLicense
+      input.driverLicense,
+      ...strongIdentityFallbackValues(input)
     ]
   );
 
@@ -234,6 +270,7 @@ async function findMatchingAppointment(connection, input) {
            a.Note LIKE ? ESCAPE '\\\\'
            OR af.FieldValue = ?
            OR pf.FieldValue = ?
+           ${strongIdentityFallbackSql()}
          )
        ORDER BY a.AptDateTime DESC
        LIMIT 1`,
@@ -241,7 +278,8 @@ async function findMatchingAppointment(connection, input) {
         input.birthdate,
         `%${escapeLike(input.driverLicense)}%`,
         input.driverLicense,
-        input.driverLicense
+        input.driverLicense,
+        ...strongIdentityFallbackValues(input)
       ]
     );
 
@@ -305,6 +343,7 @@ async function findMatchingAppointmentsForCancel(connection, input) {
          a.Note LIKE ? ESCAPE '\\\\'
          OR af.FieldValue = ?
          OR pf.FieldValue = ?
+         ${strongIdentityFallbackSql()}
        )
      ORDER BY a.AptDateTime
      LIMIT 25`,
@@ -313,7 +352,8 @@ async function findMatchingAppointmentsForCancel(connection, input) {
       clinicNow.dateTime,
       `%${escapeLike(input.driverLicense)}%`,
       input.driverLicense,
-      input.driverLicense
+      input.driverLicense,
+      ...strongIdentityFallbackValues(input)
     ]
   );
 
