@@ -53,12 +53,102 @@ ENTRY_COLUMNS = [
     ("Time", "Time", True),
     ("Patient", "Patient", False),
     ("UserNum", "User", True),
-    ("PermType", "Permission", True),
+    ("PermType", "Permission", False),
     ("CompName", "Computer", True),
     ("LogText", "Log Text", True),
     ("LogSource", "Log Source", True),
     ("DateTPrevious", "Last Edit", True),
 ]
+
+PERMISSION_NAMES = {
+    0: "None",
+    2: "FamilyModuleViewed",
+    3: "AccountModuleViewed",
+    4: "TreatmentPlanModuleViewed",
+    5: "ChartModuleViewed",
+    6: "ImagesModuleViewed",
+    8: "Setup",
+    9: "RxCreate",
+    11: "ChooseDatabase",
+    13: "Blockouts",
+    15: "PaymentCreate",
+    16: "PaymentEdit",
+    17: "AdjustmentCreate",
+    18: "AdjustmentEdit",
+    19: "UserQuery",
+    22: "Reports",
+    23: "ProcComplCreate",
+    24: "SecurityAdmin",
+    25: "AppointmentCreate",
+    26: "AppointmentMove",
+    27: "AppointmentEdit",
+    36: "InsPayCreate",
+    37: "InsPayEdit",
+    42: "SheetEdit",
+    43: "CommlogEdit",
+    44: "ImageDelete",
+    45: "PerioEdit",
+    49: "ProcDelete",
+    51: "ProviderEdit",
+    54: "ReferralAdd",
+    55: "InsPlanChangeSubsc",
+    56: "RefAttachAdd",
+    57: "RefAttachDelete",
+    58: "CarrierCreate",
+    60: "AutoNoteQuickNoteEdit",
+    62: "Billing",
+    64: "ProcFeeEdit",
+    65: "InsPlanChangeCarrierName",
+    68: "Copy",
+    69: "Printing",
+    76: "RxEdit",
+    80: "PatientFieldEdit",
+    82: "TreatPlanDiscountEdit",
+    83: "UserLogOnOff",
+    84: "TaskEdit",
+    89: "ImageEdit",
+    92: "FeeSchedEdit",
+    96: "AppointmentCompleteEdit",
+    105: "TaskListCreate",
+    106: "PatientCreate",
+    108: "PatientEdit",
+    110: "InsPlanEdit",
+    118: "ClaimDelete",
+    119: "InsWriteOffEdit",
+    120: "ApptConfirmStatusEdit",
+    122: "AuditTrail",
+    128: "PatPlanCreate",
+    130: "ReferralEdit",
+    131: "PatientBillingEdit",
+    138: "GraphicsEdit",
+    142: "InsCarrierCombine",
+    150: "ClaimEdit",
+    154: "LogFeeEdit",
+    156: "RecallEdit",
+    157: "ProcCodeEdit",
+    161: "DiscountPlanAddDrop",
+    163: "ProcExistingEdit",
+    171: "AgingRan",
+    181: "PatientSSNView",
+    183: "FamAgingTruncate",
+    185: "ProcCompleteStatusEdit",
+    189: "ProcCompleteEdit",
+    193: "CommlogCreate",
+    201: "ImageExport",
+    202: "ImageCreate",
+    209: "DiscountPlanAdd",
+    210: "DiscountPlanEdit",
+    220: "DefEdit",
+    221: "UpdateInstall",
+    224: "CarrierEdit",
+    228: "TaskDelete",
+    230: "ShowFeatures",
+    231: "PrinterSetup",
+    237: "AppointmentDelete",
+    238: "AppointmentCompleteDelete",
+    239: "AppointmentTypeEdit",
+    258: "LicenseAccept",
+}
 
 
 def today_qdate(days: int = 0) -> QDate:
@@ -75,6 +165,11 @@ def parse_int(value: Any, fallback: int = 0) -> int:
         return int(str(value if value is not None else "").strip())
     except ValueError:
         return fallback
+
+
+def permission_name(value: Any) -> str:
+    code = parse_int(value, -1)
+    return PERMISSION_NAMES.get(code, f"Unknown ({code})")
 
 
 def patient_name(row: dict[str, Any]) -> str:
@@ -211,7 +306,11 @@ class BridgeClient:
             "/api/audit-trail/entries",
             params={"patNum": pat_num, "fromDate": from_date, "toDate": to_date, "limit": limit},
         )
-        return data.get("entries") or []
+        entries = data.get("entries") or []
+        return sorted(
+            entries,
+            key=lambda entry: (str(entry.get("LogDateTime") or ""), parse_int(entry.get("SecurityLogNum"))),
+        )
 
     def save_entries(self, pat_num: int, entries: list[dict[str, Any]], delete_ids: list[int]) -> dict[str, Any]:
         return self.request(
@@ -713,7 +812,7 @@ class AuditTrailWindow(QMainWindow):
             "Time": time_text,
             "Patient": patient_audit_label(self.current_patient or {}),
             "UserNum": entry.get("UserNum", ""),
-            "PermType": entry.get("PermType", ""),
+            "PermType": permission_name(entry.get("PermType")),
             "CompName": entry.get("CompName", ""),
             "LogText": entry.get("LogText", ""),
             "LogSource": entry.get("LogSource", ""),
@@ -727,6 +826,8 @@ class AuditTrailWindow(QMainWindow):
             display_row = self.entry_to_display_row(entry)
             for col_index, (key, _label, editable) in enumerate(ENTRY_COLUMNS):
                 item = QTableWidgetItem(str(display_row.get(key, "") or ""))
+                if key == "PermType":
+                    item.setData(Qt.UserRole, entry.get("PermType", 0))
                 flags = item.flags()
                 if not editable:
                     flags &= ~Qt.ItemIsEditable
@@ -740,7 +841,10 @@ class AuditTrailWindow(QMainWindow):
         row: dict[str, Any] = {}
         for col_index, (key, _label, _editable) in enumerate(ENTRY_COLUMNS):
             item = self.table.item(row_index, col_index)
-            row[key] = item.text().strip() if item else ""
+            if key == "PermType" and item:
+                row[key] = item.data(Qt.UserRole)
+            else:
+                row[key] = item.text().strip() if item else ""
         return {
             "SecurityLogNum": row.get("SecurityLogNum", ""),
             "LogDateTime": join_datetime(row.get("Date", ""), row.get("Time", "")),

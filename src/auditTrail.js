@@ -158,7 +158,7 @@ export async function listAuditTrailEntries(query = {}) {
     `,
     values
   );
-  return { entries: rows };
+  return { entries: rows.reverse() };
 }
 
 function parseAuditEntry(row = {}) {
