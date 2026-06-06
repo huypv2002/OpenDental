@@ -61,6 +61,9 @@ DEFAULT_TREATMENT_DAYS = 21
 SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 SCHEDULE_SEND_GRACE_MINUTES = 30
 LAZY_TABLE_BATCH_SIZE = 50
+SENT_STATUSES = {"sent", "dry-run"}
+SEND_SKIP_STATUSES = {"sent", "dry-run", "needs-review"}
+REVIEW_STATUSES = {"needs-review"}
 HOLIDAY_EVENTS = [
     "New Year's Day",
     "Martin Luther King Jr. Day",
@@ -739,7 +742,7 @@ class SendWorker(QThread):
     def run(self) -> None:
         repo = BridgeClient(self.config)
         sender = PhoneLinkSender(self.config.dry_run)
-        sent = 0
+        completed = 0
         failed = 0
         skipped = 0
         for appointment in self.appointments:
@@ -747,7 +750,7 @@ class SendWorker(QThread):
             patient = patient_name(appointment)
             targets = [
                 target for target in appointment.get("PhoneTargets", [])
-                if digits_only(target.get("phone", "")) and target.get("status") not in {"sent", "dry-run"}
+                if digits_only(target.get("phone", "")) and target.get("status") not in SEND_SKIP_STATUSES
             ]
             if "PhoneTargets" not in appointment and not targets and digits_only(appointment.get("Phone", "")):
                 targets = [{"source": appointment.get("PhoneSource") or "Phone", "phone": appointment.get("Phone", "")}]
@@ -760,15 +763,18 @@ class SendWorker(QThread):
                 source = target.get("source") or "Phone"
                 try:
                     sender.send_sms(phone, message)
-                    status = "dry-run" if self.config.dry_run else "sent"
+                    status = "dry-run" if self.config.dry_run else "needs-review"
                     if appointment.get("_Treatment"):
                         repo.log_treatment_result(appointment, message, status, phone=phone)
                     elif appointment.get("_Recall"):
                         repo.log_recall_result(appointment, message, status, phone=phone)
                     else:
                         repo.log_result(appointment, message, status, phone=phone)
-                    sent += 1
-                    self.progress.emit(f"{status.upper()}: {patient} {source} -> {phone}")
+                    completed += 1
+                    if status == "needs-review":
+                        self.progress.emit(f"NEEDS REVIEW: {patient} {source} -> {phone}. Confirm in Phone Link before marking sent.")
+                    else:
+                        self.progress.emit(f"{status.upper()}: {patient} {source} -> {phone}")
                 except Exception as exc:  # noqa: BLE001 - show UI-friendly automation errors
                     failed += 1
                     if appointment.get("_Treatment"):
@@ -780,7 +786,7 @@ class SendWorker(QThread):
                     self.progress.emit(f"Failed: {patient} {source} -> {exc}")
         if skipped:
             self.progress.emit(f"Skipped {skipped} row(s) with no valid phone number.")
-        self.finished.emit(sent, failed)
+        self.finished.emit(completed, failed)
 
 
 class CampaignSendWorker(QThread):
@@ -795,7 +801,7 @@ class CampaignSendWorker(QThread):
     def run(self) -> None:
         repo = BridgeClient(self.config)
         sender = PhoneLinkSender(self.config.dry_run)
-        sent = 0
+        completed = 0
         failed = 0
         skipped = 0
         for patient in self.recipients:
@@ -816,17 +822,20 @@ class CampaignSendWorker(QThread):
                 source = target.get("source") or "Phone"
                 try:
                     sender.send_sms(phone, message)
-                    status = "dry-run" if self.config.dry_run else "sent"
+                    status = "dry-run" if self.config.dry_run else "needs-review"
                     repo.log_campaign_result(patient, message, status, phone=phone)
-                    sent += 1
-                    self.progress.emit(f"{status.upper()} CAMPAIGN: {name} {source} -> {phone}")
+                    completed += 1
+                    if status == "needs-review":
+                        self.progress.emit(f"NEEDS REVIEW CAMPAIGN: {name} {source} -> {phone}. Confirm in Phone Link before marking sent.")
+                    else:
+                        self.progress.emit(f"{status.upper()} CAMPAIGN: {name} {source} -> {phone}")
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
                     repo.log_campaign_result(patient, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed campaign SMS: {name} {source} -> {exc}")
         if skipped:
             self.progress.emit(f"Skipped {skipped} campaign row(s) with no valid phone number.")
-        self.finished.emit(sent, failed)
+        self.finished.emit(completed, failed)
 
 
 class LoadAppointmentsWorker(QThread):
@@ -1487,11 +1496,14 @@ class SmsReminderWindow(QMainWindow):
         self.clear_dry_run_button.clicked.connect(self.clear_dry_run_logs)
         self.reset_selected_button = QPushButton("Reset selected to not sent")
         self.reset_selected_button.clicked.connect(self.reset_selected_to_not_sent)
+        self.mark_selected_sent_button = QPushButton("Mark selected sent")
+        self.mark_selected_sent_button.clicked.connect(self.mark_selected_as_sent)
         controls.addWidget(self.preview_button)
         controls.addWidget(self.open_phone_button)
         controls.addWidget(self.test_sms_button)
         controls.addWidget(self.clear_dry_run_button)
         controls.addWidget(self.reset_selected_button)
+        controls.addWidget(self.mark_selected_sent_button)
         controls.addWidget(self.send_selected_button)
         controls.addWidget(self.send_all_button)
         layout.addWidget(controls_card)
@@ -3183,10 +3195,12 @@ class SmsReminderWindow(QMainWindow):
             row["Phone"] = self.phone_targets_display(row_targets)
             row["PhoneSource"] = ", ".join(target["source"] for target in row_targets if target.get("phone"))
             target_statuses = [target.get("status", "") for target in row_targets if digits_only(target.get("phone", ""))]
-            if target_statuses and all(status in {"sent", "dry-run"} for status in target_statuses):
+            if target_statuses and all(status in SENT_STATUSES for status in target_statuses):
                 row["ReminderStatus"] = "sent" if any(status == "sent" for status in target_statuses) else "dry-run"
-            elif any(status in {"sent", "dry-run"} for status in target_statuses):
+            elif any(status in SENT_STATUSES for status in target_statuses):
                 row["ReminderStatus"] = "partial"
+            elif any(status in REVIEW_STATUSES for status in target_statuses):
+                row["ReminderStatus"] = "needs review"
             elif any(status == "failed" for status in target_statuses):
                 row["ReminderStatus"] = "failed"
             else:
@@ -4124,7 +4138,7 @@ class SmsReminderWindow(QMainWindow):
         missing_phone_count = 0
         for row_index, row in enumerate(self.appointments):
             reminder = row.get("ReminderStatus") or "not sent"
-            if reminder in {"sent", "dry-run"}:
+            if reminder in SENT_STATUSES:
                 sent_count += 1
             if not digits_only(row.get("Phone", "")):
                 missing_phone_count += 1
@@ -4155,8 +4169,10 @@ class SmsReminderWindow(QMainWindow):
                 item = QTableWidgetItem(str(value or ""))
                 if col in {5, 6, 8}:
                     item.setTextAlignment(Qt.AlignCenter)
-                if reminder in {"sent", "dry-run"}:
+                if reminder in SENT_STATUSES:
                     item.setForeground(QColor("#7a8794"))
+                elif reminder == "needs review":
+                    item.setForeground(QColor("#b54708"))
                 elif not digits_only(row.get("Phone", "")):
                     item.setForeground(QColor("#b42318"))
                 self.appointment_table.setItem(row_index, col, item)
@@ -4365,6 +4381,39 @@ class SmsReminderWindow(QMainWindow):
             self.append_activity(f"Reset selected failed: {exc}")
             QMessageBox.critical(self, "Reset failed", str(exc))
 
+    def mark_selected_as_sent(self) -> None:
+        selected = self.selected_appointments()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select at least one appointment to mark sent.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Mark selected sent?",
+            "Only continue if you already confirmed these SMS messages were sent in Phone Link.\n\nMark selected reminder log(s) as sent?",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        sent_count = 0
+        try:
+            for appointment in selected:
+                message = render_message(self.config, appointment, appointment.get("_TemplateText") or default_template(self.config))
+                targets = [
+                    target for target in appointment.get("PhoneTargets", [])
+                    if digits_only(target.get("phone", "")) and target.get("status") in REVIEW_STATUSES
+                ]
+                if not targets and "PhoneTargets" not in appointment and digits_only(appointment.get("Phone", "")):
+                    targets = [{"phone": appointment.get("Phone", "")}]
+                for target in targets:
+                    self.repo.log_result(appointment, message, "sent", phone=target.get("phone", ""))
+                    sent_count += 1
+            self.append_activity(f"Marked selected SMS logs sent: {sent_count} row(s).")
+            QMessageBox.information(self, "Marked sent", f"Marked {sent_count} SMS log row(s) as sent.")
+            self.load_appointments()
+            self.load_logs()
+        except Exception as exc:  # noqa: BLE001
+            self.append_activity(f"Mark selected sent failed: {exc}")
+            QMessageBox.critical(self, "Mark sent failed", str(exc))
+
     def preview_selected(self) -> None:
         selected = self.selected_appointments()
         if not selected:
@@ -4469,8 +4518,8 @@ class SmsReminderWindow(QMainWindow):
             return
         try:
             PhoneLinkSender(dry_run=False).send_sms(phone, message)
-            self.append_activity(f"TEST SENT: {phone}")
-            QMessageBox.information(self, "Test SMS", "Test SMS was sent through Phone Link.")
+            self.append_activity(f"TEST NEEDS REVIEW: {phone}")
+            QMessageBox.information(self, "Test SMS", "Test SMS was submitted. Please confirm it was sent in Phone Link.")
         except Exception as exc:  # noqa: BLE001
             self.append_activity(f"TEST FAILED: {phone} -> {exc}")
             QMessageBox.critical(self, "Test SMS failed", str(exc))
@@ -4512,7 +4561,7 @@ class SmsReminderWindow(QMainWindow):
         pending = [
             self.appointment_with_template(row_index)
             for row_index, row in enumerate(self.appointments)
-            if row.get("ReminderStatus") not in {"sent", "dry-run"}
+            if row.get("ReminderStatus") not in {"sent", "dry-run", "needs review"}
         ]
         if not pending:
             if not silent:
@@ -4535,7 +4584,7 @@ class SmsReminderWindow(QMainWindow):
         sms_count = sum(
             len([
                 target for target in appointment.get("PhoneTargets", [])
-                if digits_only(target.get("phone", "")) and target.get("status") not in {"sent", "dry-run"}
+                if digits_only(target.get("phone", "")) and target.get("status") not in SEND_SKIP_STATUSES
             ]) or (1 if "PhoneTargets" not in appointment and digits_only(appointment.get("Phone", "")) else 0)
             for appointment in appointments
         )
@@ -4630,6 +4679,8 @@ class SmsReminderWindow(QMainWindow):
             self.clear_dry_run_button.setEnabled(enabled)
         if hasattr(self, "reset_selected_button"):
             self.reset_selected_button.setEnabled(enabled)
+        if hasattr(self, "mark_selected_sent_button"):
+            self.mark_selected_sent_button.setEnabled(enabled)
         if hasattr(self, "fill_recall_button"):
             self.fill_recall_button.setEnabled(enabled)
         if hasattr(self, "preview_recall_button"):
@@ -4654,7 +4705,8 @@ class SmsReminderWindow(QMainWindow):
 
     def send_finished(self, sent: int, failed: int) -> None:
         self.set_send_enabled(True)
-        self.append_activity(f"Done. Sent/dry-run: {sent}. Failed: {failed}.")
+        label = "Sent/dry-run" if self.config.dry_run else "Needs review"
+        self.append_activity(f"Done. {label}: {sent}. Failed: {failed}.")
         if self.monitor_batch_active and failed:
             self.monitor_batch_failed = True
         if self.active_send_kind == "recall":
@@ -4662,7 +4714,7 @@ class SmsReminderWindow(QMainWindow):
         elif self.active_send_kind == "treatment":
             self.load_treatment_patients()
         elif self.active_send_kind == "campaign":
-            status_text = "sent" if failed == 0 else "check log"
+            status_text = "needs review" if failed == 0 else "check log"
             visible_patients = self.holiday_visible_patients()
             for row_index, patient in enumerate(visible_patients):
                 if self.campaign_recipient_key(patient) not in self.active_campaign_recipient_keys:
