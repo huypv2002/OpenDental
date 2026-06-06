@@ -167,7 +167,7 @@ function publicMembershipPlan(row) {
   return {
     planId: row.PlanId,
     planKey: row.PlanKey || '',
-    badge: row.Badge || '',
+    badge: '',
     title: row.Title || '',
     priceLabel: row.PriceLabel || '',
     content: row.Content || '',
@@ -326,7 +326,7 @@ async function ensureMembershipPlanDefaults() {
   const defaults = [
     {
       planKey: 'annual',
-      badge: 'Discount 10%',
+      badge: '',
       title: 'Annual Membership',
       priceLabel: '$150/year',
       cost: 150,
@@ -336,7 +336,7 @@ async function ensureMembershipPlanDefaults() {
     },
     {
       planKey: 'gold-annual',
-      badge: 'Discount 15%',
+      badge: '',
       title: 'Gold Membership',
       priceLabel: '$220/year',
       cost: 220,
@@ -347,7 +347,7 @@ async function ensureMembershipPlanDefaults() {
     },
     {
       planKey: 'vip-annual',
-      badge: 'Discount 25%',
+      badge: '',
       title: 'Diamond Membership',
       priceLabel: '$350/year',
       cost: 350,
