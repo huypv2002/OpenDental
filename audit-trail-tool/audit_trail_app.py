@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import requests
 from dotenv import load_dotenv
@@ -91,11 +91,6 @@ def patient_filter_blob(row: dict[str, Any]) -> str:
         str(row.get(key) or "")
         for key in ("PatNum", "FName", "LName", "PatientName", "Phone", "WirelessPhone", "HmPhone", "WkPhone", "Email", "Birthdate")
     ).lower()
-
-
-def valid_bridge_url(value: str) -> bool:
-    parsed = urlparse(str(value or "").strip())
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def filter_patients(patients: list[dict[str, Any]], text: str) -> list[dict[str, Any]]:
@@ -184,8 +179,8 @@ class BridgeClient:
         return urljoin(self.config.bridge_url.rstrip("/") + "/", path.lstrip("/"))
 
     def request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
-        if not valid_bridge_url(self.config.bridge_url):
-            raise RuntimeError("Bridge URL must start with http:// or https://. Open Settings and enter the bridge server URL.")
+        if not self.config.bridge_url.strip():
+            raise RuntimeError("Bridge URL is required.")
         if not self.config.api_token.strip():
             raise RuntimeError("Bridge API token is required.")
         response = requests.request(
@@ -491,14 +486,6 @@ class AuditTrailWindow(QMainWindow):
         self.table.setColumnHidden(0, True)
 
     def initial_load(self) -> None:
-        if not valid_bridge_url(self.config.bridge_url):
-            QMessageBox.warning(
-                self,
-                "Invalid Bridge URL",
-                "The saved Bridge URL is not an HTTP address. Enter the bridge server URL in Settings.",
-            )
-            self.open_settings()
-            return
         self.load_patients()
 
     def set_busy(self, text: str) -> None:
@@ -512,15 +499,7 @@ class AuditTrailWindow(QMainWindow):
         dialog = SettingsDialog(self.config, self)
         if dialog.exec() != QDialog.Accepted:
             return
-        bridge_url = dialog.bridge_url.text().strip().rstrip("/")
-        if not valid_bridge_url(bridge_url):
-            QMessageBox.warning(
-                self,
-                "Invalid Bridge URL",
-                "Bridge URL must start with http:// or https://.\nExample: https://od-bridge.lukdental.us",
-            )
-            return
-        self.config.bridge_url = bridge_url
+        self.config.bridge_url = dialog.bridge_url.text().strip()
         self.config.api_token = dialog.api_token.text().strip()
         try:
             self.config.save()
