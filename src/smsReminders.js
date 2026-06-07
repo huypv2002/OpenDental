@@ -650,6 +650,12 @@ export async function logSmsReminderResult(body) {
 
 export async function getSmsReminderLogs(query = {}) {
   const limit = parseLimit(query.limit);
+  const params = [];
+  const where = [];
+  if (query.date) {
+    where.push('ReminderForDate = ?');
+    params.push(parseDate(query.date));
+  }
   await ensureSmsReminderLogTable();
   const [rows] = await pool.execute(
     `
@@ -665,10 +671,11 @@ export async function getSmsReminderLogs(query = {}) {
         ErrorMessage,
         DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt
       FROM ${LOG_TABLE}
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY ReminderLogNum DESC
       LIMIT ?
     `,
-    [limit]
+    [...params, limit]
   );
   return { logs: rows };
 }
