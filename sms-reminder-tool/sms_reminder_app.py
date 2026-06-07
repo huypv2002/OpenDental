@@ -580,7 +580,7 @@ class PhoneLinkSender:
         pyperclip.copy(phone)
         self.slow_keys("^v")
         self.slow_keys("{ENTER}", 2.0)
-        self.slow_keys("{TAB 2}", 1.25)
+        self.slow_keys("{TAB}", 1.25)
         pyperclip.copy(message)
         self.slow_keys("^v", 1.25)
         self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
@@ -609,7 +609,7 @@ class PhoneLinkSender:
         pyperclip.copy(phone)
         self.slow_keys("^v")
         self.slow_keys("{ENTER}", 2.0)
-        self.slow_keys("{TAB 2}", 1.25)
+        self.slow_keys("{TAB}", 1.25)
         pyperclip.copy(message)
         self.slow_keys("^v", 1.25)
 

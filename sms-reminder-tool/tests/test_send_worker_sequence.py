@@ -215,7 +215,7 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
                     ("copy", "(281) 111-1111"),
                     ("key", "^v"),
                     ("key", "{ENTER}"),
-                    ("key", "{TAB 2}"),
+                    ("key", "{TAB}"),
                     ("copy", "Test message"),
                     ("key", "^v"),
                     ("key", "{ENTER}"),
