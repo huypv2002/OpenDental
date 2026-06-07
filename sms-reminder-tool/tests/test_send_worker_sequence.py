@@ -172,17 +172,6 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             def set_focus(self):
                 events.append(("focus",))
 
-            def child_window(self, **kwargs):
-                events.append(("child_window", kwargs))
-                return FakeButton()
-
-        class FakeButton:
-            def exists(self, timeout=0):
-                return True
-
-            def click_input(self):
-                events.append(("click", "new-message"))
-
         class FakeDesktop:
             def __init__(self, backend=None):
                 self.backend = backend
@@ -222,11 +211,7 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
                     ("window", ".*(Phone Link|Liên kết Điện thoại|Messages).*"),
                     ("focus",),
                     ("key", "{ESC}"),
-                    ("child_window", {
-                        "title_re": app.PhoneLinkSender.NEW_MESSAGE_BUTTON_RE,
-                        "control_type": "Button",
-                    }),
-                    ("click", "new-message"),
+                    ("key", "^n"),
                     ("copy", "(281) 111-1111"),
                     ("key", "^v"),
                     ("key", "{ENTER}"),

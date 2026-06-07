@@ -525,7 +525,6 @@ class PhoneLinkSender:
     STEP_DELAY_SECONDS = 1.25
     COMPOSE_DELAY_SECONDS = 2.0
     SEND_SETTLE_SECONDS = 2.0
-    NEW_MESSAGE_BUTTON_RE = r".*(New message|New chat|Compose|Tin nhắn mới|Soạn tin nhắn|Soạn).*"
 
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
@@ -547,32 +546,12 @@ class PhoneLinkSender:
         send_keys(keys)
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS if delay is None else delay)
 
-    @staticmethod
-    def click_new_message_button(window: Any) -> bool:
-        for kwargs in (
-            {"title_re": PhoneLinkSender.NEW_MESSAGE_BUTTON_RE, "control_type": "Button"},
-            {"title_re": PhoneLinkSender.NEW_MESSAGE_BUTTON_RE},
-            {"auto_id": "NewMessageButton"},
-            {"auto_id": "newMessageButton"},
-        ):
-            try:
-                button = window.child_window(**kwargs)
-                if button.exists(timeout=1):
-                    button.click_input()
-                    time.sleep(PhoneLinkSender.COMPOSE_DELAY_SECONDS)
-                    return True
-            except Exception:
-                continue
-        return False
-
     def focus_new_message(self, window: Any) -> None:
         window.set_focus()
         time.sleep(self.STEP_DELAY_SECONDS)
         # Escape clears transient focus such as a selected recipient chip or an open flyout.
         self.slow_keys("{ESC}", 0.75)
-        if self.click_new_message_button(window):
-            return
-        raise RuntimeError("Could not find the Phone Link New message button. Please leave Phone Link on the Messages screen and try again.")
+        self.slow_keys("^n", self.COMPOSE_DELAY_SECONDS)
 
     def send_sms(self, phone: str, message: str) -> None:
         if self.dry_run:
