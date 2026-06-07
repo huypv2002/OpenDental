@@ -525,6 +525,7 @@ class PhoneLinkSender:
     STEP_DELAY_SECONDS = 1.25
     COMPOSE_DELAY_SECONDS = 2.0
     SEND_SETTLE_SECONDS = 2.0
+    MESSAGE_BOX_RE = r".*(Send a message|Type a message|Message|Nhập tin nhắn|Tin nhắn).*"
 
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
@@ -553,6 +554,41 @@ class PhoneLinkSender:
         self.slow_keys("{ESC}", 0.75)
         self.slow_keys("^n", self.COMPOSE_DELAY_SECONDS)
 
+    @staticmethod
+    def focus_message_box(window: Any) -> bool:
+        for kwargs in (
+            {"title_re": PhoneLinkSender.MESSAGE_BOX_RE, "control_type": "Edit"},
+            {"title_re": PhoneLinkSender.MESSAGE_BOX_RE},
+            {"auto_id": "MessageTextBox"},
+            {"auto_id": "messageTextBox"},
+        ):
+            try:
+                field = window.child_window(**kwargs)
+                if field.exists(timeout=1):
+                    field.click_input()
+                    time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+                    return True
+            except Exception:
+                continue
+
+        try:
+            wrapper = window.wrapper_object()
+            window_rect = wrapper.rectangle()
+            edits = wrapper.descendants(control_type="Edit")
+            bottom_edits = []
+            for edit in edits:
+                rect = edit.rectangle()
+                if rect.top > window_rect.top + ((window_rect.bottom - window_rect.top) * 0.55):
+                    bottom_edits.append((rect.top, edit))
+            for _top, edit in sorted(bottom_edits, key=lambda item: item[0], reverse=True):
+                edit.click_input()
+                time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+                return True
+        except Exception:
+            return False
+
+        return False
+
     def send_sms(self, phone: str, message: str) -> None:
         if self.dry_run:
             time.sleep(0.25)
@@ -580,6 +616,8 @@ class PhoneLinkSender:
         pyperclip.copy(phone)
         self.slow_keys("^v")
         self.slow_keys("{ENTER}", 2.0)
+        if not self.focus_message_box(window):
+            raise RuntimeError("Could not focus the Phone Link 'Send a message' box after selecting the recipient.")
         pyperclip.copy(message)
         self.slow_keys("^v", 1.25)
         self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
@@ -608,6 +646,8 @@ class PhoneLinkSender:
         pyperclip.copy(phone)
         self.slow_keys("^v")
         self.slow_keys("{ENTER}", 2.0)
+        if not self.focus_message_box(window):
+            raise RuntimeError("Could not focus the Phone Link 'Send a message' box after selecting the recipient.")
         pyperclip.copy(message)
         self.slow_keys("^v", 1.25)
 

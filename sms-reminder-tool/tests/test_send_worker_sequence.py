@@ -172,6 +172,17 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             def set_focus(self):
                 events.append(("focus",))
 
+            def child_window(self, **kwargs):
+                events.append(("child_window", kwargs))
+                return FakeMessageBox()
+
+        class FakeMessageBox:
+            def exists(self, timeout=0):
+                return True
+
+            def click_input(self):
+                events.append(("click", "message-box"))
+
         class FakeDesktop:
             def __init__(self, backend=None):
                 self.backend = backend
@@ -215,6 +226,11 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
                     ("copy", "(281) 111-1111"),
                     ("key", "^v"),
                     ("key", "{ENTER}"),
+                    ("child_window", {
+                        "title_re": app.PhoneLinkSender.MESSAGE_BOX_RE,
+                        "control_type": "Edit",
+                    }),
+                    ("click", "message-box"),
                     ("copy", "Test message"),
                     ("key", "^v"),
                     ("key", "{ENTER}"),
