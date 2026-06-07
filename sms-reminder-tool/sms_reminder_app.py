@@ -522,14 +522,9 @@ class BridgeClient:
 
 
 class PhoneLinkSender:
-    STEP_DELAY_SECONDS = 1.75
-    OPEN_DELAY_SECONDS = 6.0
-    COMPOSE_DELAY_SECONDS = 3.5
-    RECIPIENT_SETTLE_SECONDS = 3.0
-    MESSAGE_SETTLE_SECONDS = 2.5
-    SEND_SETTLE_SECONDS = 7.0
-    CLOSE_SETTLE_SECONDS = 2.0
-    BETWEEN_SMS_SECONDS = 2.0
+    STEP_DELAY_SECONDS = 1.25
+    COMPOSE_DELAY_SECONDS = 2.0
+    SEND_SETTLE_SECONDS = 2.0
 
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
@@ -551,34 +546,11 @@ class PhoneLinkSender:
         send_keys(keys)
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS if delay is None else delay)
 
-    @staticmethod
-    def close_phone_link_window(window: Any | None = None) -> None:
-        if platform.system() != "Windows":
-            return
-        try:
-            from pywinauto import Desktop
-            from pywinauto.keyboard import send_keys
-        except ImportError:
-            return
-        try:
-            target = window
-            if target is None or not target.exists(timeout=1):
-                target = Desktop(backend="uia").window(title_re=".*(Phone Link|Liên kết Điện thoại|Messages).*")
-            if target.exists(timeout=1):
-                target.set_focus()
-                try:
-                    target.close()
-                except Exception:
-                    send_keys("%{F4}")
-                time.sleep(PhoneLinkSender.CLOSE_SETTLE_SECONDS)
-        except Exception:
-            return
-
     def focus_new_message(self, window: Any) -> None:
         window.set_focus()
         time.sleep(self.STEP_DELAY_SECONDS)
         # Escape clears transient focus such as a selected recipient chip or an open flyout.
-        self.slow_keys("{ESC}", 1.0)
+        self.slow_keys("{ESC}", 0.75)
         self.slow_keys("^n", self.COMPOSE_DELAY_SECONDS)
 
     def send_sms(self, phone: str, message: str) -> None:
@@ -595,29 +567,23 @@ class PhoneLinkSender:
         except ImportError as exc:
             raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
 
-        window = None
-        try:
-            self.close_phone_link_window()
-            self.open_phone_link()
-            time.sleep(self.OPEN_DELAY_SECONDS)
+        self.open_phone_link()
+        time.sleep(4)
 
-            desktop = Desktop(backend="uia")
-            window = desktop.window(title_re=".*(Phone Link|Liên kết Điện thoại|Messages).*")
-            if not window.exists(timeout=15):
-                app = Application(backend="uia").connect(title_re=".*Phone Link.*", timeout=15)
-                window = app.top_window()
+        desktop = Desktop(backend="uia")
+        window = desktop.window(title_re=".*(Phone Link|Liên kết Điện thoại|Messages).*")
+        if not window.exists(timeout=10):
+            app = Application(backend="uia").connect(title_re=".*Phone Link.*", timeout=10)
+            window = app.top_window()
 
-            self.focus_new_message(window)
-            pyperclip.copy(phone)
-            self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
-            self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
-            self.slow_keys("{TAB 2}", self.RECIPIENT_SETTLE_SECONDS)
-            pyperclip.copy(message)
-            self.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
-            self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
-        finally:
-            self.close_phone_link_window(window)
-            time.sleep(self.BETWEEN_SMS_SECONDS)
+        self.focus_new_message(window)
+        pyperclip.copy(phone)
+        self.slow_keys("^v")
+        self.slow_keys("{ENTER}", 2.0)
+        self.slow_keys("{TAB 2}", 1.25)
+        pyperclip.copy(message)
+        self.slow_keys("^v", 1.25)
+        self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
 
     def compose_sms(self, phone: str, message: str) -> None:
         if platform.system() != "Windows":
@@ -630,9 +596,8 @@ class PhoneLinkSender:
         except ImportError as exc:
             raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
 
-        self.close_phone_link_window()
         self.open_phone_link()
-        time.sleep(self.OPEN_DELAY_SECONDS)
+        time.sleep(4)
 
         desktop = Desktop(backend="uia")
         window = desktop.window(title_re=".*(Phone Link|Liên kết Điện thoại|Messages).*")
@@ -642,11 +607,11 @@ class PhoneLinkSender:
 
         self.focus_new_message(window)
         pyperclip.copy(phone)
-        self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
-        self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
-        self.slow_keys("{TAB 2}", self.RECIPIENT_SETTLE_SECONDS)
+        self.slow_keys("^v")
+        self.slow_keys("{ENTER}", 2.0)
+        self.slow_keys("{TAB 2}", 1.25)
         pyperclip.copy(message)
-        self.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
+        self.slow_keys("^v", 1.25)
 
 
 class OpenDentalPatientViewer:

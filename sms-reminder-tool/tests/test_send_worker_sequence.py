@@ -155,5 +155,86 @@ class SendWorkerSequenceTest(unittest.TestCase):
         )
 
 
+class PhoneLinkSenderSequenceTest(unittest.TestCase):
+    def test_real_send_uses_original_phone_link_key_sequence(self):
+        events = []
+        old_platform_system = app.platform.system
+        old_sleep = app.time.sleep
+        old_copy = app.pyperclip.copy
+        old_open = app.PhoneLinkSender.open_phone_link
+        old_pywinauto = sys.modules.get("pywinauto")
+        old_keyboard = sys.modules.get("pywinauto.keyboard")
+
+        class FakeWindow:
+            def exists(self, timeout=0):
+                return True
+
+            def set_focus(self):
+                events.append(("focus",))
+
+        class FakeDesktop:
+            def __init__(self, backend=None):
+                self.backend = backend
+
+            def window(self, title_re=None):
+                events.append(("window", title_re))
+                return FakeWindow()
+
+        class FakeApplication:
+            def __init__(self, backend=None):
+                self.backend = backend
+
+            def connect(self, title_re=None, timeout=0):
+                events.append(("connect", title_re, timeout))
+                return self
+
+            def top_window(self):
+                return FakeWindow()
+
+        fake_pywinauto = types.SimpleNamespace(Desktop=FakeDesktop, Application=FakeApplication)
+        fake_keyboard = types.SimpleNamespace(send_keys=lambda keys: events.append(("key", keys)))
+
+        try:
+            app.platform.system = lambda: "Windows"
+            app.time.sleep = lambda _seconds: None
+            app.pyperclip.copy = lambda text: events.append(("copy", text))
+            app.PhoneLinkSender.open_phone_link = staticmethod(lambda: events.append(("open",)))
+            sys.modules["pywinauto"] = fake_pywinauto
+            sys.modules["pywinauto.keyboard"] = fake_keyboard
+
+            app.PhoneLinkSender(dry_run=False).send_sms("(281) 111-1111", "Test message")
+
+            self.assertEqual(
+                events,
+                [
+                    ("open",),
+                    ("window", ".*(Phone Link|Liên kết Điện thoại|Messages).*"),
+                    ("focus",),
+                    ("key", "{ESC}"),
+                    ("key", "^n"),
+                    ("copy", "(281) 111-1111"),
+                    ("key", "^v"),
+                    ("key", "{ENTER}"),
+                    ("key", "{TAB 2}"),
+                    ("copy", "Test message"),
+                    ("key", "^v"),
+                    ("key", "{ENTER}"),
+                ],
+            )
+        finally:
+            app.platform.system = old_platform_system
+            app.time.sleep = old_sleep
+            app.pyperclip.copy = old_copy
+            app.PhoneLinkSender.open_phone_link = old_open
+            if old_pywinauto is None:
+                sys.modules.pop("pywinauto", None)
+            else:
+                sys.modules["pywinauto"] = old_pywinauto
+            if old_keyboard is None:
+                sys.modules.pop("pywinauto.keyboard", None)
+            else:
+                sys.modules["pywinauto.keyboard"] = old_keyboard
+
+
 if __name__ == "__main__":
     unittest.main()
