@@ -616,8 +616,7 @@ class PhoneLinkSender:
         pyperclip.copy(phone)
         self.slow_keys("^v")
         self.slow_keys("{ENTER}", 2.0)
-        if not self.focus_message_box(window):
-            raise RuntimeError("Could not focus the Phone Link 'Send a message' box after selecting the recipient.")
+        self.slow_keys("+{ENTER}", 1.25)
         pyperclip.copy(message)
         self.slow_keys("^v", 1.25)
         self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
@@ -646,8 +645,7 @@ class PhoneLinkSender:
         pyperclip.copy(phone)
         self.slow_keys("^v")
         self.slow_keys("{ENTER}", 2.0)
-        if not self.focus_message_box(window):
-            raise RuntimeError("Could not focus the Phone Link 'Send a message' box after selecting the recipient.")
+        self.slow_keys("+{ENTER}", 1.25)
         pyperclip.copy(message)
         self.slow_keys("^v", 1.25)
 
