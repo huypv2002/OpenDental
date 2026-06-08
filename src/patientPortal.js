@@ -479,7 +479,7 @@ export function parsePatientRegisterBody(body) {
   const firstName = plainLatinName(requiredString(body, 'firstName', 'First name'), 'First name');
   const lastName = plainLatinName(requiredString(body, 'lastName', 'Last name'), 'Last name');
   const birthdate = normalizeDate(requiredString(body, 'birthdate', 'Date of birth'), 'Date of birth');
-  const driverLicense = requiredString(body, 'driverLicense', 'Driver license ID or passport');
+  const driverLicense = optionalString(body, 'driverLicense');
   const email = normalizeEmail(requiredString(body, 'email', 'Email'));
   const password = requiredString(body, 'password', 'Password');
   requiredAgreement(body);
@@ -637,6 +637,21 @@ export function parsePatientAccountLinkBody(body) {
 }
 
 async function findMatchingPatient(connection, input) {
+  if (!input.driverLicense) {
+    const [rows] = await connection.execute(
+      `SELECT
+         p.PatNum, p.FName, p.LName, p.Birthdate, p.WirelessPhone, p.Email
+       FROM patient p
+       WHERE LOWER(p.FName) = LOWER(?)
+         AND LOWER(p.LName) = LOWER(?)
+         AND p.Birthdate = ?
+       ORDER BY p.PatNum DESC
+       LIMIT 1`,
+      [input.firstName, input.lastName, input.birthdate]
+    );
+    return rows[0] || null;
+  }
+
   const driverLike = `%${String(input.driverLicense).replace(/[\\%_]/g, (match) => `\\${match}`)}%`;
   const [rows] = await connection.execute(
     `SELECT
