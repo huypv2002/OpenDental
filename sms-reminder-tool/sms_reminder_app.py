@@ -601,7 +601,7 @@ class PhoneLinkSender:
         return [control for control in controls if control is not None]
 
     @staticmethod
-    def focus_message_box(window: Any) -> Any:
+    def find_message_box(window: Any) -> tuple[Any, Any] | None:
         wrapper = window.wrapper_object()
         window_rect = wrapper.rectangle()
         candidates = []
@@ -618,24 +618,47 @@ class PhoneLinkSender:
             control_type = str(getattr(getattr(control, "element_info", None), "control_type", "") or "")
             type_score = {"Edit": 30, "Document": 20, "Text": 10}.get(control_type, 0)
             candidates.append((type_score, rect.top, control))
-        if not candidates:
+        if candidates:
+            return max(candidates, key=lambda item: (item[0], item[1]))[2], window_rect
+        return None
+
+    @staticmethod
+    def focus_message_box(window: Any) -> Any:
+        result = PhoneLinkSender.find_message_box(window)
+        if result is None:
             try:
                 from pywinauto import mouse
 
+                wrapper = window.wrapper_object()
+                window_rect = wrapper.rectangle()
                 width = window_rect.right - window_rect.left
                 height = window_rect.bottom - window_rect.top
-                mouse.click(
-                    button="left",
-                    coords=(
-                        int(window_rect.left + (width * 0.75)),
-                        int(window_rect.top + (height * 0.89)),
-                    ),
+                coords = (
+                    int(window_rect.left + (width * 0.75)),
+                    int(window_rect.top + (height * 0.89)),
                 )
-                time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+                for _attempt in range(2):
+                    mouse.click(button="left", coords=coords)
+                    time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
                 return wrapper
             except Exception as exc:
                 raise RuntimeError("Could not find or focus the Phone Link 'Send a message' box.") from exc
-        field = max(candidates, key=lambda item: (item[0], item[1]))[2]
+
+        field, _window_rect = result
+        field.click_input()
+        time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+
+        focused = False
+        try:
+            focused = bool(field.has_keyboard_focus())
+        except Exception:
+            pass
+        if focused:
+            return field
+
+        refreshed = PhoneLinkSender.find_message_box(window)
+        if refreshed is not None:
+            field = refreshed[0]
         field.click_input()
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
         return field
