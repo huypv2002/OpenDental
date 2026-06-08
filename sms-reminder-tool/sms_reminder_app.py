@@ -584,39 +584,74 @@ class PhoneLinkSender:
         ):
             try:
                 value = getter()
-                if value is not None:
-                    return str(value)
+                text = str(value or "").strip()
+                if text:
+                    return text
             except Exception:
                 continue
         return ""
+
+    @staticmethod
+    def message_box_controls(window: Any, field: Any | None = None) -> list[Any]:
+        controls = [field] if field is not None else []
+        try:
+            controls.extend(window.wrapper_object().descendants())
+        except Exception:
+            pass
+        return [control for control in controls if control is not None]
 
     @staticmethod
     def focus_message_box(window: Any) -> Any:
         wrapper = window.wrapper_object()
         window_rect = wrapper.rectangle()
         candidates = []
-        for edit in wrapper.descendants(control_type="Edit"):
-            name = PhoneLinkSender.control_name(edit).lower()
+        for control in wrapper.descendants():
+            name = PhoneLinkSender.control_name(control).lower()
             if name not in PhoneLinkSender.MESSAGE_BOX_TITLES:
                 continue
-            rect = edit.rectangle()
+            try:
+                rect = control.rectangle()
+            except Exception:
+                continue
             if rect.top <= window_rect.top + ((window_rect.bottom - window_rect.top) * 0.55):
                 continue
-            candidates.append((rect.top, edit))
+            control_type = str(getattr(getattr(control, "element_info", None), "control_type", "") or "")
+            type_score = {"Edit": 30, "Document": 20, "Text": 10}.get(control_type, 0)
+            candidates.append((type_score, rect.top, control))
         if not candidates:
-            raise RuntimeError("Could not find the Phone Link 'Send a message' box.")
-        field = max(candidates, key=lambda item: item[0])[1]
+            try:
+                from pywinauto import mouse
+
+                width = window_rect.right - window_rect.left
+                height = window_rect.bottom - window_rect.top
+                mouse.click(
+                    button="left",
+                    coords=(
+                        int(window_rect.left + (width * 0.75)),
+                        int(window_rect.top + (height * 0.89)),
+                    ),
+                )
+                time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+                return wrapper
+            except Exception as exc:
+                raise RuntimeError("Could not find or focus the Phone Link 'Send a message' box.") from exc
+        field = max(candidates, key=lambda item: (item[0], item[1]))[2]
         field.click_input()
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
         return field
 
     @staticmethod
-    def wait_for_value(field: Any, expected: str, timeout: float) -> bool:
+    def wait_for_value(window: Any, field: Any, expected: str, timeout: float, present: bool = True) -> bool:
         expected = " ".join(str(expected or "").split())
         deadline = time.time() + timeout
         while time.time() < deadline:
-            current = " ".join(PhoneLinkSender.read_edit_value(field).split())
-            if current == expected:
+            values = {
+                " ".join(value.split())
+                for control in PhoneLinkSender.message_box_controls(window, field)
+                if (value := PhoneLinkSender.read_edit_value(control).strip())
+            }
+            found = expected in values
+            if found == present:
                 return True
             time.sleep(0.25)
         return False
@@ -681,11 +716,11 @@ class PhoneLinkSender:
             message_box = self.focus_message_box(window)
             pyperclip.copy(message)
             self.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
-            if not self.wait_for_value(message_box, message, 5.0):
+            if not self.wait_for_value(window, message_box, message, 5.0):
                 raise RuntimeError("Template was not pasted into the Phone Link message box. SMS was not sent.")
 
             self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
-            if not self.wait_for_value(message_box, "", 6.0):
+            if not self.wait_for_value(window, message_box, message, 6.0, present=False):
                 raise RuntimeError("Phone Link did not confirm the send action. Batch stopped.")
         finally:
             self.close_phone_link(window)
@@ -719,7 +754,7 @@ class PhoneLinkSender:
         message_box = self.focus_message_box(window)
         pyperclip.copy(message)
         self.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
-        if not self.wait_for_value(message_box, message, 5.0):
+        if not self.wait_for_value(window, message_box, message, 5.0):
             raise RuntimeError("Template was not pasted into the Phone Link message box.")
 
 

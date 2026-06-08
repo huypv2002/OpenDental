@@ -210,7 +210,7 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
 
         class FakeEdit:
             def __init__(self, name, top):
-                self.element_info = types.SimpleNamespace(name=name)
+                self.element_info = types.SimpleNamespace(name=name, control_type="Text")
                 self._rect = FakeRect(top, top + 40)
                 self.value = ""
 
