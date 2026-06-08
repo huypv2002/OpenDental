@@ -50,6 +50,9 @@ class FakePhoneLinkSender:
         if phone == self.fail_on_phone:
             raise RuntimeError("simulated Phone Link failure")
 
+    def compose_sms(self, phone, message):
+        EVENTS.append(("compose", phone, message))
+
 
 def appointment(apt_num: int, pat_num: int, first: str, last: str, phone: str, status: str = "") -> dict:
     return {
@@ -172,6 +175,18 @@ class SendWorkerSequenceTest(unittest.TestCase):
                 ("send", "(281) 222-2222", "Reminder for Second at 9:00 am."),
                 ("log", 1002, "(281) 222-2222", "needs-review", "", "Reminder for Second at 9:00 am."),
             ],
+        )
+
+    def test_compose_worker_fills_template_without_sending_or_logging(self):
+        row = appointment(1001, 501, "First", "Patient", "(281) 111-1111")
+        row["_TemplateText"] = "Custom reminder for {first_name}."
+
+        worker = app.ComposeReminderWorker(self.config, row)
+        worker.run()
+
+        self.assertEqual(
+            EVENTS,
+            [("compose", "(281) 111-1111", "Custom reminder for First.")],
         )
 
 

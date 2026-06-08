@@ -842,6 +842,40 @@ class OpenDentalViewWorker(QThread):
         self.succeeded.emit(patient)
 
 
+class ComposeReminderWorker(QThread):
+    succeeded = Signal(str, str)
+    failed = Signal(str)
+
+    def __init__(self, config: AppConfig, appointment: dict[str, Any]):
+        super().__init__()
+        self.config = config
+        self.appointment = appointment
+
+    def run(self) -> None:
+        appointment = self.appointment
+        message = render_message(
+            self.config,
+            appointment,
+            appointment.get("_TemplateText") or default_template(self.config),
+        )
+        targets = [
+            target for target in appointment.get("PhoneTargets", [])
+            if digits_only(target.get("phone", "")) and target.get("status") not in SEND_SKIP_STATUSES
+        ]
+        if "PhoneTargets" not in appointment and not targets and digits_only(appointment.get("Phone", "")):
+            targets = [{"phone": appointment.get("Phone", "")}]
+        if not targets:
+            self.failed.emit("The selected appointment has no pending valid phone number.")
+            return
+        phone = str(targets[0].get("phone") or "")
+        try:
+            PhoneLinkSender(dry_run=False).compose_sms(phone, message)
+        except Exception as exc:  # noqa: BLE001 - surface Phone Link automation errors in UI
+            self.failed.emit(str(exc))
+            return
+        self.succeeded.emit(phone, patient_name(appointment))
+
+
 class SendWorker(QThread):
     progress = Signal(str)
     finished = Signal(int, int)
@@ -1325,6 +1359,7 @@ class SmsReminderWindow(QMainWindow):
         self._restoring_column_widths: set[str] = set()
         self.lazy_table_state: dict[str, dict[str, Any]] = {}
         self.view_worker: OpenDentalViewWorker | None = None
+        self.compose_worker: ComposeReminderWorker | None = None
         self.active_view_button: QPushButton | None = None
         self.active_campaign_recipient_keys: set[tuple[str, str, str, str, str, str]] = set()
         if self.config.bridge_url and self.config.api_token:
@@ -1597,6 +1632,9 @@ class SmsReminderWindow(QMainWindow):
         self.date_edit.dateChanged.connect(self.load_appointments_for_selected_date)
         self.send_selected_button = QPushButton("Send selected")
         self.send_selected_button.clicked.connect(self.send_selected)
+        self.test_selected_button = QPushButton("Test selected (no send)")
+        self.test_selected_button.setToolTip("Fill the selected reminder in Phone Link without sending it")
+        self.test_selected_button.clicked.connect(self.test_selected_without_sending)
         self.send_all_button = QPushButton("Send all not sent")
         self.send_all_button.setObjectName("PrimaryButton")
         self.send_all_button.clicked.connect(self.send_all_not_sent)
@@ -1621,6 +1659,7 @@ class SmsReminderWindow(QMainWindow):
         controls.addWidget(self.clear_dry_run_button)
         controls.addWidget(self.reset_selected_button)
         controls.addWidget(self.mark_selected_sent_button)
+        controls.addWidget(self.test_selected_button)
         controls.addWidget(self.send_selected_button)
         controls.addWidget(self.send_all_button)
         layout.addWidget(controls_card)
@@ -4465,6 +4504,46 @@ class SmsReminderWindow(QMainWindow):
             return
         self.start_send(selected)
 
+    def test_selected_without_sending(self) -> None:
+        if self.compose_worker and self.compose_worker.isRunning():
+            QMessageBox.information(self, "Test in progress", "Please wait for the current Phone Link test to finish.")
+            return
+        selected = self.selected_appointments()
+        if not selected:
+            QMessageBox.information(self, "No selection", "Please select one appointment to test.")
+            return
+        if len(selected) != 1:
+            QMessageBox.information(
+                self,
+                "Select one appointment",
+                "Please select exactly one appointment. A Phone Link draft can only show one reminder at a time.",
+            )
+            return
+
+        self.save_settings(silent=True)
+        appointment = selected[0]
+        self.set_send_enabled(False)
+        self.append_activity(f"Testing SMS draft without sending: {patient_name(appointment)}")
+        worker = ComposeReminderWorker(self.config, appointment)
+        self.compose_worker = worker
+
+        def on_success(phone: str, patient: str) -> None:
+            self.append_activity(f"TEST READY: {patient} -> {phone}. Template filled; SMS was not sent.")
+            self.statusBar().showMessage("Test draft is ready in Phone Link. Nothing was sent.", 8000)
+
+        def on_failed(message: str) -> None:
+            self.append_activity(f"SMS draft test failed: {message}")
+            QMessageBox.warning(self, "SMS draft test failed", message)
+
+        def on_finished() -> None:
+            self.compose_worker = None
+            self.set_send_enabled(True)
+
+        worker.succeeded.connect(on_success)
+        worker.failed.connect(on_failed)
+        worker.finished.connect(on_finished)
+        worker.start()
+
     def reset_selected_to_not_sent(self) -> None:
         selected = self.selected_appointments()
         if not selected:
@@ -4788,6 +4867,8 @@ class SmsReminderWindow(QMainWindow):
 
     def set_send_enabled(self, enabled: bool) -> None:
         self.send_selected_button.setEnabled(enabled)
+        if hasattr(self, "test_selected_button"):
+            self.test_selected_button.setEnabled(enabled)
         self.send_all_button.setEnabled(enabled)
         self.preview_button.setEnabled(enabled)
         self.open_phone_button.setEnabled(enabled)
