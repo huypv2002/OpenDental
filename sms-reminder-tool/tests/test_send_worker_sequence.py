@@ -191,7 +191,7 @@ class SendWorkerSequenceTest(unittest.TestCase):
 
 
 class PhoneLinkSenderSequenceTest(unittest.TestCase):
-    def test_real_send_uses_original_phone_link_key_sequence(self):
+    def test_real_send_continues_when_phone_link_keeps_stale_message_value(self):
         events = []
         old_platform_system = app.platform.system
         old_sleep = app.time.sleep
@@ -263,8 +263,6 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             control = focused["control"]
             if keys == "^v" and control is not None:
                 control.value = clipboard["value"]
-            elif keys == "{ENTER}" and control is message_box and control.value:
-                control.value = ""
 
         fake_pywinauto = types.SimpleNamespace(Desktop=FakeDesktop, Application=FakeApplication)
         fake_keyboard = types.SimpleNamespace(send_keys=fake_send_keys)
@@ -308,6 +306,7 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
                     ("close", True),
                 ],
             )
+            self.assertEqual(message_box.value, "Test message")
         finally:
             app.platform.system = old_platform_system
             app.time.sleep = old_sleep

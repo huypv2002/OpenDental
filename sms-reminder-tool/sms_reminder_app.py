@@ -743,8 +743,6 @@ class PhoneLinkSender:
                 raise RuntimeError("Template was not pasted into the Phone Link message box. SMS was not sent.")
 
             self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
-            if not self.wait_for_value(window, message_box, message, 6.0, present=False):
-                raise RuntimeError("Phone Link did not confirm the send action. Batch stopped.")
         finally:
             self.close_phone_link(window)
 
