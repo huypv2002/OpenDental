@@ -522,10 +522,19 @@ class BridgeClient:
 
 
 class PhoneLinkSender:
-    STEP_DELAY_SECONDS = 1.25
-    COMPOSE_DELAY_SECONDS = 2.0
-    SEND_SETTLE_SECONDS = 2.0
-    MESSAGE_BOX_RE = r".*(Send a message|Type a message|Message|Nhập tin nhắn|Tin nhắn).*"
+    STEP_DELAY_SECONDS = 1.75
+    OPEN_DELAY_SECONDS = 6.0
+    COMPOSE_DELAY_SECONDS = 3.0
+    RECIPIENT_SETTLE_SECONDS = 3.0
+    MESSAGE_SETTLE_SECONDS = 2.5
+    SEND_SETTLE_SECONDS = 6.0
+    CLOSE_SETTLE_SECONDS = 2.0
+    MESSAGE_BOX_TITLES = {
+        "send a message",
+        "type a message",
+        "nhập tin nhắn",
+        "tin nhắn",
+    }
 
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
@@ -555,39 +564,87 @@ class PhoneLinkSender:
         self.slow_keys("^n", self.COMPOSE_DELAY_SECONDS)
 
     @staticmethod
-    def focus_message_box(window: Any) -> bool:
-        for kwargs in (
-            {"title_re": PhoneLinkSender.MESSAGE_BOX_RE, "control_type": "Edit"},
-            {"title_re": PhoneLinkSender.MESSAGE_BOX_RE},
-            {"auto_id": "MessageTextBox"},
-            {"auto_id": "messageTextBox"},
-        ):
+    def control_name(control: Any) -> str:
+        for getter in (lambda: control.element_info.name, lambda: control.window_text()):
             try:
-                field = window.child_window(**kwargs)
-                if field.exists(timeout=1):
-                    field.click_input()
-                    time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
-                    return True
+                value = str(getter() or "").strip()
+                if value:
+                    return value
             except Exception:
                 continue
+        return ""
 
-        try:
-            wrapper = window.wrapper_object()
-            window_rect = wrapper.rectangle()
-            edits = wrapper.descendants(control_type="Edit")
-            bottom_edits = []
-            for edit in edits:
-                rect = edit.rectangle()
-                if rect.top > window_rect.top + ((window_rect.bottom - window_rect.top) * 0.55):
-                    bottom_edits.append((rect.top, edit))
-            for _top, edit in sorted(bottom_edits, key=lambda item: item[0], reverse=True):
-                edit.click_input()
-                time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+    @staticmethod
+    def read_edit_value(control: Any) -> str:
+        for getter in (
+            lambda: control.get_value(),
+            lambda: control.iface_value.CurrentValue,
+            lambda: control.legacy_properties().get("Value", ""),
+            lambda: control.window_text(),
+        ):
+            try:
+                value = getter()
+                if value is not None:
+                    return str(value)
+            except Exception:
+                continue
+        return ""
+
+    @staticmethod
+    def focus_message_box(window: Any) -> Any:
+        wrapper = window.wrapper_object()
+        window_rect = wrapper.rectangle()
+        candidates = []
+        for edit in wrapper.descendants(control_type="Edit"):
+            name = PhoneLinkSender.control_name(edit).lower()
+            if name not in PhoneLinkSender.MESSAGE_BOX_TITLES:
+                continue
+            rect = edit.rectangle()
+            if rect.top <= window_rect.top + ((window_rect.bottom - window_rect.top) * 0.55):
+                continue
+            candidates.append((rect.top, edit))
+        if not candidates:
+            raise RuntimeError("Could not find the Phone Link 'Send a message' box.")
+        field = max(candidates, key=lambda item: item[0])[1]
+        field.click_input()
+        time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+        return field
+
+    @staticmethod
+    def wait_for_value(field: Any, expected: str, timeout: float) -> bool:
+        expected = " ".join(str(expected or "").split())
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            current = " ".join(PhoneLinkSender.read_edit_value(field).split())
+            if current == expected:
                 return True
+            time.sleep(0.25)
+        return False
+
+    @staticmethod
+    def close_phone_link(window: Any | None = None) -> bool:
+        if platform.system() != "Windows":
+            return True
+        try:
+            from pywinauto import Desktop
+            from pywinauto.keyboard import send_keys
+
+            target = window
+            if target is None:
+                target = Desktop(backend="uia").window(
+                    title_re=".*(Phone Link|Liên kết Điện thoại|Messages).*"
+                )
+            if not target.exists(timeout=1):
+                return True
+            target.set_focus()
+            try:
+                target.close()
+            except Exception:
+                send_keys("%{F4}")
+            time.sleep(PhoneLinkSender.CLOSE_SETTLE_SECONDS)
+            return not target.exists(timeout=1)
         except Exception:
             return False
-
-        return False
 
     def send_sms(self, phone: str, message: str) -> None:
         if self.dry_run:
@@ -603,23 +660,35 @@ class PhoneLinkSender:
         except ImportError as exc:
             raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
 
-        self.open_phone_link()
-        time.sleep(4)
+        window = None
+        try:
+            if not self.close_phone_link():
+                raise RuntimeError("Could not close the previous Phone Link window. SMS was not attempted.")
+            self.open_phone_link()
+            time.sleep(self.OPEN_DELAY_SECONDS)
 
-        desktop = Desktop(backend="uia")
-        window = desktop.window(title_re=".*(Phone Link|Liên kết Điện thoại|Messages).*")
-        if not window.exists(timeout=10):
-            app = Application(backend="uia").connect(title_re=".*Phone Link.*", timeout=10)
-            window = app.top_window()
+            desktop = Desktop(backend="uia")
+            window = desktop.window(title_re=".*(Phone Link|Liên kết Điện thoại|Messages).*")
+            if not window.exists(timeout=15):
+                app = Application(backend="uia").connect(title_re=".*Phone Link.*", timeout=15)
+                window = app.top_window()
 
-        self.focus_new_message(window)
-        pyperclip.copy(phone)
-        self.slow_keys("^v")
-        self.slow_keys("{ENTER}", 2.0)
-        self.slow_keys("+{ENTER}", 1.25)
-        pyperclip.copy(message)
-        self.slow_keys("^v", 1.25)
-        self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
+            self.focus_new_message(window)
+            pyperclip.copy(phone)
+            self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
+            self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
+
+            message_box = self.focus_message_box(window)
+            pyperclip.copy(message)
+            self.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
+            if not self.wait_for_value(message_box, message, 5.0):
+                raise RuntimeError("Template was not pasted into the Phone Link message box. SMS was not sent.")
+
+            self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
+            if not self.wait_for_value(message_box, "", 6.0):
+                raise RuntimeError("Phone Link did not confirm the send action. Batch stopped.")
+        finally:
+            self.close_phone_link(window)
 
     def compose_sms(self, phone: str, message: str) -> None:
         if platform.system() != "Windows":
@@ -632,8 +701,10 @@ class PhoneLinkSender:
         except ImportError as exc:
             raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
 
+        if not self.close_phone_link():
+            raise RuntimeError("Could not close the previous Phone Link window.")
         self.open_phone_link()
-        time.sleep(4)
+        time.sleep(self.OPEN_DELAY_SECONDS)
 
         desktop = Desktop(backend="uia")
         window = desktop.window(title_re=".*(Phone Link|Liên kết Điện thoại|Messages).*")
@@ -643,11 +714,13 @@ class PhoneLinkSender:
 
         self.focus_new_message(window)
         pyperclip.copy(phone)
-        self.slow_keys("^v")
-        self.slow_keys("{ENTER}", 2.0)
-        self.slow_keys("+{ENTER}", 1.25)
+        self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
+        self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
+        message_box = self.focus_message_box(window)
         pyperclip.copy(message)
-        self.slow_keys("^v", 1.25)
+        self.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
+        if not self.wait_for_value(message_box, message, 5.0):
+            raise RuntimeError("Template was not pasted into the Phone Link message box.")
 
 
 class OpenDentalPatientViewer:
@@ -824,6 +897,9 @@ class SendWorker(QThread):
                     else:
                         repo.log_result(appointment, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed: {patient} {source} -> {exc}")
+                    self.progress.emit("Batch stopped. Remaining reminders were not attempted.")
+                    self.finished.emit(completed, failed)
+                    return
         if skipped:
             self.progress.emit(f"Skipped {skipped} row(s) with no valid phone number.")
         self.finished.emit(completed, failed)

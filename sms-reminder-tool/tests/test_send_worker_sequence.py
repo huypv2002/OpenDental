@@ -135,6 +135,26 @@ class SendWorkerSequenceTest(unittest.TestCase):
         failed_log = [event for event in EVENTS if event[0] == "log" and event[1] == 1002][0]
         self.assertNotEqual(failed_log[3], "sent")
 
+    def test_first_appointment_failure_stops_before_second_appointment(self):
+        FakePhoneLinkSender.fail_on_phone = "(281) 111-1111"
+        worker = app.SendWorker(
+            self.config,
+            [
+                appointment(1001, 501, "First", "Patient", "(281) 111-1111"),
+                appointment(1002, 502, "Second", "Patient", "(281) 222-2222"),
+            ],
+        )
+
+        worker.run()
+
+        self.assertEqual(
+            [event[:4] if event[0] == "log" else event[:2] for event in EVENTS],
+            [
+                ("send", "(281) 111-1111"),
+                ("log", 1001, "(281) 111-1111", "failed"),
+            ],
+        )
+
     def test_needs_review_rows_are_skipped_without_blocking_later_pending_rows(self):
         worker = app.SendWorker(
             self.config,
@@ -162,8 +182,35 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
         old_sleep = app.time.sleep
         old_copy = app.pyperclip.copy
         old_open = app.PhoneLinkSender.open_phone_link
+        old_close = app.PhoneLinkSender.close_phone_link
         old_pywinauto = sys.modules.get("pywinauto")
         old_keyboard = sys.modules.get("pywinauto.keyboard")
+        clipboard = {"value": ""}
+        focused = {"control": None}
+
+        class FakeRect:
+            def __init__(self, top, bottom):
+                self.top = top
+                self.bottom = bottom
+
+        class FakeEdit:
+            def __init__(self, name, top):
+                self.element_info = types.SimpleNamespace(name=name)
+                self._rect = FakeRect(top, top + 40)
+                self.value = ""
+
+            def rectangle(self):
+                return self._rect
+
+            def click_input(self):
+                focused["control"] = self
+                events.append(("click", self.element_info.name))
+
+            def get_value(self):
+                return self.value
+
+        search_box = FakeEdit("Search messages", 180)
+        message_box = FakeEdit("Send a message", 700)
 
         class FakeWindow:
             def exists(self, timeout=0):
@@ -172,33 +219,55 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             def set_focus(self):
                 events.append(("focus",))
 
+            def wrapper_object(self):
+                return self
+
+            def rectangle(self):
+                return FakeRect(100, 800)
+
+            def descendants(self, control_type=None):
+                self.assert_control_type = control_type
+                return [search_box, message_box]
+
+        window = FakeWindow()
+
         class FakeDesktop:
             def __init__(self, backend=None):
                 self.backend = backend
 
             def window(self, title_re=None):
                 events.append(("window", title_re))
-                return FakeWindow()
+                return window
 
         class FakeApplication:
             def __init__(self, backend=None):
                 self.backend = backend
 
-            def connect(self, title_re=None, timeout=0):
-                events.append(("connect", title_re, timeout))
-                return self
-
-            def top_window(self):
-                return FakeWindow()
+        def fake_send_keys(keys):
+            events.append(("key", keys))
+            control = focused["control"]
+            if keys == "^v" and control is not None:
+                control.value = clipboard["value"]
+            elif keys == "{ENTER}" and control is message_box and control.value:
+                control.value = ""
 
         fake_pywinauto = types.SimpleNamespace(Desktop=FakeDesktop, Application=FakeApplication)
-        fake_keyboard = types.SimpleNamespace(send_keys=lambda keys: events.append(("key", keys)))
+        fake_keyboard = types.SimpleNamespace(send_keys=fake_send_keys)
 
         try:
             app.platform.system = lambda: "Windows"
             app.time.sleep = lambda _seconds: None
-            app.pyperclip.copy = lambda text: events.append(("copy", text))
+            def fake_copy(text):
+                clipboard["value"] = text
+                events.append(("copy", text))
+
+            app.pyperclip.copy = fake_copy
             app.PhoneLinkSender.open_phone_link = staticmethod(lambda: events.append(("open",)))
+            def fake_close(target=None):
+                events.append(("close", target is window))
+                return True
+
+            app.PhoneLinkSender.close_phone_link = staticmethod(fake_close)
             sys.modules["pywinauto"] = fake_pywinauto
             sys.modules["pywinauto.keyboard"] = fake_keyboard
 
@@ -207,6 +276,7 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             self.assertEqual(
                 events,
                 [
+                    ("close", False),
                     ("open",),
                     ("window", ".*(Phone Link|Liên kết Điện thoại|Messages).*"),
                     ("focus",),
@@ -215,10 +285,11 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
                     ("copy", "(281) 111-1111"),
                     ("key", "^v"),
                     ("key", "{ENTER}"),
-                    ("key", "+{ENTER}"),
+                    ("click", "Send a message"),
                     ("copy", "Test message"),
                     ("key", "^v"),
                     ("key", "{ENTER}"),
+                    ("close", True),
                 ],
             )
         finally:
@@ -226,6 +297,7 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             app.time.sleep = old_sleep
             app.pyperclip.copy = old_copy
             app.PhoneLinkSender.open_phone_link = old_open
+            app.PhoneLinkSender.close_phone_link = old_close
             if old_pywinauto is None:
                 sys.modules.pop("pywinauto", None)
             else:
