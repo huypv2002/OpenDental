@@ -34,6 +34,15 @@ function optionalString(body, key) {
   return String(body[key] ?? '').trim();
 }
 
+function requiredAgreement(body) {
+  const accepted = body.agreementAccepted === true ||
+    ['1', 'true', 'yes', 'on'].includes(String(body.agreementAccepted ?? '').trim().toLowerCase());
+  if (!accepted) {
+    throw badRequest('Membership Terms and Privacy Policy acceptance is required.');
+  }
+  return true;
+}
+
 function plainLatinName(value, label) {
   if (!/^[A-Za-z][A-Za-z '\-]*$/.test(value)) {
     throw badRequest(`${label} must use letters without accents.`);
@@ -473,6 +482,7 @@ export function parsePatientRegisterBody(body) {
   const driverLicense = requiredString(body, 'driverLicense', 'Driver license ID or passport');
   const email = normalizeEmail(requiredString(body, 'email', 'Email'));
   const password = requiredString(body, 'password', 'Password');
+  requiredAgreement(body);
   if (password.length < 8) {
     throw badRequest('Password must be at least 8 characters.');
   }
@@ -484,7 +494,9 @@ export function parsePatientRegisterBody(body) {
     driverLicense,
     email,
     password,
-    phone: optionalString(body, 'phone')
+    phone: optionalString(body, 'phone'),
+    agreementAccepted: true,
+    agreementVersion: optionalString(body, 'agreementVersion').slice(0, 50)
   };
 }
 
@@ -549,10 +561,13 @@ export function parseMembershipPlanBody(body) {
 
 export function parsePatientPortalCheckoutBody(body) {
   const membershipPlan = requiredString(body, 'membershipPlan', 'Membership plan').slice(0, 100);
+  requiredAgreement(body);
   const session = authenticatedAccountBody(body);
   return {
     accountId: session.accountId,
     membershipPlan,
+    agreementAccepted: true,
+    agreementVersion: optionalString(body, 'agreementVersion').slice(0, 50),
     successUrl: normalizeCheckoutUrl(
       optionalString(body, 'successUrl') || config.stripe.successUrl,
       'successUrl'
@@ -1181,7 +1196,8 @@ export async function createMembershipCheckoutSession(input) {
     accountId: String(account.AccountId),
     patNum: account.PatNum ? String(account.PatNum) : '',
     planKey: plan.PlanKey,
-    planTitle: plan.Title
+    planTitle: plan.Title,
+    agreementVersion: input.agreementVersion || ''
   };
   const successBase = addQueryParam(input.successUrl, 'stripe', 'success');
   const successUrl = `${successBase}${successBase.includes('?') ? '&' : '?'}session_id={CHECKOUT_SESSION_ID}`;
