@@ -943,7 +943,6 @@ class PhoneLinkSender:
             self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
             self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
 
-            log_path = PhoneLinkSender.dump_window_elements(window, label="send_sms before focus_message_box")
             message_box = self.focus_message_box(window)
             self.paste_message(window, message_box, message)
 
@@ -977,7 +976,6 @@ class PhoneLinkSender:
         pyperclip.copy(phone)
         self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
         self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
-        PhoneLinkSender.dump_window_elements(window, label="compose_sms before focus_message_box")
         message_box = self.focus_message_box(window)
         self.paste_message(window, message_box, message)
 
