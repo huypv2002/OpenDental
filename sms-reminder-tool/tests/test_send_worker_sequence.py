@@ -191,6 +191,46 @@ class SendWorkerSequenceTest(unittest.TestCase):
 
 
 class PhoneLinkSenderSequenceTest(unittest.TestCase):
+    def test_coordinate_fallback_runs_only_after_initial_paste_verification_fails(self):
+        events = []
+        original_copy = app.pyperclip.copy
+        original_slow_keys = app.PhoneLinkSender.slow_keys
+        original_wait = app.PhoneLinkSender.wait_for_value
+        original_click = app.PhoneLinkSender.click_message_box_coords
+        verification_results = iter([False, True])
+
+        try:
+            app.pyperclip.copy = lambda text: events.append(("copy", text))
+            app.PhoneLinkSender.slow_keys = staticmethod(
+                lambda keys, delay=None: events.append(("key", keys))
+            )
+            app.PhoneLinkSender.wait_for_value = staticmethod(
+                lambda *_args, **_kwargs: next(verification_results)
+            )
+            app.PhoneLinkSender.click_message_box_coords = staticmethod(
+                lambda _window: events.append(("coordinate-fallback",))
+            )
+
+            app.PhoneLinkSender.paste_message_with_fallback(object(), object(), "Test message")
+
+            self.assertEqual(
+                events,
+                [
+                    ("copy", "Test message"),
+                    ("key", "^v"),
+                    ("coordinate-fallback",),
+                    ("key", "^a"),
+                    ("key", "{BACKSPACE}"),
+                    ("copy", "Test message"),
+                    ("key", "^v"),
+                ],
+            )
+        finally:
+            app.pyperclip.copy = original_copy
+            app.PhoneLinkSender.slow_keys = staticmethod(original_slow_keys)
+            app.PhoneLinkSender.wait_for_value = staticmethod(original_wait)
+            app.PhoneLinkSender.click_message_box_coords = staticmethod(original_click)
+
     def test_real_send_continues_when_phone_link_keeps_stale_message_value(self):
         events = []
         old_platform_system = app.platform.system
@@ -204,9 +244,11 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
         focused = {"control": None}
 
         class FakeRect:
-            def __init__(self, top, bottom):
+            def __init__(self, top, bottom, left=100, right=900):
                 self.top = top
                 self.bottom = bottom
+                self.left = left
+                self.right = right
 
         class FakeEdit:
             def __init__(self, name, top):
@@ -264,7 +306,14 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             if keys == "^v" and control is not None:
                 control.value = clipboard["value"]
 
-        fake_pywinauto = types.SimpleNamespace(Desktop=FakeDesktop, Application=FakeApplication)
+        fake_mouse = types.SimpleNamespace(
+            click=lambda button, coords: events.append(("mouse-click", button, coords))
+        )
+        fake_pywinauto = types.SimpleNamespace(
+            Desktop=FakeDesktop,
+            Application=FakeApplication,
+            mouse=fake_mouse,
+        )
         fake_keyboard = types.SimpleNamespace(send_keys=fake_send_keys)
 
         try:

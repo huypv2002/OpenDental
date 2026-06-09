@@ -623,23 +623,29 @@ class PhoneLinkSender:
         return None
 
     @staticmethod
+    def click_message_box_coords(window: Any) -> None:
+        from pywinauto import mouse
+
+        window_rect = window.wrapper_object().rectangle()
+        width = window_rect.right - window_rect.left
+        height = window_rect.bottom - window_rect.top
+        for y_ratio in (0.86, 0.89):
+            mouse.click(
+                button="left",
+                coords=(
+                    int(window_rect.left + (width * 0.75)),
+                    int(window_rect.top + (height * y_ratio)),
+                ),
+            )
+            time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+
+    @staticmethod
     def focus_message_box(window: Any) -> Any:
         result = PhoneLinkSender.find_message_box(window)
         if result is None:
             try:
-                from pywinauto import mouse
-
                 wrapper = window.wrapper_object()
-                window_rect = wrapper.rectangle()
-                width = window_rect.right - window_rect.left
-                height = window_rect.bottom - window_rect.top
-                coords = (
-                    int(window_rect.left + (width * 0.75)),
-                    int(window_rect.top + (height * 0.89)),
-                )
-                for _attempt in range(2):
-                    mouse.click(button="left", coords=coords)
-                    time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+                PhoneLinkSender.click_message_box_coords(window)
                 return wrapper
             except Exception as exc:
                 raise RuntimeError("Could not find or focus the Phone Link 'Send a message' box.") from exc
@@ -678,6 +684,21 @@ class PhoneLinkSender:
                 return True
             time.sleep(0.25)
         return False
+
+    @staticmethod
+    def paste_message_with_fallback(window: Any, field: Any, message: str) -> None:
+        pyperclip.copy(message)
+        PhoneLinkSender.slow_keys("^v", PhoneLinkSender.MESSAGE_SETTLE_SECONDS)
+        if PhoneLinkSender.wait_for_value(window, field, message, 5.0):
+            return
+
+        PhoneLinkSender.click_message_box_coords(window)
+        PhoneLinkSender.slow_keys("^a", 0.3)
+        PhoneLinkSender.slow_keys("{BACKSPACE}", 0.3)
+        pyperclip.copy(message)
+        PhoneLinkSender.slow_keys("^v", PhoneLinkSender.MESSAGE_SETTLE_SECONDS)
+        if not PhoneLinkSender.wait_for_value(window, field, message, 5.0):
+            raise RuntimeError("Template was not pasted into the Phone Link message box.")
 
     @staticmethod
     def close_phone_link(window: Any | None = None) -> bool:
@@ -737,10 +758,7 @@ class PhoneLinkSender:
             self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
 
             message_box = self.focus_message_box(window)
-            pyperclip.copy(message)
-            self.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
-            if not self.wait_for_value(window, message_box, message, 5.0):
-                raise RuntimeError("Template was not pasted into the Phone Link message box. SMS was not sent.")
+            self.paste_message_with_fallback(window, message_box, message)
 
             self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
         finally:
@@ -773,10 +791,7 @@ class PhoneLinkSender:
         self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
         self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
         message_box = self.focus_message_box(window)
-        pyperclip.copy(message)
-        self.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
-        if not self.wait_for_value(window, message_box, message, 5.0):
-            raise RuntimeError("Template was not pasted into the Phone Link message box.")
+        self.paste_message_with_fallback(window, message_box, message)
 
 
 class OpenDentalPatientViewer:
