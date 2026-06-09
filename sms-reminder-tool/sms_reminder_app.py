@@ -536,6 +536,10 @@ class PhoneLinkSender:
         "nhập tin nhắn",
         "tin nhắn",
     }
+    # Phone Link's "Send a message" box is the Edit whose AutomationId is
+    # "InputTextBox" (its Name is like "Send a message, New conversation with ...").
+    MESSAGE_BOX_AUTOMATION_ID = "InputTextBox"
+    SEND_BUTTON_AUTOMATION_ID = "SendMessageButton"
 
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
@@ -724,10 +728,25 @@ class PhoneLinkSender:
     def find_message_box(window: Any) -> tuple[Any, Any] | None:
         wrapper = window.wrapper_object()
         window_rect = wrapper.rectangle()
+        descendants = wrapper.descendants()
+
+        # Preferred: match by AutomationId. This is stable across languages and
+        # avoids the recipient "To" box (automation_id "TextBox").
+        for control in descendants:
+            info = getattr(control, "element_info", None)
+            automation_id = str(getattr(info, "automation_id", "") or "")
+            if automation_id != PhoneLinkSender.MESSAGE_BOX_AUTOMATION_ID:
+                continue
+            control_type = str(getattr(info, "control_type", "") or "")
+            if control_type and control_type != "Edit":
+                continue
+            return control, window_rect
+
+        # Fallback: match by visible name/title in the lower half of the window.
         candidates = []
-        for control in wrapper.descendants():
+        for control in descendants:
             name = PhoneLinkSender.control_name(control).lower()
-            if name not in PhoneLinkSender.MESSAGE_BOX_TITLES:
+            if not any(name.startswith(title) for title in PhoneLinkSender.MESSAGE_BOX_TITLES):
                 continue
             try:
                 rect = control.rectangle()
@@ -773,6 +792,13 @@ class PhoneLinkSender:
             time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
 
     @staticmethod
+    def control_has_focus(control: Any) -> bool:
+        try:
+            return bool(control.has_keyboard_focus())
+        except Exception:
+            return False
+
+    @staticmethod
     def focused_message_control(window: Any) -> Any | None:
         wrapper = window.wrapper_object()
         window_rect = wrapper.rectangle()
@@ -806,6 +832,8 @@ class PhoneLinkSender:
         field, _window_rect = result
         field.click_input()
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+        if PhoneLinkSender.control_has_focus(field):
+            return field
         focused = PhoneLinkSender.focused_message_control(window)
         if focused is not None:
             return focused
@@ -815,6 +843,8 @@ class PhoneLinkSender:
             field = refreshed[0]
         field.click_input()
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+        if PhoneLinkSender.control_has_focus(field):
+            return field
         focused = PhoneLinkSender.focused_message_control(window)
         if focused is not None:
             return focused
