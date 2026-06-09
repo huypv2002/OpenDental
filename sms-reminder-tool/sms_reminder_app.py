@@ -53,6 +53,7 @@ APP_DIR = Path(__file__).resolve().parent
 APP_ICON_PATH = APP_DIR / "tooth.ico"
 FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
+PHONE_LINK_ELEMENTS_LOG = APP_DIR / "phone_link_elements.log"
 SCHEDULER_ON_PATH = APP_DIR / "scheduler-on.bat"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
@@ -556,7 +557,124 @@ class PhoneLinkSender:
         send_keys(keys)
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS if delay is None else delay)
 
-    def focus_new_message(self, window: Any) -> None:
+    @staticmethod
+    def dump_window_elements(window: Any, label: str = "") -> str:
+        """Write the full UIA element tree of the whole Phone Link app to a log file.
+
+        It climbs to the top-level window, then collects every top-level window
+        that belongs to the same Phone Link process and records every descendant
+        control (name, control type, automation id, class name, rectangle, focus
+        state and any editable value) so the exact element can be identified.
+        """
+        lines: list[str] = []
+        header = f"===== Phone Link element dump {datetime.now().isoformat(timespec='seconds')}"
+        if label:
+            header += f" | {label}"
+        header += " ====="
+        lines.append(header)
+
+        roots = PhoneLinkSender._collect_app_windows(window, lines)
+        if not roots:
+            return PhoneLinkSender._write_element_dump(lines)
+
+        for win_index, wrapper in enumerate(roots):
+            lines.append("")
+            lines.append(f"########## TOP-LEVEL WINDOW #{win_index} ##########")
+            try:
+                lines.append(f"window_text = {wrapper.window_text()!r}")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"window_text = <err: {exc!r}>")
+            try:
+                lines.append(f"rectangle   = {wrapper.rectangle()}")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"rectangle   = <err: {exc!r}>")
+
+            try:
+                descendants = wrapper.descendants()
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"[error] could not enumerate descendants: {exc!r}")
+                continue
+
+            lines.append(f"[count] {len(descendants)} descendant controls")
+            for index, control in enumerate(descendants):
+                lines.append(f"--- #{win_index}.{index} ---")
+                info = getattr(control, "element_info", None)
+
+                def safe(getter):
+                    try:
+                        return getter()
+                    except Exception as exc:  # noqa: BLE001
+                        return f"<err: {exc!r}>"
+
+                lines.append(f"name           = {safe(lambda: control.element_info.name)!r}")
+                lines.append(f"window_text    = {safe(lambda: control.window_text())!r}")
+                lines.append(f"control_type   = {safe(lambda: getattr(info, 'control_type', ''))!r}")
+                lines.append(f"automation_id  = {safe(lambda: getattr(info, 'automation_id', ''))!r}")
+                lines.append(f"class_name     = {safe(lambda: getattr(info, 'class_name', ''))!r}")
+                lines.append(f"rectangle      = {safe(lambda: control.rectangle())}")
+                lines.append(f"has_focus      = {safe(lambda: control.has_keyboard_focus())}")
+                lines.append(f"is_enabled     = {safe(lambda: control.is_enabled())}")
+                lines.append(f"is_visible     = {safe(lambda: control.is_visible())}")
+                lines.append(f"edit_value     = {PhoneLinkSender.read_edit_value(control)!r}")
+
+        return PhoneLinkSender._write_element_dump(lines)
+
+    @staticmethod
+    def _collect_app_windows(window: Any, lines: list[str]) -> list[Any]:
+        """Return wrapper objects for every top-level window of the Phone Link app."""
+        try:
+            wrapper = window.wrapper_object()
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never crash sending
+            lines.append(f"[error] could not get window wrapper: {exc!r}")
+            return []
+
+        # Climb to the top-level ancestor of the matched window.
+        top = wrapper
+        try:
+            for ancestor in wrapper.iter_parents():
+                if ancestor is None:
+                    break
+                top = ancestor
+        except Exception:  # noqa: BLE001
+            pass
+
+        pid = None
+        try:
+            pid = top.process_id()
+        except Exception:  # noqa: BLE001
+            pid = None
+        lines.append(f"[app] top-level window pid={pid}")
+
+        roots: list[Any] = [top]
+        seen = {getattr(getattr(top, "element_info", None), "handle", None)}
+
+        # Gather every other top-level window that belongs to the same process,
+        # so pop-ups and secondary Phone Link windows are captured too.
+        if pid is not None:
+            try:
+                from pywinauto import Desktop
+
+                for win in Desktop(backend="uia").windows(process=pid):
+                    handle = getattr(getattr(win, "element_info", None), "handle", None)
+                    if handle in seen:
+                        continue
+                    seen.add(handle)
+                    roots.append(win)
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"[warn] could not enumerate sibling windows: {exc!r}")
+
+        lines.append(f"[app] {len(roots)} top-level window(s) collected")
+        return roots
+
+    @staticmethod
+    def _write_element_dump(lines: list[str]) -> str:
+        text = "\n".join(lines) + "\n\n"
+        try:
+            with open(PHONE_LINK_ELEMENTS_LOG, "a", encoding="utf-8") as handle:
+                handle.write(text)
+        except Exception:  # noqa: BLE001 - never let logging break the flow
+            pass
+        return str(PHONE_LINK_ELEMENTS_LOG)
         window.set_focus()
         time.sleep(self.STEP_DELAY_SECONDS)
         # Escape clears transient focus such as a selected recipient chip or an open flyout.
@@ -640,34 +758,78 @@ class PhoneLinkSender:
             time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
 
     @staticmethod
+    def click_control_center(control: Any) -> None:
+        from pywinauto import mouse
+
+        rect = control.rectangle()
+        coords = (
+            int(rect.left + ((rect.right - rect.left) / 2)),
+            int(rect.top + ((rect.bottom - rect.top) / 2)),
+        )
+        for _attempt in range(2):
+            mouse.click(button="left", coords=coords)
+            time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+
+    @staticmethod
+    def focused_message_control(window: Any) -> Any | None:
+        wrapper = window.wrapper_object()
+        window_rect = wrapper.rectangle()
+        for control in wrapper.descendants():
+            try:
+                rect = control.rectangle()
+                if rect.top <= window_rect.top + ((window_rect.bottom - window_rect.top) * 0.72):
+                    continue
+                control_type = str(getattr(getattr(control, "element_info", None), "control_type", "") or "")
+                if control_type == "Button":
+                    continue
+                if control.has_keyboard_focus():
+                    return control
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
     def focus_message_box(window: Any) -> Any:
         result = PhoneLinkSender.find_message_box(window)
         if result is None:
             try:
-                wrapper = window.wrapper_object()
                 PhoneLinkSender.click_message_box_coords(window)
-                return wrapper
+                focused = PhoneLinkSender.focused_message_control(window)
+                if focused is not None:
+                    return focused
+                raise RuntimeError("Phone Link did not place keyboard focus in the message box.")
             except Exception as exc:
                 raise RuntimeError("Could not find or focus the Phone Link 'Send a message' box.") from exc
 
         field, _window_rect = result
         field.click_input()
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
-
-        focused = False
-        try:
-            focused = bool(field.has_keyboard_focus())
-        except Exception:
-            pass
-        if focused:
-            return field
+        focused = PhoneLinkSender.focused_message_control(window)
+        if focused is not None:
+            return focused
 
         refreshed = PhoneLinkSender.find_message_box(window)
         if refreshed is not None:
             field = refreshed[0]
         field.click_input()
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
-        return field
+        focused = PhoneLinkSender.focused_message_control(window)
+        if focused is not None:
+            return focused
+
+        try:
+            PhoneLinkSender.click_control_center(field)
+        except Exception:
+            PhoneLinkSender.click_message_box_coords(window)
+        focused = PhoneLinkSender.focused_message_control(window)
+        if focused is not None:
+            return focused
+
+        PhoneLinkSender.click_message_box_coords(window)
+        focused = PhoneLinkSender.focused_message_control(window)
+        if focused is not None:
+            return focused
+        raise RuntimeError("Could not focus the Phone Link 'Send a message' box.")
 
     @staticmethod
     def wait_for_value(window: Any, field: Any, expected: str, timeout: float, present: bool = True) -> bool:
@@ -686,15 +848,7 @@ class PhoneLinkSender:
         return False
 
     @staticmethod
-    def paste_message_with_fallback(window: Any, field: Any, message: str) -> None:
-        pyperclip.copy(message)
-        PhoneLinkSender.slow_keys("^v", PhoneLinkSender.MESSAGE_SETTLE_SECONDS)
-        if PhoneLinkSender.wait_for_value(window, field, message, 5.0):
-            return
-
-        PhoneLinkSender.click_message_box_coords(window)
-        PhoneLinkSender.slow_keys("^a", 0.3)
-        PhoneLinkSender.slow_keys("{BACKSPACE}", 0.3)
+    def paste_message(window: Any, field: Any, message: str) -> None:
         pyperclip.copy(message)
         PhoneLinkSender.slow_keys("^v", PhoneLinkSender.MESSAGE_SETTLE_SECONDS)
         if not PhoneLinkSender.wait_for_value(window, field, message, 5.0):
@@ -757,8 +911,9 @@ class PhoneLinkSender:
             self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
             self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
 
+            log_path = PhoneLinkSender.dump_window_elements(window, label="send_sms before focus_message_box")
             message_box = self.focus_message_box(window)
-            self.paste_message_with_fallback(window, message_box, message)
+            self.paste_message(window, message_box, message)
 
             self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
         finally:
@@ -790,8 +945,9 @@ class PhoneLinkSender:
         pyperclip.copy(phone)
         self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
         self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
+        PhoneLinkSender.dump_window_elements(window, label="compose_sms before focus_message_box")
         message_box = self.focus_message_box(window)
-        self.paste_message_with_fallback(window, message_box, message)
+        self.paste_message(window, message_box, message)
 
 
 class OpenDentalPatientViewer:
