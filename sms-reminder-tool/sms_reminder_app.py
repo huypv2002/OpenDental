@@ -675,6 +675,8 @@ class PhoneLinkSender:
         except Exception:  # noqa: BLE001 - never let logging break the flow
             pass
         return str(PHONE_LINK_ELEMENTS_LOG)
+
+    def focus_new_message(self, window: Any) -> None:
         window.set_focus()
         time.sleep(self.STEP_DELAY_SECONDS)
         # Escape clears transient focus such as a selected recipient chip or an open flyout.
