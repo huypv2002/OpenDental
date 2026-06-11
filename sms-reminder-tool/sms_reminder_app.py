@@ -759,6 +759,25 @@ class PhoneLinkSender:
             candidates.append((type_score, rect.top, control))
         if candidates:
             return max(candidates, key=lambda item: (item[0], item[1]))[2], window_rect
+
+        # Last fallback for newer Phone Link builds: the message input can be an
+        # Edit named like "Send a message, New conversation with (832) ...".
+        name_candidates = []
+        for control in descendants:
+            info = getattr(control, "element_info", None)
+            control_type = str(getattr(info, "control_type", "") or "")
+            if control_type != "Edit":
+                continue
+            name = PhoneLinkSender.control_name(control).lower()
+            if not name.startswith("send a message"):
+                continue
+            try:
+                rect = control.rectangle()
+            except Exception:
+                continue
+            name_candidates.append((rect.top, control))
+        if name_candidates:
+            return max(name_candidates, key=lambda item: item[0])[1], window_rect
         return None
 
     @staticmethod
@@ -3573,17 +3592,11 @@ class SmsReminderWindow(QMainWindow):
         expanded: list[dict[str, Any]] = []
         for appointment in appointments:
             phone_targets: list[tuple[str, str]] = []
-            for source, value in (
-                ("Wireless", appointment.get("WirelessPhoneFormatted") or appointment.get("WirelessPhone")),
-                ("Work Phone", appointment.get("WorkPhoneFormatted") or appointment.get("WkPhone")),
-            ):
-                phone = format_us_phone(str(value or ""))
-                digits = digits_only(phone)
-                if digits and digits not in {digits_only(item[1]) for item in phone_targets}:
-                    phone_targets.append((source, phone))
-            if not phone_targets:
-                fallback = appointment.get("Phone") or appointment.get("HomePhoneFormatted") or appointment.get("HmPhone")
-                phone_targets.append(("Phone", format_us_phone(str(fallback or ""))))
+            wireless_phone = format_us_phone(str(appointment.get("WirelessPhoneFormatted") or appointment.get("WirelessPhone") or ""))
+            if digits_only(wireless_phone):
+                phone_targets.append(("Wireless", wireless_phone))
+            else:
+                phone_targets.append(("Wireless", ""))
             row = dict(appointment)
             row["_ReminderOffsetDays"] = reminder_offset_days(row)
             row_targets: list[dict[str, str]] = []
@@ -3637,17 +3650,9 @@ class SmsReminderWindow(QMainWindow):
 
     def normalize_patient_phone_targets(self, patient: dict[str, Any]) -> dict[str, Any]:
         phone_targets: list[tuple[str, str]] = []
-        for source, value in (
-            ("Wireless", patient.get("WirelessPhoneFormatted") or patient.get("WirelessPhone")),
-            ("Work Phone", patient.get("WorkPhoneFormatted") or patient.get("WkPhone")),
-        ):
-            phone = format_us_phone(str(value or ""))
-            digits = digits_only(phone)
-            if digits and digits not in {digits_only(item[1]) for item in phone_targets}:
-                phone_targets.append((source, phone))
-        if not phone_targets:
-            fallback = patient.get("Phone") or patient.get("HomePhoneFormatted") or patient.get("HmPhone")
-            phone_targets.append(("Phone", format_us_phone(str(fallback or ""))))
+        wireless_phone = format_us_phone(str(patient.get("WirelessPhoneFormatted") or patient.get("WirelessPhone") or ""))
+        if digits_only(wireless_phone):
+            phone_targets.append(("Wireless", wireless_phone))
         row = dict(patient)
         row_targets = [
             {"source": source, "phone": phone, "status": ""}
