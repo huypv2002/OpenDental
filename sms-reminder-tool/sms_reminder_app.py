@@ -530,6 +530,10 @@ class PhoneLinkSender:
     MESSAGE_SETTLE_SECONDS = 2.5
     SEND_SETTLE_SECONDS = 6.0
     CLOSE_SETTLE_SECONDS = 2.0
+    SEND_VERIFY_TIMEOUT_SECONDS = 12.0
+    SEND_VERIFY_POLL_SECONDS = 0.5
+    SEND_VERIFY_TIME_TOLERANCE_SECONDS = 180
+    MAX_SEND_ATTEMPTS = 2
     MESSAGE_BOX_TITLES = {
         "send a message",
         "type a message",
@@ -714,6 +718,125 @@ class PhoneLinkSender:
             except Exception:
                 continue
         return ""
+
+    @staticmethod
+    def safe_control_value(getter: Any) -> str:
+        try:
+            return str(getter() or "")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def normalize_uia_text(value: Any) -> str:
+        text = str(value or "")
+        # Phone Link adds bidirectional/zero-width marks around copied SMS text
+        # and timestamps. Strip them before comparing templates.
+        text = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069]", "", text)
+        return " ".join(text.split())
+
+    @staticmethod
+    def parse_message_timestamp(value: str) -> datetime | None:
+        text = PhoneLinkSender.normalize_uia_text(value)
+        for pattern, fmt in (
+            (r"(\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2})\s*(AM|PM)", "%Y-%m-%d %I:%M %p"),
+            (r"([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})\s+(\d{1,2}:\d{2})\s*(AM|PM)", "%b %d, %Y %I:%M %p"),
+        ):
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            raw = " ".join(match.groups())
+            try:
+                return datetime.strptime(raw, fmt)
+            except ValueError:
+                if "%b" in fmt:
+                    try:
+                        return datetime.strptime(raw, "%B %d, %Y %I:%M %p")
+                    except ValueError:
+                        pass
+        return None
+
+    @staticmethod
+    def timestamp_matches_attempt(sent_at: datetime | None, attempt_started_at: datetime) -> bool:
+        if sent_at is None:
+            return False
+        start = attempt_started_at - timedelta(seconds=PhoneLinkSender.SEND_VERIFY_TIME_TOLERANCE_SECONDS)
+        end = clinic_now() + timedelta(seconds=PhoneLinkSender.SEND_VERIFY_TIME_TOLERANCE_SECONDS)
+        return start <= sent_at <= end
+
+    @staticmethod
+    def control_text(control: Any) -> str:
+        values = [
+            PhoneLinkSender.safe_control_value(lambda: control.element_info.name),
+            PhoneLinkSender.safe_control_value(lambda: control.window_text()),
+            PhoneLinkSender.read_edit_value(control),
+        ]
+        return "\n".join(str(value or "") for value in values if str(value or "").strip())
+
+    @staticmethod
+    def verification_snapshot(window: Any, phone: str, message: str, attempt_started_at: datetime) -> dict[str, Any]:
+        expected_message = PhoneLinkSender.normalize_uia_text(message)
+        target_digits = digits_only(phone)
+        result: dict[str, Any] = {
+            "phone_match": not target_digits,
+            "sent_match": False,
+            "draft_pending": False,
+            "send_button_enabled": None,
+            "evidence": "",
+        }
+
+        try:
+            descendants = window.wrapper_object().descendants()
+        except Exception:
+            descendants = []
+
+        for control in descendants:
+            info = getattr(control, "element_info", None)
+            automation_id = str(getattr(info, "automation_id", "") or "")
+            control_type = str(getattr(info, "control_type", "") or "")
+            raw_text = PhoneLinkSender.control_text(control)
+            text = PhoneLinkSender.normalize_uia_text(raw_text)
+            lower_text = text.lower()
+
+            if automation_id == PhoneLinkSender.MESSAGE_BOX_AUTOMATION_ID:
+                if target_digits and target_digits in digits_only(raw_text):
+                    result["phone_match"] = True
+                if expected_message and expected_message in text:
+                    result["draft_pending"] = True
+
+            if automation_id == PhoneLinkSender.SEND_BUTTON_AUTOMATION_ID:
+                try:
+                    result["send_button_enabled"] = bool(control.is_enabled())
+                except Exception:
+                    result["send_button_enabled"] = None
+
+            if not expected_message or expected_message not in text:
+                continue
+            if "message from you" not in lower_text:
+                continue
+            sent_at = PhoneLinkSender.parse_message_timestamp(raw_text)
+            if not PhoneLinkSender.timestamp_matches_attempt(sent_at, attempt_started_at):
+                continue
+            if control_type not in {"ListItem", "Group", "Text"}:
+                continue
+            result["sent_match"] = True
+            result["evidence"] = text[:500]
+
+        return result
+
+    @staticmethod
+    def verify_sent_message(window: Any, phone: str, message: str, attempt_started_at: datetime, timeout: float | None = None) -> bool:
+        deadline = time.time() + (PhoneLinkSender.SEND_VERIFY_TIMEOUT_SECONDS if timeout is None else timeout)
+        last_snapshot: dict[str, Any] = {}
+        while time.time() < deadline:
+            last_snapshot = PhoneLinkSender.verification_snapshot(window, phone, message, attempt_started_at)
+            if (
+                last_snapshot.get("phone_match")
+                and last_snapshot.get("sent_match")
+                and not last_snapshot.get("draft_pending")
+            ):
+                return True
+            time.sleep(PhoneLinkSender.SEND_VERIFY_POLL_SECONDS)
+        return False
 
     @staticmethod
     def message_box_controls(window: Any, field: Any | None = None) -> list[Any]:
@@ -934,6 +1057,18 @@ class PhoneLinkSender:
         if self.dry_run:
             time.sleep(0.25)
             return
+        last_error: Exception | None = None
+        for attempt in range(1, self.MAX_SEND_ATTEMPTS + 1):
+            try:
+                self._send_sms_once(phone, message, attempt)
+                return
+            except Exception as exc:  # noqa: BLE001 - retry once, then surface final error
+                last_error = exc
+                if attempt < self.MAX_SEND_ATTEMPTS:
+                    time.sleep(self.CLOSE_SETTLE_SECONDS)
+        raise RuntimeError(f"Phone Link send failed after {self.MAX_SEND_ATTEMPTS} attempts: {last_error}") from last_error
+
+    def _send_sms_once(self, phone: str, message: str, attempt: int = 1) -> None:
         if platform.system() != "Windows":
             raise RuntimeError("Phone Link automation only runs on Windows.")
         if not digits_only(phone):
@@ -965,7 +1100,11 @@ class PhoneLinkSender:
             message_box = self.focus_message_box(window)
             self.paste_message(window, message_box, message)
 
+            attempt_started_at = clinic_now()
             self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
+            if not self.verify_sent_message(window, phone, message, attempt_started_at):
+                PhoneLinkSender.dump_window_elements(window, f"send verification failed attempt {attempt} phone={phone}")
+                raise RuntimeError("Phone Link did not verify the sent template in the current conversation.")
         finally:
             self.close_phone_link(window)
 
@@ -1186,7 +1325,7 @@ class SendWorker(QThread):
                 try:
                     self.progress.emit(f"Preparing SMS: {patient} {source} -> {phone}")
                     sender.send_sms(phone, message)
-                    status = "dry-run" if self.config.dry_run else "needs-review"
+                    status = "dry-run" if self.config.dry_run else "sent"
                     if appointment.get("_Treatment"):
                         repo.log_treatment_result(appointment, message, status, phone=phone)
                     elif appointment.get("_Recall"):
@@ -1194,10 +1333,7 @@ class SendWorker(QThread):
                     else:
                         repo.log_result(appointment, message, status, phone=phone)
                     completed += 1
-                    if status == "needs-review":
-                        self.progress.emit(f"NEEDS REVIEW: {patient} {source} -> {phone}. Confirm in Phone Link before marking sent.")
-                    else:
-                        self.progress.emit(f"{status.upper()}: {patient} {source} -> {phone}")
+                    self.progress.emit(f"{status.upper()}: {patient} {source} -> {phone}")
                 except Exception as exc:  # noqa: BLE001 - show UI-friendly automation errors
                     failed += 1
                     if appointment.get("_Treatment"):
@@ -1207,9 +1343,7 @@ class SendWorker(QThread):
                     else:
                         repo.log_result(appointment, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed: {patient} {source} -> {exc}")
-                    self.progress.emit("Batch stopped. Remaining reminders were not attempted.")
-                    self.finished.emit(completed, failed)
-                    return
+                    self.progress.emit("Skipping this target after retry failure; continuing with remaining reminders.")
         if skipped:
             self.progress.emit(f"Skipped {skipped} row(s) with no valid phone number.")
         self.finished.emit(completed, failed)
@@ -1249,17 +1383,15 @@ class CampaignSendWorker(QThread):
                 try:
                     self.progress.emit(f"Preparing campaign SMS: {name} {source} -> {phone}")
                     sender.send_sms(phone, message)
-                    status = "dry-run" if self.config.dry_run else "needs-review"
+                    status = "dry-run" if self.config.dry_run else "sent"
                     repo.log_campaign_result(patient, message, status, phone=phone)
                     completed += 1
-                    if status == "needs-review":
-                        self.progress.emit(f"NEEDS REVIEW CAMPAIGN: {name} {source} -> {phone}. Confirm in Phone Link before marking sent.")
-                    else:
-                        self.progress.emit(f"{status.upper()} CAMPAIGN: {name} {source} -> {phone}")
+                    self.progress.emit(f"{status.upper()} CAMPAIGN: {name} {source} -> {phone}")
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
                     repo.log_campaign_result(patient, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed campaign SMS: {name} {source} -> {exc}")
+                    self.progress.emit("Skipping this campaign target after retry failure; continuing with remaining campaign SMS.")
         if skipped:
             self.progress.emit(f"Skipped {skipped} campaign row(s) with no valid phone number.")
         self.finished.emit(completed, failed)
@@ -5165,7 +5297,7 @@ class SmsReminderWindow(QMainWindow):
 
     def send_finished(self, sent: int, failed: int) -> None:
         self.set_send_enabled(True)
-        label = "Sent/dry-run" if self.config.dry_run else "Needs review"
+        label = "Sent/dry-run" if self.config.dry_run else "Sent/verified"
         self.append_activity(f"Done. {label}: {sent}. Failed: {failed}.")
         if self.monitor_batch_active and failed:
             self.monitor_batch_failed = True
@@ -5174,7 +5306,7 @@ class SmsReminderWindow(QMainWindow):
         elif self.active_send_kind == "treatment":
             self.load_treatment_patients()
         elif self.active_send_kind == "campaign":
-            status_text = "needs review" if failed == 0 else "check log"
+            status_text = "sent" if failed == 0 else "check log"
             visible_patients = self.holiday_visible_patients()
             for row_index, patient in enumerate(visible_patients):
                 if self.campaign_recipient_key(patient) not in self.active_campaign_recipient_keys:
