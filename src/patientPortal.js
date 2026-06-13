@@ -1041,13 +1041,13 @@ export async function getPatientAccountTreatments(input = {}) {
          COALESCE(NULLIF(p.PayNote, ''), 'Patient payment') AS Description,
          COALESCE(NULLIF(d.ItemName, ''), NULLIF(p.CheckNum, ''), 'Payment') AS PaymentMethod,
          0 AS Charge,
-         COALESCE(SUM(ps.SplitAmt), p.PayAmt, 0) AS Payment,
+         COALESCE(SUM(ps.SplitAmt), 0) AS Payment,
          2 AS SortOrder,
          p.PayNum AS RowId
-       FROM payment p
-       LEFT JOIN paysplit ps ON ps.PayNum = p.PayNum AND ps.PatNum = p.PatNum
+       FROM paysplit ps
+       INNER JOIN payment p ON p.PayNum = ps.PayNum
        LEFT JOIN definition d ON d.DefNum = p.PayType
-       WHERE p.PatNum = ?
+       WHERE ps.PatNum = ?
        GROUP BY p.PayNum, p.PayDate, p.PayNote, p.CheckNum, p.PayAmt, d.ItemName
      ) ledger
      ORDER BY RowDate ASC, SortOrder ASC, RowId ASC`,
