@@ -881,6 +881,91 @@ export async function getPatientAccount(input = {}) {
   };
 }
 
+function publicMembershipProcedure(row) {
+  return {
+    procNum: row.ProcNum,
+    status: Number(row.ProcStatus || 0),
+    statusLabel: Number(row.ProcStatus || 0) === 2 ? 'Completed' : 'Treatment planned',
+    date: row.ProcDate || '',
+    code: row.ProcCode || '',
+    description: row.Description || row.ProcCode || '',
+    toothNum: row.ToothNum || '',
+    surface: row.Surf || '',
+    fee: Number(row.ProcFee || 0)
+  };
+}
+
+export async function getPatientAccountTreatments(input = {}) {
+  await ensurePatientPortalTables();
+  const accountId = Number.parseInt(input.accountId ?? input.AccountId ?? '', 10);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    throw badRequest('accountId is required.');
+  }
+
+  const [accountRows] = await pool.execute(
+    `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
+     FROM luk_patient_accounts
+     WHERE AccountId = ?
+     LIMIT 1`,
+    [accountId]
+  );
+  if (!accountRows.length) {
+    const error = new Error('Patient account was not found.');
+    error.status = 404;
+    throw error;
+  }
+
+  const account = publicAccount(accountRows[0]);
+  if (!account.patNum) {
+    const error = new Error('Link this account to an Open Dental Pat # before viewing treatment history.');
+    error.status = 409;
+    throw error;
+  }
+
+  const [rows] = await pool.execute(
+    `SELECT
+       pl.ProcNum,
+       pl.ProcStatus,
+       DATE_FORMAT(pl.ProcDate, '%Y-%m-%d') AS ProcDate,
+       pc.ProcCode,
+       COALESCE(NULLIF(pc.Descript, ''), pc.ProcCode) AS Description,
+       pl.ToothNum,
+       pl.Surf,
+       pl.ProcFee
+     FROM procedurelog pl
+     INNER JOIN procedurecode pc ON pc.CodeNum = pl.CodeNum
+     WHERE pl.PatNum = ?
+       AND pl.ProcStatus IN (1, 2)
+     ORDER BY
+       CASE WHEN pl.ProcStatus = 1 THEN 0 ELSE 1 END,
+       pl.ProcDate DESC,
+       pl.ProcNum DESC`,
+    [account.patNum]
+  );
+
+  const completed = [];
+  const needed = [];
+  rows.forEach((row) => {
+    const procedure = publicMembershipProcedure(row);
+    if (procedure.status === 2) {
+      completed.push(procedure);
+    } else if (procedure.status === 1) {
+      needed.push(procedure);
+    }
+  });
+
+  return {
+    account,
+    summary: {
+      completedCount: completed.length,
+      neededCount: needed.length,
+      lastCompletedDate: completed[0]?.date || ''
+    },
+    completed,
+    needed
+  };
+}
+
 export async function listMembershipPlans(query = {}) {
   await ensurePatientPortalTables();
   const includeInactive = ['1', 'true', 'yes'].includes(String(query.includeInactive ?? '').toLowerCase());
