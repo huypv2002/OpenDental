@@ -65,6 +65,39 @@ function normalizeEmail(value) {
   return email;
 }
 
+function dateKey(value) {
+  if (!value) return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const normalized = String(value).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : '';
+}
+
+function addYearsToDateKey(raw, years) {
+  const key = dateKey(raw);
+  if (!key) return '';
+  const date = new Date(`${key}T00:00:00Z`);
+  date.setUTCFullYear(date.getUTCFullYear() + years);
+  return date.toISOString().slice(0, 10);
+}
+
+function accountHasCurrentMembership(row) {
+  if (!row?.MembershipPlan) return false;
+  const status = String(row.MembershipPaymentStatus || '').trim().toLowerCase();
+  return !status || ['active', 'trialing', 'paid', 'manual'].includes(status);
+}
+
+function accountMembershipPeriodEnd(row) {
+  const periodEnd = dateKey(row?.MembershipCurrentPeriodEnd);
+  if (periodEnd) return periodEnd;
+  if (!accountHasCurrentMembership(row)) return null;
+  const activatedAt = dateKey(row?.MembershipActivatedAt);
+  if (activatedAt) return addYearsToDateKey(activatedAt, 1);
+  const createdAt = dateKey(row?.CreatedAt);
+  return createdAt ? addYearsToDateKey(createdAt, 1) : null;
+}
+
 function publicAccount(row) {
   return {
     accountId: row.AccountId,
@@ -79,7 +112,7 @@ function publicAccount(row) {
     stripeCustomerId: row.StripeCustomerId || '',
     stripeSubscriptionId: row.StripeSubscriptionId || '',
     membershipPaymentStatus: row.MembershipPaymentStatus || '',
-    membershipCurrentPeriodEnd: row.MembershipCurrentPeriodEnd || null,
+    membershipCurrentPeriodEnd: accountMembershipPeriodEnd(row),
     membershipActivatedAt: row.MembershipActivatedAt || null,
     status: row.Status,
     createdAt: row.CreatedAt,
@@ -528,6 +561,14 @@ export function parsePatientAccountMembershipBody(body) {
   return { accountId, membershipPlan };
 }
 
+export function parsePatientAccountDeleteBody(body) {
+  const accountId = Number.parseInt(body.accountId ?? body.AccountId ?? '', 10);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    throw badRequest('accountId is required.');
+  }
+  return { accountId };
+}
+
 export function parseMembershipPlanBody(body) {
   const planId = Number.parseInt(body.planId ?? body.PlanId ?? '', 10) || 0;
   const title = requiredString(body, 'title', 'Plan title').slice(0, 190);
@@ -566,6 +607,7 @@ export function parsePatientPortalCheckoutBody(body) {
   return {
     accountId: session.accountId,
     membershipPlan,
+    renewExisting: ['1', 'true', 'yes', 'on'].includes(String(body.renewExisting ?? '').toLowerCase()),
     agreementAccepted: true,
     agreementVersion: optionalString(body, 'agreementVersion').slice(0, 50),
     successUrl: normalizeCheckoutUrl(
@@ -895,6 +937,19 @@ function publicMembershipProcedure(row) {
   };
 }
 
+function publicPaymentLedgerRow(row) {
+  return {
+    date: row.RowDate || '',
+    type: row.RowType || '',
+    code: row.ProcCode || '',
+    description: row.Description || '',
+    method: row.PaymentMethod || '',
+    charge: Number(row.Charge || 0),
+    payment: Number(row.Payment || 0),
+    balance: Number(row.Balance || 0)
+  };
+}
+
 export async function getPatientAccountTreatments(input = {}) {
   await ensurePatientPortalTables();
   const accountId = Number.parseInt(input.accountId ?? input.AccountId ?? '', 10);
@@ -954,6 +1009,59 @@ export async function getPatientAccountTreatments(input = {}) {
     }
   });
 
+  const [ledgerRows] = await pool.execute(
+    `SELECT
+       RowDate,
+       RowType,
+       ProcCode,
+       Description,
+       PaymentMethod,
+       Charge,
+       Payment
+     FROM (
+       SELECT
+         DATE_FORMAT(pl.ProcDate, '%Y-%m-%d') AS RowDate,
+         'Procedure' AS RowType,
+         pc.ProcCode AS ProcCode,
+         COALESCE(NULLIF(pc.Descript, ''), pc.ProcCode) AS Description,
+         '' AS PaymentMethod,
+         COALESCE(pl.ProcFee, 0) AS Charge,
+         0 AS Payment,
+         1 AS SortOrder,
+         pl.ProcNum AS RowId
+       FROM procedurelog pl
+       INNER JOIN procedurecode pc ON pc.CodeNum = pl.CodeNum
+       WHERE pl.PatNum = ?
+         AND pl.ProcStatus = 2
+       UNION ALL
+       SELECT
+         DATE_FORMAT(p.PayDate, '%Y-%m-%d') AS RowDate,
+         'Payment' AS RowType,
+         'Pay' AS ProcCode,
+         COALESCE(NULLIF(p.PayNote, ''), 'Patient payment') AS Description,
+         COALESCE(NULLIF(d.ItemName, ''), NULLIF(p.CheckNum, ''), 'Payment') AS PaymentMethod,
+         0 AS Charge,
+         COALESCE(SUM(ps.SplitAmt), p.PayAmt, 0) AS Payment,
+         2 AS SortOrder,
+         p.PayNum AS RowId
+       FROM payment p
+       LEFT JOIN paysplit ps ON ps.PayNum = p.PayNum AND ps.PatNum = p.PatNum
+       LEFT JOIN definition d ON d.DefNum = p.PayType
+       WHERE p.PatNum = ?
+       GROUP BY p.PayNum, p.PayDate, p.PayNote, p.CheckNum, p.PayAmt, d.ItemName
+     ) ledger
+     ORDER BY RowDate ASC, SortOrder ASC, RowId ASC`,
+    [account.patNum, account.patNum]
+  );
+  let runningBalance = 0;
+  const ledger = ledgerRows.map((row) => {
+    runningBalance += Number(row.Charge || 0) - Number(row.Payment || 0);
+    return publicPaymentLedgerRow({ ...row, Balance: runningBalance });
+  }).reverse();
+  const payments = ledger
+    .map(publicPaymentLedgerRow)
+    .filter((row) => row.type === 'Payment');
+
   return {
     account,
     summary: {
@@ -962,7 +1070,39 @@ export async function getPatientAccountTreatments(input = {}) {
       lastCompletedDate: completed[0]?.date || ''
     },
     completed,
-    needed
+    needed,
+    payments
+  };
+}
+
+export async function deletePatientAccount(input) {
+  await ensurePatientPortalTables();
+  const accountId = Number.parseInt(input.accountId ?? input.AccountId ?? '', 10);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    throw badRequest('accountId is required.');
+  }
+  const [existingRows] = await pool.execute(
+    `SELECT AccountId, PatNum, Email
+     FROM luk_patient_accounts
+     WHERE AccountId = ?
+     LIMIT 1`,
+    [accountId]
+  );
+  if (!existingRows.length) {
+    const error = new Error('Patient account was not found.');
+    error.status = 404;
+    throw error;
+  }
+  await pool.execute(
+    `DELETE FROM luk_patient_accounts
+     WHERE AccountId = ?`,
+    [accountId]
+  );
+  return {
+    deleted: true,
+    accountId,
+    patNum: existingRows[0].PatNum || null,
+    email: existingRows[0].Email || ''
   };
 }
 
@@ -1299,7 +1439,7 @@ export async function createMembershipCheckoutSession(input) {
     error.status = 400;
     throw error;
   }
-  if (planMatches(plan, account.MembershipPlan) && hasUsableMembershipStatus(account)) {
+  if (!input.renewExisting && planMatches(plan, account.MembershipPlan) && hasUsableMembershipStatus(account)) {
     const error = new Error(`"${plan.Title}" is already your current membership plan.`);
     error.status = 409;
     throw error;
@@ -1332,7 +1472,7 @@ export async function createMembershipCheckoutSession(input) {
     adaptive_pricing: { enabled: false }
   };
 
-  if (account.StripeCustomerId) {
+  if (account.StripeCustomerId && !input.renewExisting) {
     sessionPayload.customer = account.StripeCustomerId;
   } else {
     sessionPayload.customer_email = account.Email;

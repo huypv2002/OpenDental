@@ -31,6 +31,7 @@ import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
 import {
+  deletePatientAccount,
   deleteMembershipPlan,
   ensurePatientPortalTables,
   createMembershipCheckoutSession,
@@ -49,6 +50,7 @@ import {
   parsePatientPortalCheckoutVerifyBody,
   parsePatientPortalCustomerPortalBody,
   parsePatientAccountLinkBody,
+  parsePatientAccountDeleteBody,
   parsePatientAccountMembershipBody,
   parsePatientAccountPasswordBody,
   parsePatientAccountStatusBody,
@@ -398,6 +400,16 @@ app.post('/api/patient-portal/accounts/link', requireApiToken, async (req, res, 
   try {
     const body = parsePatientAccountLinkBody(req.body ?? {});
     const data = await linkPatientAccount(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/accounts/delete', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientAccountDeleteBody(req.body ?? {});
+    const data = await deletePatientAccount(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
