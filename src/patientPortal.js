@@ -272,7 +272,7 @@ function hasUsableMembershipStatus(account) {
   if (!account?.StripeSubscriptionId) {
     return Boolean(account?.MembershipPlan);
   }
-  return ['active', 'trialing', 'paid'].includes(status);
+  return ['active', 'trialing', 'paid', 'manual'].includes(status);
 }
 
 function normalizePlanKey(value, fallback = '') {
@@ -1227,11 +1227,24 @@ export async function updatePatientAccountStatus(input) {
 
 export async function updatePatientAccountMembership(input) {
   await ensurePatientPortalTables();
+
+  const now = new Date();
+  const currentPeriodEnd = new Date(now);
+  currentPeriodEnd.setFullYear(currentPeriodEnd.getFullYear() + 1);
+  const periodEnd = currentPeriodEnd.toISOString().slice(0, 19).replace('T', ' ');
+  const activatedAt = now.toISOString().slice(0, 19).replace('T', ' ');
+
   const [result] = await pool.execute(
     `UPDATE luk_patient_accounts
-     SET MembershipPlan = ?
+     SET MembershipPlan = ?,
+         MembershipActivatedAt = COALESCE(MembershipActivatedAt, ?),
+         MembershipCurrentPeriodEnd = COALESCE(MembershipCurrentPeriodEnd, ?),
+         MembershipPaymentStatus = CASE
+           WHEN MembershipPaymentStatus = '' OR MembershipPaymentStatus IS NULL THEN 'manual'
+           ELSE MembershipPaymentStatus
+         END
      WHERE AccountId = ?`,
-    [input.membershipPlan, input.accountId]
+    [input.membershipPlan, activatedAt, periodEnd, input.accountId]
   );
   if (result.affectedRows < 1) {
     const error = new Error('Patient account was not found.');
