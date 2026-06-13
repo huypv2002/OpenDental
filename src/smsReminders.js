@@ -684,6 +684,21 @@ export async function getSmsReminderLogs(query = {}) {
 
 const TEMPLATE_TABLE = 'luk_sms_templates';
 const DEFAULT_REVIEW_LINK = 'https://g.page/r/CUSTOM_REVIEW_LINK/review';
+const DEFAULT_SMS_SETTINGS = {
+  clinic_name: 'LUK Dental',
+  clinic_phone: '281-760-1357',
+  reminder_days_ahead: '1',
+  scheduled_send_time: '11:00',
+  appointment_statuses: '1',
+  recall_codes: 'D1110,D1120,D4341,D4342',
+  recall_months: '6',
+  treatment_days: '21',
+  treatment_codes: '',
+  treatment_statuses: '1',
+  review_link: DEFAULT_REVIEW_LINK,
+  holiday_events: ''
+};
+const SUPPORTED_SMS_SETTINGS = new Set(Object.keys(DEFAULT_SMS_SETTINGS));
 
 const DEFAULT_SMS_TEMPLATE_ROWS = [
   { key: 'US', category: 'appointment', country: 'US', text: "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day." },
@@ -738,9 +753,9 @@ function isManagedAppointmentTemplateVariant(key, text) {
 }
 
 function shouldUpdateManagedTemplate(row, defaultRow) {
-  if (!row) return false;
-  if (defaultRow.category !== 'appointment') return false;
-  return isManagedAppointmentTemplateVariant(defaultRow.key, row.TemplateText);
+  // Never overwrite a template that already exists in the database.
+  // Clinic-edited templates must remain the source of truth.
+  return false;
 }
 
 function parseTemplateBody(body) {
@@ -778,10 +793,12 @@ export async function ensureSmsSettingsTable(connection = pool) {
       PRIMARY KEY (SettingKey)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
-  await connection.execute(
-    `INSERT IGNORE INTO ${SMS_SETTINGS_TABLE} (SettingKey, SettingValue) VALUES ('review_link', ?)`,
-    [DEFAULT_REVIEW_LINK]
-  );
+  for (const [key, value] of Object.entries(DEFAULT_SMS_SETTINGS)) {
+    await connection.execute(
+      `INSERT IGNORE INTO ${SMS_SETTINGS_TABLE} (SettingKey, SettingValue) VALUES (?, ?)`,
+      [key, value]
+    );
+  }
 }
 
 export async function getSmsSettings() {
@@ -803,7 +820,7 @@ export async function saveSmsSetting(body) {
     error.status = 400;
     throw error;
   }
-  if (!['review_link'].includes(key)) {
+  if (!SUPPORTED_SMS_SETTINGS.has(key)) {
     const error = new Error('Unsupported SMS setting.');
     error.status = 400;
     throw error;

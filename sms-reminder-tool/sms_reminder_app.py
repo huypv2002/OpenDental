@@ -275,13 +275,7 @@ class AppConfig:
             known = {key: value for key, value in raw.items() if key in defaults and key not in template_keys}
             cfg = cls(**{**defaults, **known})
             cfg.dry_run = False
-            migrated = any(key in raw for key in template_keys)
-            if cfg.scheduled_send_time == "09:00":
-                cfg.scheduled_send_time = "11:00"
-                migrated = True
             cfg.default_template_key = "US"
-            if migrated:
-                cfg.save()
             return cfg
         if BRIDGE_ENV_PATH.exists():
             load_dotenv(BRIDGE_ENV_PATH)
@@ -292,12 +286,11 @@ class AppConfig:
             clinic_name=os.getenv("CLINIC_NAME", defaults.clinic_name),
         )
         cfg.dry_run = False
-        cfg.save()
         return cfg
 
     def save(self) -> None:
         data = asdict(self)
-        # Templates are stored in the bridge database, not in local JSON.
+        # Templates are database-backed. Keep only workstation connection/schedule values in JSON.
         for key in (
             "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
             "treatment_templates", "treatment_template_countries",
@@ -1803,6 +1796,60 @@ class SmsReminderWindow(QMainWindow):
         frame.setObjectName(object_name)
         return frame
 
+    def apply_sms_settings(self, settings: dict[str, Any]) -> None:
+        def text_value(key: str, fallback: str) -> str:
+            value = settings.get(key)
+            return str(value).strip() if value is not None and str(value).strip() else fallback
+
+        def int_value(key: str, fallback: int) -> int:
+            try:
+                return int(str(settings.get(key, fallback)).strip())
+            except (TypeError, ValueError):
+                return fallback
+
+        def int_list_value(key: str, fallback: list[int]) -> list[int]:
+            raw = str(settings.get(key, "")).strip()
+            values: list[int] = []
+            for part in re.split(r"[,\\s]+", raw):
+                if not part:
+                    continue
+                try:
+                    values.append(int(part))
+                except ValueError:
+                    continue
+            return values or list(fallback)
+
+        self.config.clinic_name = text_value("clinic_name", self.config.clinic_name)
+        self.config.clinic_phone = text_value("clinic_phone", self.config.clinic_phone)
+        self.config.reminder_days_ahead = int_value("reminder_days_ahead", self.config.reminder_days_ahead)
+        self.config.scheduled_send_time = text_value("scheduled_send_time", self.config.scheduled_send_time)
+        self.config.appointment_statuses = int_list_value("appointment_statuses", self.config.appointment_statuses or [1])
+        self.config.recall_codes = text_value("recall_codes", self.config.recall_codes)
+        self.config.recall_months = int_value("recall_months", self.config.recall_months)
+        self.config.treatment_days = int_value("treatment_days", self.config.treatment_days)
+        self.config.treatment_codes = text_value("treatment_codes", self.config.treatment_codes)
+        self.config.treatment_statuses = text_value("treatment_statuses", self.config.treatment_statuses)
+        self.config.review_link = text_value("review_link", self.config.review_link)
+        self.config.holiday_events = self.parse_holiday_events_setting(settings.get("holiday_events"))
+
+    def save_sms_settings_to_bridge(self) -> None:
+        settings = {
+            "clinic_name": self.config.clinic_name,
+            "clinic_phone": self.config.clinic_phone,
+            "reminder_days_ahead": str(self.config.reminder_days_ahead),
+            "scheduled_send_time": self.config.scheduled_send_time,
+            "appointment_statuses": ",".join(str(item) for item in self.config.appointment_statuses or [1]),
+            "recall_codes": self.config.recall_codes,
+            "recall_months": str(self.config.recall_months),
+            "treatment_days": str(self.config.treatment_days),
+            "treatment_codes": self.config.treatment_codes,
+            "treatment_statuses": self.config.treatment_statuses,
+            "review_link": self.config.review_link,
+            "holiday_events": json.dumps(self.config.holiday_events, ensure_ascii=False),
+        }
+        for key, value in settings.items():
+            self.repo.save_sms_setting(key, str(value))
+
     def load_templates_from_bridge(self) -> None:
         try:
             data = self.repo.fetch_templates()
@@ -1815,6 +1862,7 @@ class SmsReminderWindow(QMainWindow):
                 countries = data.get("countries") or {}
             settings_data = self.repo.fetch_sms_settings()
             sms_settings = settings_data.get("settings") or {}
+            self.apply_sms_settings(sms_settings)
 
             self.config.sms_templates = tmpl.get("appointment") or {}
             self.config.sms_template_countries = countries.get("appointment") or {}
@@ -1826,8 +1874,6 @@ class SmsReminderWindow(QMainWindow):
             self.config.review_template_countries = countries.get("review_google") or {}
             self.config.holiday_templates = tmpl.get("holiday_birthday") or {}
             self.config.holiday_template_countries = countries.get("holiday_birthday") or {}
-            self.config.review_link = str(sms_settings.get("review_link") or "")
-            self.config.holiday_events = self.parse_holiday_events_setting(sms_settings.get("holiday_events"))
             self.config.sms_template = default_template(self.config)
             self.config.recall_template = self.config.recall_templates.get("US", "")
         except Exception:
@@ -3627,16 +3673,14 @@ class SmsReminderWindow(QMainWindow):
         self.config.default_template_key = "US"
         self.config.sms_template = default_template(self.config)
         self.config.recall_template = self.config.recall_templates.get("US", "")
-        self.config.save()
         if not self.save_scheduler_bat_times(silent=silent, notify=False):
             return
         self.repo = BridgeClient(self.config)
-        if hasattr(self, "review_link"):
-            try:
-                self.repo.save_sms_setting("review_link", self.config.review_link)
-            except Exception as exc:
-                if not silent:
-                    QMessageBox.warning(self, "Review link not saved", str(exc))
+        try:
+            self.save_sms_settings_to_bridge()
+        except Exception as exc:
+            if not silent:
+                QMessageBox.warning(self, "SMS settings not saved", str(exc))
         self.update_dry_run_badge()
         self.update_monitoring_status()
         self.refresh_template_controls()
@@ -4881,7 +4925,13 @@ class SmsReminderWindow(QMainWindow):
         rows = {row for row in rows if 0 <= row < len(self.appointments) and not self.appointment_table.isRowHidden(row)}
         return [self.appointment_with_template(row) for row in sorted(rows)]
 
+    def refresh_templates_before_send(self) -> None:
+        if self.config.bridge_url and self.config.api_token:
+            self.load_templates_from_bridge()
+            self.refresh_table_template_combos()
+
     def send_selected(self) -> None:
+        self.refresh_templates_before_send()
         selected = self.selected_appointments()
         if not selected:
             QMessageBox.information(self, "No selection", "Please select at least one appointment.")
@@ -4892,6 +4942,7 @@ class SmsReminderWindow(QMainWindow):
         if self.compose_worker and self.compose_worker.isRunning():
             QMessageBox.information(self, "Test in progress", "Please wait for the current Phone Link test to finish.")
             return
+        self.refresh_templates_before_send()
         selected = self.selected_appointments()
         if not selected:
             QMessageBox.information(self, "No selection", "Please select one appointment to test.")
@@ -5138,6 +5189,7 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.critical(self, "Clear dry-run failed", str(exc))
 
     def send_all_not_sent(self, silent: bool = False, confirm_real: bool = True) -> bool:
+        self.refresh_templates_before_send()
         pending = [
             self.appointment_with_template(row_index)
             for row_index, row in enumerate(self.appointments)
