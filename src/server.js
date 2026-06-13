@@ -100,6 +100,136 @@ const upload = multer({
   }
 });
 
+function batchError(message, status = 400) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function batchId(value, index) {
+  return String(value ?? `request-${index + 1}`)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 100) || `request-${index + 1}`;
+}
+
+function batchSurface(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function smsStatusSummary(logs = []) {
+  return logs.reduce((summary, log) => {
+    const status = String(log.Status ?? log.status ?? '').trim().toLowerCase();
+    if (['sent', 'success'].includes(status)) {
+      summary.sent += 1;
+    } else if (['failed', 'error'].includes(status)) {
+      summary.failed += 1;
+    } else if (['dry-run', 'dry_run', 'preview'].includes(status)) {
+      summary.dryRun += 1;
+    } else {
+      summary.other += 1;
+    }
+    return summary;
+  }, { sent: 0, failed: 0, dryRun: 0, other: 0 });
+}
+
+async function bridgeHealthPayload() {
+  const [rows] = await pool.execute('SELECT 1 AS ok');
+  const db = rows[0]?.ok === 1;
+  return {
+    ok: true,
+    db,
+    message: db ? 'Connected to Open Dental database' : 'Bridge responded, database status unclear'
+  };
+}
+
+async function adminSummaryPayload(params = {}) {
+  const dates = params.dates && typeof params.dates === 'object' ? params.dates : {};
+  const today = String(dates.today ?? '').trim();
+  const tomorrow = String(dates.tomorrow ?? '').trim();
+  const eightDay = String(dates.eightDay ?? '').trim();
+  const statuses = String(params.statuses ?? config.booking.busyAptStatuses.join(','));
+  if (!today || !tomorrow || !eightDay) {
+    throw batchError('summary dates are required.');
+  }
+
+  const [
+    health,
+    todayData,
+    tomorrowData,
+    eightDayData,
+    logsData
+  ] = await Promise.all([
+    bridgeHealthPayload(),
+    getSmsReminderAppointments({ date: today, statuses }),
+    getSmsReminderAppointments({ date: tomorrow, statuses }),
+    getSmsReminderAppointments({ date: eightDay, statuses }),
+    getSmsReminderLogs({ limit: 100 })
+  ]);
+  const recentLogs = Array.isArray(logsData.logs) ? logsData.logs : [];
+
+  return {
+    bridge: health,
+    dates: { today, tomorrow, eightDay },
+    counts: {
+      today: Array.isArray(todayData.appointments) ? todayData.appointments.length : 0,
+      tomorrow: Array.isArray(tomorrowData.appointments) ? tomorrowData.appointments.length : 0,
+      eightDay: Array.isArray(eightDayData.appointments) ? eightDayData.appointments.length : 0
+    },
+    smsStatus: smsStatusSummary(recentLogs),
+    recentLogs: recentLogs.slice(0, 8)
+  };
+}
+
+async function adminBatchPayload(surface, params = {}) {
+  switch (surface) {
+    case 'summary':
+      return adminSummaryPayload(params);
+    case 'schedule':
+    case 'sms-targets':
+      return listAdminAppointments({
+        date: params.date,
+        q: params.query ?? params.q ?? '',
+        statuses: params.statuses ?? config.booking.busyAptStatuses.join(','),
+        limit: params.limit ?? 300
+      });
+    case 'patient-appointments':
+    case 'patientappointments':
+      return listAdminAppointments({
+        patNum: params.patNum,
+        statuses: params.statuses ?? '0,1,2,3,4,5,6,7,8',
+        limit: params.limit ?? 75
+      });
+    case 'patients':
+      return listAdminPatients({
+        q: params.query ?? params.q ?? '',
+        limit: params.limit ?? 150
+      });
+    case 'accounts':
+      return listPatientAccounts({
+        q: params.q ?? '',
+        limit: params.limit ?? 200
+      });
+    case 'treatments':
+      return getPatientAccountTreatments({ accountId: params.accountId });
+    case 'membership-plans':
+    case 'membershipplans':
+      return listMembershipPlans({ includeInactive: params.includeInactive ?? 1 });
+    case 'sms-logs':
+    case 'smslogs':
+      return getSmsReminderLogs({ date: params.date, limit: params.limit ?? 100 });
+    default:
+      throw batchError(`Unsupported admin batch surface: ${surface}`);
+  }
+}
+
 app.disable('x-powered-by');
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res, next) => {
   try {
@@ -126,6 +256,45 @@ app.get('/health', async (_req, res) => {
     res.json({ ok: true, db: rows[0]?.ok === 1 });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post('/api/admin/batch', requireApiToken, async (req, res, next) => {
+  try {
+    const requests = Array.isArray(req.body?.requests) ? req.body.requests.slice(0, 12) : [];
+    if (!requests.length) {
+      throw batchError('requests must be a non-empty array.');
+    }
+    const entries = await Promise.all(requests.map(async (request, index) => {
+      const id = batchId(request?.id, index);
+      const surface = batchSurface(request?.surface);
+      const params = request?.params && typeof request.params === 'object' ? request.params : {};
+      if (!surface) {
+        return [id, { ok: false, surface, message: 'surface is required.' }];
+      }
+      try {
+        return [id, {
+          ok: true,
+          surface,
+          data: await adminBatchPayload(surface, params)
+        }];
+      } catch (error) {
+        return [id, {
+          ok: false,
+          surface,
+          message: error.message || 'Admin batch request failed.'
+        }];
+      }
+    }));
+    res.json({
+      ok: true,
+      data: {
+        generatedAt: new Date().toISOString(),
+        items: Object.fromEntries(entries)
+      }
+    });
+  } catch (error) {
+    next(error);
   }
 });
 
