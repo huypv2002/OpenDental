@@ -1059,7 +1059,6 @@ export async function getPatientAccountTreatments(input = {}) {
     return publicPaymentLedgerRow({ ...row, Balance: runningBalance });
   }).reverse();
   const payments = ledger
-    .map(publicPaymentLedgerRow)
     .filter((row) => row.type === 'Payment');
 
   return {
