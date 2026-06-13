@@ -533,7 +533,6 @@ class PhoneLinkSender:
     SEND_VERIFY_TIMEOUT_SECONDS = 12.0
     SEND_VERIFY_POLL_SECONDS = 0.5
     SEND_VERIFY_TIME_TOLERANCE_SECONDS = 180
-    MAX_SEND_ATTEMPTS = 2
     MESSAGE_BOX_TITLES = {
         "send a message",
         "type a message",
@@ -1057,16 +1056,7 @@ class PhoneLinkSender:
         if self.dry_run:
             time.sleep(0.25)
             return
-        last_error: Exception | None = None
-        for attempt in range(1, self.MAX_SEND_ATTEMPTS + 1):
-            try:
-                self._send_sms_once(phone, message, attempt)
-                return
-            except Exception as exc:  # noqa: BLE001 - retry once, then surface final error
-                last_error = exc
-                if attempt < self.MAX_SEND_ATTEMPTS:
-                    time.sleep(self.CLOSE_SETTLE_SECONDS)
-        raise RuntimeError(f"Phone Link send failed after {self.MAX_SEND_ATTEMPTS} attempts: {last_error}") from last_error
+        self._send_sms_once(phone, message)
 
     def _send_sms_once(self, phone: str, message: str, attempt: int = 1) -> None:
         if platform.system() != "Windows":
@@ -1343,7 +1333,7 @@ class SendWorker(QThread):
                     else:
                         repo.log_result(appointment, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed: {patient} {source} -> {exc}")
-                    self.progress.emit("Skipping this target after retry failure; continuing with remaining reminders.")
+                    self.progress.emit("Skipping this target; continuing with remaining reminders.")
         if skipped:
             self.progress.emit(f"Skipped {skipped} row(s) with no valid phone number.")
         self.finished.emit(completed, failed)
@@ -1391,7 +1381,7 @@ class CampaignSendWorker(QThread):
                     failed += 1
                     repo.log_campaign_result(patient, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed campaign SMS: {name} {source} -> {exc}")
-                    self.progress.emit("Skipping this campaign target after retry failure; continuing with remaining campaign SMS.")
+                    self.progress.emit("Skipping this campaign target; continuing with remaining campaign SMS.")
         if skipped:
             self.progress.emit(f"Skipped {skipped} campaign row(s) with no valid phone number.")
         self.finished.emit(completed, failed)
