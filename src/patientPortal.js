@@ -1075,6 +1075,105 @@ export async function getPatientAccountTreatments(input = {}) {
   };
 }
 
+export async function getPatientAccountPaymentDebug(input = {}) {
+  await ensurePatientPortalTables();
+  const accountId = Number.parseInt(input.accountId ?? input.AccountId ?? '', 10);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    throw badRequest('accountId is required.');
+  }
+  const [accountRows] = await pool.execute(
+    `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
+     FROM luk_patient_accounts
+     WHERE AccountId = ?
+     LIMIT 1`,
+    [accountId]
+  );
+  if (!accountRows.length) {
+    const error = new Error('Patient account was not found.');
+    error.status = 404;
+    throw error;
+  }
+  const account = publicAccount(accountRows[0]);
+  if (!account.patNum) {
+    throw badRequest('Account is not linked to a PatNum.');
+  }
+  const [patientRows] = await pool.execute(
+    `SELECT PatNum, FName, LName, Guarantor, EstBalance, BalTotal
+     FROM patient
+     WHERE PatNum = ?`,
+    [account.patNum]
+  );
+  const [paymentRows] = await pool.execute(
+    `SELECT
+       p.PayNum,
+       p.PatNum AS PaymentPatNum,
+       DATE_FORMAT(p.PayDate, '%Y-%m-%d') AS PayDate,
+       p.PayAmt,
+       p.PayType,
+       d.ItemName AS PaymentMethod,
+       p.CheckNum,
+       p.PayNote
+     FROM payment p
+     LEFT JOIN definition d ON d.DefNum = p.PayType
+     WHERE p.PatNum = ?
+     ORDER BY p.PayDate DESC, p.PayNum DESC`,
+    [account.patNum]
+  );
+  const [splitRows] = await pool.execute(
+    `SELECT
+       ps.SplitNum,
+       ps.PayNum,
+       ps.PatNum AS SplitPatNum,
+       ps.ProcNum,
+       ps.SplitAmt,
+       DATE_FORMAT(ps.DatePay, '%Y-%m-%d') AS DatePay,
+       ps.UnearnedType,
+       p.PatNum AS PaymentPatNum,
+       DATE_FORMAT(p.PayDate, '%Y-%m-%d') AS PayDate,
+       p.PayAmt,
+       p.PayType,
+       d.ItemName AS PaymentMethod,
+       p.CheckNum,
+       p.PayNote
+     FROM paysplit ps
+     LEFT JOIN payment p ON p.PayNum = ps.PayNum
+     LEFT JOIN definition d ON d.DefNum = p.PayType
+     WHERE ps.PatNum = ?
+     ORDER BY COALESCE(p.PayDate, ps.DatePay) DESC, ps.SplitNum DESC`,
+    [account.patNum]
+  );
+  const [ledgerPaymentRows] = await pool.execute(
+    `SELECT
+       DATE_FORMAT(p.PayDate, '%Y-%m-%d') AS RowDate,
+       'Payment' AS RowType,
+       'Pay' AS ProcCode,
+       COALESCE(NULLIF(p.PayNote, ''), 'Patient payment') AS Description,
+       COALESCE(NULLIF(d.ItemName, ''), NULLIF(p.CheckNum, ''), 'Payment') AS PaymentMethod,
+       0 AS Charge,
+       COALESCE(SUM(ps.SplitAmt), 0) AS Payment,
+       p.PayNum AS RowId
+     FROM paysplit ps
+     INNER JOIN payment p ON p.PayNum = ps.PayNum
+     LEFT JOIN definition d ON d.DefNum = p.PayType
+     WHERE ps.PatNum = ?
+     GROUP BY p.PayNum, p.PayDate, p.PayNote, p.CheckNum, p.PayAmt, d.ItemName
+     ORDER BY RowDate DESC, RowId DESC`,
+    [account.patNum]
+  );
+  return {
+    account,
+    patientRows,
+    paymentRows,
+    splitRows,
+    ledgerPaymentRows,
+    counts: {
+      paymentRows: paymentRows.length,
+      splitRows: splitRows.length,
+      ledgerPaymentRows: ledgerPaymentRows.length
+    }
+  };
+}
+
 export async function deletePatientAccount(input) {
   await ensurePatientPortalTables();
   const accountId = Number.parseInt(input.accountId ?? input.AccountId ?? '', 10);

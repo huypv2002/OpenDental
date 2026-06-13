@@ -37,6 +37,7 @@ import {
   createMembershipCheckoutSession,
   createMembershipCustomerPortalSession,
   getPatientAccount,
+  getPatientAccountPaymentDebug,
   getPatientAccountTreatments,
   handleStripeWebhook,
   linkPatientAccount,
@@ -301,6 +302,15 @@ app.get('/api/patient-portal/accounts/:accountId', requireApiToken, async (req, 
 app.get('/api/patient-portal/accounts/:accountId/treatments', requireApiToken, async (req, res, next) => {
   try {
     const data = await getPatientAccountTreatments({ accountId: req.params.accountId });
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/patient-portal/accounts/:accountId/payment-debug', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getPatientAccountPaymentDebug({ accountId: req.params.accountId });
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
