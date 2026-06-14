@@ -53,7 +53,6 @@ APP_DIR = Path(__file__).resolve().parent
 APP_ICON_PATH = APP_DIR / "tooth.ico"
 FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
-PHONE_LINK_ELEMENTS_LOG = APP_DIR / "phone_link_elements.log"
 SCHEDULER_ON_PATH = APP_DIR / "scheduler-on.bat"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
@@ -275,7 +274,13 @@ class AppConfig:
             known = {key: value for key, value in raw.items() if key in defaults and key not in template_keys}
             cfg = cls(**{**defaults, **known})
             cfg.dry_run = False
+            migrated = any(key in raw for key in template_keys)
+            if cfg.scheduled_send_time == "09:00":
+                cfg.scheduled_send_time = "11:00"
+                migrated = True
             cfg.default_template_key = "US"
+            if migrated:
+                cfg.save()
             return cfg
         if BRIDGE_ENV_PATH.exists():
             load_dotenv(BRIDGE_ENV_PATH)
@@ -286,11 +291,12 @@ class AppConfig:
             clinic_name=os.getenv("CLINIC_NAME", defaults.clinic_name),
         )
         cfg.dry_run = False
+        cfg.save()
         return cfg
 
     def save(self) -> None:
         data = asdict(self)
-        # Templates are database-backed. Keep only workstation connection/schedule values in JSON.
+        # Templates are stored in the bridge database, not in local JSON.
         for key in (
             "sms_templates", "sms_template_countries", "recall_templates", "recall_template_countries",
             "treatment_templates", "treatment_template_countries",
@@ -523,19 +529,12 @@ class PhoneLinkSender:
     MESSAGE_SETTLE_SECONDS = 2.5
     SEND_SETTLE_SECONDS = 6.0
     CLOSE_SETTLE_SECONDS = 2.0
-    SEND_VERIFY_TIMEOUT_SECONDS = 12.0
-    SEND_VERIFY_POLL_SECONDS = 0.5
-    SEND_VERIFY_TIME_TOLERANCE_SECONDS = 180
     MESSAGE_BOX_TITLES = {
         "send a message",
         "type a message",
         "nhập tin nhắn",
         "tin nhắn",
     }
-    # Phone Link's "Send a message" box is the Edit whose AutomationId is
-    # "InputTextBox" (its Name is like "Send a message, New conversation with ...").
-    MESSAGE_BOX_AUTOMATION_ID = "InputTextBox"
-    SEND_BUTTON_AUTOMATION_ID = "SendMessageButton"
 
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
@@ -556,125 +555,6 @@ class PhoneLinkSender:
 
         send_keys(keys)
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS if delay is None else delay)
-
-    @staticmethod
-    def dump_window_elements(window: Any, label: str = "") -> str:
-        """Write the full UIA element tree of the whole Phone Link app to a log file.
-
-        It climbs to the top-level window, then collects every top-level window
-        that belongs to the same Phone Link process and records every descendant
-        control (name, control type, automation id, class name, rectangle, focus
-        state and any editable value) so the exact element can be identified.
-        """
-        lines: list[str] = []
-        header = f"===== Phone Link element dump {datetime.now().isoformat(timespec='seconds')}"
-        if label:
-            header += f" | {label}"
-        header += " ====="
-        lines.append(header)
-
-        roots = PhoneLinkSender._collect_app_windows(window, lines)
-        if not roots:
-            return PhoneLinkSender._write_element_dump(lines)
-
-        for win_index, wrapper in enumerate(roots):
-            lines.append("")
-            lines.append(f"########## TOP-LEVEL WINDOW #{win_index} ##########")
-            try:
-                lines.append(f"window_text = {wrapper.window_text()!r}")
-            except Exception as exc:  # noqa: BLE001
-                lines.append(f"window_text = <err: {exc!r}>")
-            try:
-                lines.append(f"rectangle   = {wrapper.rectangle()}")
-            except Exception as exc:  # noqa: BLE001
-                lines.append(f"rectangle   = <err: {exc!r}>")
-
-            try:
-                descendants = wrapper.descendants()
-            except Exception as exc:  # noqa: BLE001
-                lines.append(f"[error] could not enumerate descendants: {exc!r}")
-                continue
-
-            lines.append(f"[count] {len(descendants)} descendant controls")
-            for index, control in enumerate(descendants):
-                lines.append(f"--- #{win_index}.{index} ---")
-                info = getattr(control, "element_info", None)
-
-                def safe(getter):
-                    try:
-                        return getter()
-                    except Exception as exc:  # noqa: BLE001
-                        return f"<err: {exc!r}>"
-
-                lines.append(f"name           = {safe(lambda: control.element_info.name)!r}")
-                lines.append(f"window_text    = {safe(lambda: control.window_text())!r}")
-                lines.append(f"control_type   = {safe(lambda: getattr(info, 'control_type', ''))!r}")
-                lines.append(f"automation_id  = {safe(lambda: getattr(info, 'automation_id', ''))!r}")
-                lines.append(f"class_name     = {safe(lambda: getattr(info, 'class_name', ''))!r}")
-                lines.append(f"rectangle      = {safe(lambda: control.rectangle())}")
-                lines.append(f"has_focus      = {safe(lambda: control.has_keyboard_focus())}")
-                lines.append(f"is_enabled     = {safe(lambda: control.is_enabled())}")
-                lines.append(f"is_visible     = {safe(lambda: control.is_visible())}")
-                lines.append(f"edit_value     = {PhoneLinkSender.read_edit_value(control)!r}")
-
-        return PhoneLinkSender._write_element_dump(lines)
-
-    @staticmethod
-    def _collect_app_windows(window: Any, lines: list[str]) -> list[Any]:
-        """Return wrapper objects for every top-level window of the Phone Link app."""
-        try:
-            wrapper = window.wrapper_object()
-        except Exception as exc:  # noqa: BLE001 - diagnostics must never crash sending
-            lines.append(f"[error] could not get window wrapper: {exc!r}")
-            return []
-
-        # Climb to the top-level ancestor of the matched window.
-        top = wrapper
-        try:
-            for ancestor in wrapper.iter_parents():
-                if ancestor is None:
-                    break
-                top = ancestor
-        except Exception:  # noqa: BLE001
-            pass
-
-        pid = None
-        try:
-            pid = top.process_id()
-        except Exception:  # noqa: BLE001
-            pid = None
-        lines.append(f"[app] top-level window pid={pid}")
-
-        roots: list[Any] = [top]
-        seen = {getattr(getattr(top, "element_info", None), "handle", None)}
-
-        # Gather every other top-level window that belongs to the same process,
-        # so pop-ups and secondary Phone Link windows are captured too.
-        if pid is not None:
-            try:
-                from pywinauto import Desktop
-
-                for win in Desktop(backend="uia").windows(process=pid):
-                    handle = getattr(getattr(win, "element_info", None), "handle", None)
-                    if handle in seen:
-                        continue
-                    seen.add(handle)
-                    roots.append(win)
-            except Exception as exc:  # noqa: BLE001
-                lines.append(f"[warn] could not enumerate sibling windows: {exc!r}")
-
-        lines.append(f"[app] {len(roots)} top-level window(s) collected")
-        return roots
-
-    @staticmethod
-    def _write_element_dump(lines: list[str]) -> str:
-        text = "\n".join(lines) + "\n\n"
-        try:
-            with open(PHONE_LINK_ELEMENTS_LOG, "a", encoding="utf-8") as handle:
-                handle.write(text)
-        except Exception:  # noqa: BLE001 - never let logging break the flow
-            pass
-        return str(PHONE_LINK_ELEMENTS_LOG)
 
     def focus_new_message(self, window: Any) -> None:
         window.set_focus()
@@ -712,125 +592,6 @@ class PhoneLinkSender:
         return ""
 
     @staticmethod
-    def safe_control_value(getter: Any) -> str:
-        try:
-            return str(getter() or "")
-        except Exception:
-            return ""
-
-    @staticmethod
-    def normalize_uia_text(value: Any) -> str:
-        text = str(value or "")
-        # Phone Link adds bidirectional/zero-width marks around copied SMS text
-        # and timestamps. Strip them before comparing templates.
-        text = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069]", "", text)
-        return " ".join(text.split())
-
-    @staticmethod
-    def parse_message_timestamp(value: str) -> datetime | None:
-        text = PhoneLinkSender.normalize_uia_text(value)
-        for pattern, fmt in (
-            (r"(\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2})\s*(AM|PM)", "%Y-%m-%d %I:%M %p"),
-            (r"([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})\s+(\d{1,2}:\d{2})\s*(AM|PM)", "%b %d, %Y %I:%M %p"),
-        ):
-            match = re.search(pattern, text, re.IGNORECASE)
-            if not match:
-                continue
-            raw = " ".join(match.groups())
-            try:
-                return datetime.strptime(raw, fmt)
-            except ValueError:
-                if "%b" in fmt:
-                    try:
-                        return datetime.strptime(raw, "%B %d, %Y %I:%M %p")
-                    except ValueError:
-                        pass
-        return None
-
-    @staticmethod
-    def timestamp_matches_attempt(sent_at: datetime | None, attempt_started_at: datetime) -> bool:
-        if sent_at is None:
-            return False
-        start = attempt_started_at - timedelta(seconds=PhoneLinkSender.SEND_VERIFY_TIME_TOLERANCE_SECONDS)
-        end = clinic_now() + timedelta(seconds=PhoneLinkSender.SEND_VERIFY_TIME_TOLERANCE_SECONDS)
-        return start <= sent_at <= end
-
-    @staticmethod
-    def control_text(control: Any) -> str:
-        values = [
-            PhoneLinkSender.safe_control_value(lambda: control.element_info.name),
-            PhoneLinkSender.safe_control_value(lambda: control.window_text()),
-            PhoneLinkSender.read_edit_value(control),
-        ]
-        return "\n".join(str(value or "") for value in values if str(value or "").strip())
-
-    @staticmethod
-    def verification_snapshot(window: Any, phone: str, message: str, attempt_started_at: datetime) -> dict[str, Any]:
-        expected_message = PhoneLinkSender.normalize_uia_text(message)
-        target_digits = digits_only(phone)
-        result: dict[str, Any] = {
-            "phone_match": not target_digits,
-            "sent_match": False,
-            "draft_pending": False,
-            "send_button_enabled": None,
-            "evidence": "",
-        }
-
-        try:
-            descendants = window.wrapper_object().descendants()
-        except Exception:
-            descendants = []
-
-        for control in descendants:
-            info = getattr(control, "element_info", None)
-            automation_id = str(getattr(info, "automation_id", "") or "")
-            control_type = str(getattr(info, "control_type", "") or "")
-            raw_text = PhoneLinkSender.control_text(control)
-            text = PhoneLinkSender.normalize_uia_text(raw_text)
-            lower_text = text.lower()
-
-            if automation_id == PhoneLinkSender.MESSAGE_BOX_AUTOMATION_ID:
-                if target_digits and target_digits in digits_only(raw_text):
-                    result["phone_match"] = True
-                if expected_message and expected_message in text:
-                    result["draft_pending"] = True
-
-            if automation_id == PhoneLinkSender.SEND_BUTTON_AUTOMATION_ID:
-                try:
-                    result["send_button_enabled"] = bool(control.is_enabled())
-                except Exception:
-                    result["send_button_enabled"] = None
-
-            if not expected_message or expected_message not in text:
-                continue
-            if "message from you" not in lower_text:
-                continue
-            sent_at = PhoneLinkSender.parse_message_timestamp(raw_text)
-            if not PhoneLinkSender.timestamp_matches_attempt(sent_at, attempt_started_at):
-                continue
-            if control_type not in {"ListItem", "Group", "Text"}:
-                continue
-            result["sent_match"] = True
-            result["evidence"] = text[:500]
-
-        return result
-
-    @staticmethod
-    def verify_sent_message(window: Any, phone: str, message: str, attempt_started_at: datetime, timeout: float | None = None) -> bool:
-        deadline = time.time() + (PhoneLinkSender.SEND_VERIFY_TIMEOUT_SECONDS if timeout is None else timeout)
-        last_snapshot: dict[str, Any] = {}
-        while time.time() < deadline:
-            last_snapshot = PhoneLinkSender.verification_snapshot(window, phone, message, attempt_started_at)
-            if (
-                last_snapshot.get("phone_match")
-                and last_snapshot.get("sent_match")
-                and not last_snapshot.get("draft_pending")
-            ):
-                return True
-            time.sleep(PhoneLinkSender.SEND_VERIFY_POLL_SECONDS)
-        return False
-
-    @staticmethod
     def message_box_controls(window: Any, field: Any | None = None) -> list[Any]:
         controls = [field] if field is not None else []
         try:
@@ -843,25 +604,10 @@ class PhoneLinkSender:
     def find_message_box(window: Any) -> tuple[Any, Any] | None:
         wrapper = window.wrapper_object()
         window_rect = wrapper.rectangle()
-        descendants = wrapper.descendants()
-
-        # Preferred: match by AutomationId. This is stable across languages and
-        # avoids the recipient "To" box (automation_id "TextBox").
-        for control in descendants:
-            info = getattr(control, "element_info", None)
-            automation_id = str(getattr(info, "automation_id", "") or "")
-            if automation_id != PhoneLinkSender.MESSAGE_BOX_AUTOMATION_ID:
-                continue
-            control_type = str(getattr(info, "control_type", "") or "")
-            if control_type and control_type != "Edit":
-                continue
-            return control, window_rect
-
-        # Fallback: match by visible name/title in the lower half of the window.
         candidates = []
-        for control in descendants:
+        for control in wrapper.descendants():
             name = PhoneLinkSender.control_name(control).lower()
-            if not any(name.startswith(title) for title in PhoneLinkSender.MESSAGE_BOX_TITLES):
+            if name not in PhoneLinkSender.MESSAGE_BOX_TITLES:
                 continue
             try:
                 rect = control.rectangle()
@@ -874,25 +620,6 @@ class PhoneLinkSender:
             candidates.append((type_score, rect.top, control))
         if candidates:
             return max(candidates, key=lambda item: (item[0], item[1]))[2], window_rect
-
-        # Last fallback for newer Phone Link builds: the message input can be an
-        # Edit named like "Send a message, New conversation with (832) ...".
-        name_candidates = []
-        for control in descendants:
-            info = getattr(control, "element_info", None)
-            control_type = str(getattr(info, "control_type", "") or "")
-            if control_type != "Edit":
-                continue
-            name = PhoneLinkSender.control_name(control).lower()
-            if not name.startswith("send a message"):
-                continue
-            try:
-                rect = control.rectangle()
-            except Exception:
-                continue
-            name_candidates.append((rect.top, control))
-        if name_candidates:
-            return max(name_candidates, key=lambda item: item[0])[1], window_rect
         return None
 
     @staticmethod
@@ -913,89 +640,34 @@ class PhoneLinkSender:
             time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
 
     @staticmethod
-    def click_control_center(control: Any) -> None:
-        from pywinauto import mouse
-
-        rect = control.rectangle()
-        coords = (
-            int(rect.left + ((rect.right - rect.left) / 2)),
-            int(rect.top + ((rect.bottom - rect.top) / 2)),
-        )
-        for _attempt in range(2):
-            mouse.click(button="left", coords=coords)
-            time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
-
-    @staticmethod
-    def control_has_focus(control: Any) -> bool:
-        try:
-            return bool(control.has_keyboard_focus())
-        except Exception:
-            return False
-
-    @staticmethod
-    def focused_message_control(window: Any) -> Any | None:
-        wrapper = window.wrapper_object()
-        window_rect = wrapper.rectangle()
-        for control in wrapper.descendants():
-            try:
-                rect = control.rectangle()
-                if rect.top <= window_rect.top + ((window_rect.bottom - window_rect.top) * 0.72):
-                    continue
-                control_type = str(getattr(getattr(control, "element_info", None), "control_type", "") or "")
-                if control_type == "Button":
-                    continue
-                if control.has_keyboard_focus():
-                    return control
-            except Exception:
-                continue
-        return None
-
-    @staticmethod
     def focus_message_box(window: Any) -> Any:
         result = PhoneLinkSender.find_message_box(window)
         if result is None:
             try:
+                wrapper = window.wrapper_object()
                 PhoneLinkSender.click_message_box_coords(window)
-                focused = PhoneLinkSender.focused_message_control(window)
-                if focused is not None:
-                    return focused
-                raise RuntimeError("Phone Link did not place keyboard focus in the message box.")
+                return wrapper
             except Exception as exc:
                 raise RuntimeError("Could not find or focus the Phone Link 'Send a message' box.") from exc
 
         field, _window_rect = result
         field.click_input()
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
-        if PhoneLinkSender.control_has_focus(field):
+
+        focused = False
+        try:
+            focused = bool(field.has_keyboard_focus())
+        except Exception:
+            pass
+        if focused:
             return field
-        focused = PhoneLinkSender.focused_message_control(window)
-        if focused is not None:
-            return focused
 
         refreshed = PhoneLinkSender.find_message_box(window)
         if refreshed is not None:
             field = refreshed[0]
         field.click_input()
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
-        if PhoneLinkSender.control_has_focus(field):
-            return field
-        focused = PhoneLinkSender.focused_message_control(window)
-        if focused is not None:
-            return focused
-
-        try:
-            PhoneLinkSender.click_control_center(field)
-        except Exception:
-            PhoneLinkSender.click_message_box_coords(window)
-        focused = PhoneLinkSender.focused_message_control(window)
-        if focused is not None:
-            return focused
-
-        PhoneLinkSender.click_message_box_coords(window)
-        focused = PhoneLinkSender.focused_message_control(window)
-        if focused is not None:
-            return focused
-        raise RuntimeError("Could not focus the Phone Link 'Send a message' box.")
+        return field
 
     @staticmethod
     def wait_for_value(window: Any, field: Any, expected: str, timeout: float, present: bool = True) -> bool:
@@ -1014,7 +686,15 @@ class PhoneLinkSender:
         return False
 
     @staticmethod
-    def paste_message(window: Any, field: Any, message: str) -> None:
+    def paste_message_with_fallback(window: Any, field: Any, message: str) -> None:
+        pyperclip.copy(message)
+        PhoneLinkSender.slow_keys("^v", PhoneLinkSender.MESSAGE_SETTLE_SECONDS)
+        if PhoneLinkSender.wait_for_value(window, field, message, 5.0):
+            return
+
+        PhoneLinkSender.click_message_box_coords(window)
+        PhoneLinkSender.slow_keys("^a", 0.3)
+        PhoneLinkSender.slow_keys("{BACKSPACE}", 0.3)
         pyperclip.copy(message)
         PhoneLinkSender.slow_keys("^v", PhoneLinkSender.MESSAGE_SETTLE_SECONDS)
         if not PhoneLinkSender.wait_for_value(window, field, message, 5.0):
@@ -1049,9 +729,6 @@ class PhoneLinkSender:
         if self.dry_run:
             time.sleep(0.25)
             return
-        self._send_sms_once(phone, message)
-
-    def _send_sms_once(self, phone: str, message: str, attempt: int = 1) -> None:
         if platform.system() != "Windows":
             raise RuntimeError("Phone Link automation only runs on Windows.")
         if not digits_only(phone):
@@ -1081,13 +758,9 @@ class PhoneLinkSender:
             self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
 
             message_box = self.focus_message_box(window)
-            self.paste_message(window, message_box, message)
+            self.paste_message_with_fallback(window, message_box, message)
 
-            attempt_started_at = clinic_now()
             self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
-            if not self.verify_sent_message(window, phone, message, attempt_started_at):
-                PhoneLinkSender.dump_window_elements(window, f"send verification failed attempt {attempt} phone={phone}")
-                raise RuntimeError("Phone Link did not verify the sent template in the current conversation.")
         finally:
             self.close_phone_link(window)
 
@@ -1118,7 +791,7 @@ class PhoneLinkSender:
         self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
         self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
         message_box = self.focus_message_box(window)
-        self.paste_message(window, message_box, message)
+        self.paste_message_with_fallback(window, message_box, message)
 
 
 class OpenDentalPatientViewer:
@@ -1308,7 +981,7 @@ class SendWorker(QThread):
                 try:
                     self.progress.emit(f"Preparing SMS: {patient} {source} -> {phone}")
                     sender.send_sms(phone, message)
-                    status = "dry-run" if self.config.dry_run else "sent"
+                    status = "dry-run" if self.config.dry_run else "needs-review"
                     if appointment.get("_Treatment"):
                         repo.log_treatment_result(appointment, message, status, phone=phone)
                     elif appointment.get("_Recall"):
@@ -1316,7 +989,10 @@ class SendWorker(QThread):
                     else:
                         repo.log_result(appointment, message, status, phone=phone)
                     completed += 1
-                    self.progress.emit(f"{status.upper()}: {patient} {source} -> {phone}")
+                    if status == "needs-review":
+                        self.progress.emit(f"NEEDS REVIEW: {patient} {source} -> {phone}. Confirm in Phone Link before marking sent.")
+                    else:
+                        self.progress.emit(f"{status.upper()}: {patient} {source} -> {phone}")
                 except Exception as exc:  # noqa: BLE001 - show UI-friendly automation errors
                     failed += 1
                     if appointment.get("_Treatment"):
@@ -1326,7 +1002,9 @@ class SendWorker(QThread):
                     else:
                         repo.log_result(appointment, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed: {patient} {source} -> {exc}")
-                    self.progress.emit("Skipping this target; continuing with remaining reminders.")
+                    self.progress.emit("Batch stopped. Remaining reminders were not attempted.")
+                    self.finished.emit(completed, failed)
+                    return
         if skipped:
             self.progress.emit(f"Skipped {skipped} row(s) with no valid phone number.")
         self.finished.emit(completed, failed)
@@ -1366,15 +1044,17 @@ class CampaignSendWorker(QThread):
                 try:
                     self.progress.emit(f"Preparing campaign SMS: {name} {source} -> {phone}")
                     sender.send_sms(phone, message)
-                    status = "dry-run" if self.config.dry_run else "sent"
+                    status = "dry-run" if self.config.dry_run else "needs-review"
                     repo.log_campaign_result(patient, message, status, phone=phone)
                     completed += 1
-                    self.progress.emit(f"{status.upper()} CAMPAIGN: {name} {source} -> {phone}")
+                    if status == "needs-review":
+                        self.progress.emit(f"NEEDS REVIEW CAMPAIGN: {name} {source} -> {phone}. Confirm in Phone Link before marking sent.")
+                    else:
+                        self.progress.emit(f"{status.upper()} CAMPAIGN: {name} {source} -> {phone}")
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
                     repo.log_campaign_result(patient, message, "failed", str(exc), phone=phone)
                     self.progress.emit(f"Failed campaign SMS: {name} {source} -> {exc}")
-                    self.progress.emit("Skipping this campaign target; continuing with remaining campaign SMS.")
         if skipped:
             self.progress.emit(f"Skipped {skipped} campaign row(s) with no valid phone number.")
         self.finished.emit(completed, failed)
@@ -1796,60 +1476,6 @@ class SmsReminderWindow(QMainWindow):
         frame.setObjectName(object_name)
         return frame
 
-    def apply_sms_settings(self, settings: dict[str, Any]) -> None:
-        def text_value(key: str, fallback: str) -> str:
-            value = settings.get(key)
-            return str(value).strip() if value is not None and str(value).strip() else fallback
-
-        def int_value(key: str, fallback: int) -> int:
-            try:
-                return int(str(settings.get(key, fallback)).strip())
-            except (TypeError, ValueError):
-                return fallback
-
-        def int_list_value(key: str, fallback: list[int]) -> list[int]:
-            raw = str(settings.get(key, "")).strip()
-            values: list[int] = []
-            for part in re.split(r"[,\\s]+", raw):
-                if not part:
-                    continue
-                try:
-                    values.append(int(part))
-                except ValueError:
-                    continue
-            return values or list(fallback)
-
-        self.config.clinic_name = text_value("clinic_name", self.config.clinic_name)
-        self.config.clinic_phone = text_value("clinic_phone", self.config.clinic_phone)
-        self.config.reminder_days_ahead = int_value("reminder_days_ahead", self.config.reminder_days_ahead)
-        self.config.scheduled_send_time = text_value("scheduled_send_time", self.config.scheduled_send_time)
-        self.config.appointment_statuses = int_list_value("appointment_statuses", self.config.appointment_statuses or [1])
-        self.config.recall_codes = text_value("recall_codes", self.config.recall_codes)
-        self.config.recall_months = int_value("recall_months", self.config.recall_months)
-        self.config.treatment_days = int_value("treatment_days", self.config.treatment_days)
-        self.config.treatment_codes = text_value("treatment_codes", self.config.treatment_codes)
-        self.config.treatment_statuses = text_value("treatment_statuses", self.config.treatment_statuses)
-        self.config.review_link = text_value("review_link", self.config.review_link)
-        self.config.holiday_events = self.parse_holiday_events_setting(settings.get("holiday_events"))
-
-    def save_sms_settings_to_bridge(self) -> None:
-        settings = {
-            "clinic_name": self.config.clinic_name,
-            "clinic_phone": self.config.clinic_phone,
-            "reminder_days_ahead": str(self.config.reminder_days_ahead),
-            "scheduled_send_time": self.config.scheduled_send_time,
-            "appointment_statuses": ",".join(str(item) for item in self.config.appointment_statuses or [1]),
-            "recall_codes": self.config.recall_codes,
-            "recall_months": str(self.config.recall_months),
-            "treatment_days": str(self.config.treatment_days),
-            "treatment_codes": self.config.treatment_codes,
-            "treatment_statuses": self.config.treatment_statuses,
-            "review_link": self.config.review_link,
-            "holiday_events": json.dumps(self.config.holiday_events, ensure_ascii=False),
-        }
-        for key, value in settings.items():
-            self.repo.save_sms_setting(key, str(value))
-
     def load_templates_from_bridge(self) -> None:
         try:
             data = self.repo.fetch_templates()
@@ -1862,7 +1488,6 @@ class SmsReminderWindow(QMainWindow):
                 countries = data.get("countries") or {}
             settings_data = self.repo.fetch_sms_settings()
             sms_settings = settings_data.get("settings") or {}
-            self.apply_sms_settings(sms_settings)
 
             self.config.sms_templates = tmpl.get("appointment") or {}
             self.config.sms_template_countries = countries.get("appointment") or {}
@@ -1874,6 +1499,8 @@ class SmsReminderWindow(QMainWindow):
             self.config.review_template_countries = countries.get("review_google") or {}
             self.config.holiday_templates = tmpl.get("holiday_birthday") or {}
             self.config.holiday_template_countries = countries.get("holiday_birthday") or {}
+            self.config.review_link = str(sms_settings.get("review_link") or "")
+            self.config.holiday_events = self.parse_holiday_events_setting(sms_settings.get("holiday_events"))
             self.config.sms_template = default_template(self.config)
             self.config.recall_template = self.config.recall_templates.get("US", "")
         except Exception:
@@ -3673,14 +3300,16 @@ class SmsReminderWindow(QMainWindow):
         self.config.default_template_key = "US"
         self.config.sms_template = default_template(self.config)
         self.config.recall_template = self.config.recall_templates.get("US", "")
+        self.config.save()
         if not self.save_scheduler_bat_times(silent=silent, notify=False):
             return
         self.repo = BridgeClient(self.config)
-        try:
-            self.save_sms_settings_to_bridge()
-        except Exception as exc:
-            if not silent:
-                QMessageBox.warning(self, "SMS settings not saved", str(exc))
+        if hasattr(self, "review_link"):
+            try:
+                self.repo.save_sms_setting("review_link", self.config.review_link)
+            except Exception as exc:
+                if not silent:
+                    QMessageBox.warning(self, "Review link not saved", str(exc))
         self.update_dry_run_badge()
         self.update_monitoring_status()
         self.refresh_template_controls()
@@ -3758,11 +3387,17 @@ class SmsReminderWindow(QMainWindow):
         expanded: list[dict[str, Any]] = []
         for appointment in appointments:
             phone_targets: list[tuple[str, str]] = []
-            wireless_phone = format_us_phone(str(appointment.get("WirelessPhoneFormatted") or appointment.get("WirelessPhone") or ""))
-            if digits_only(wireless_phone):
-                phone_targets.append(("Wireless", wireless_phone))
-            else:
-                phone_targets.append(("Wireless", ""))
+            for source, value in (
+                ("Wireless", appointment.get("WirelessPhoneFormatted") or appointment.get("WirelessPhone")),
+                ("Work Phone", appointment.get("WorkPhoneFormatted") or appointment.get("WkPhone")),
+            ):
+                phone = format_us_phone(str(value or ""))
+                digits = digits_only(phone)
+                if digits and digits not in {digits_only(item[1]) for item in phone_targets}:
+                    phone_targets.append((source, phone))
+            if not phone_targets:
+                fallback = appointment.get("Phone") or appointment.get("HomePhoneFormatted") or appointment.get("HmPhone")
+                phone_targets.append(("Phone", format_us_phone(str(fallback or ""))))
             row = dict(appointment)
             row["_ReminderOffsetDays"] = reminder_offset_days(row)
             row_targets: list[dict[str, str]] = []
@@ -3816,9 +3451,17 @@ class SmsReminderWindow(QMainWindow):
 
     def normalize_patient_phone_targets(self, patient: dict[str, Any]) -> dict[str, Any]:
         phone_targets: list[tuple[str, str]] = []
-        wireless_phone = format_us_phone(str(patient.get("WirelessPhoneFormatted") or patient.get("WirelessPhone") or ""))
-        if digits_only(wireless_phone):
-            phone_targets.append(("Wireless", wireless_phone))
+        for source, value in (
+            ("Wireless", patient.get("WirelessPhoneFormatted") or patient.get("WirelessPhone")),
+            ("Work Phone", patient.get("WorkPhoneFormatted") or patient.get("WkPhone")),
+        ):
+            phone = format_us_phone(str(value or ""))
+            digits = digits_only(phone)
+            if digits and digits not in {digits_only(item[1]) for item in phone_targets}:
+                phone_targets.append((source, phone))
+        if not phone_targets:
+            fallback = patient.get("Phone") or patient.get("HomePhoneFormatted") or patient.get("HmPhone")
+            phone_targets.append(("Phone", format_us_phone(str(fallback or ""))))
         row = dict(patient)
         row_targets = [
             {"source": source, "phone": phone, "status": ""}
@@ -4925,13 +4568,7 @@ class SmsReminderWindow(QMainWindow):
         rows = {row for row in rows if 0 <= row < len(self.appointments) and not self.appointment_table.isRowHidden(row)}
         return [self.appointment_with_template(row) for row in sorted(rows)]
 
-    def refresh_templates_before_send(self) -> None:
-        if self.config.bridge_url and self.config.api_token:
-            self.load_templates_from_bridge()
-            self.refresh_table_template_combos()
-
     def send_selected(self) -> None:
-        self.refresh_templates_before_send()
         selected = self.selected_appointments()
         if not selected:
             QMessageBox.information(self, "No selection", "Please select at least one appointment.")
@@ -4942,7 +4579,6 @@ class SmsReminderWindow(QMainWindow):
         if self.compose_worker and self.compose_worker.isRunning():
             QMessageBox.information(self, "Test in progress", "Please wait for the current Phone Link test to finish.")
             return
-        self.refresh_templates_before_send()
         selected = self.selected_appointments()
         if not selected:
             QMessageBox.information(self, "No selection", "Please select one appointment to test.")
@@ -5189,7 +4825,6 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.critical(self, "Clear dry-run failed", str(exc))
 
     def send_all_not_sent(self, silent: bool = False, confirm_real: bool = True) -> bool:
-        self.refresh_templates_before_send()
         pending = [
             self.appointment_with_template(row_index)
             for row_index, row in enumerate(self.appointments)
@@ -5339,7 +4974,7 @@ class SmsReminderWindow(QMainWindow):
 
     def send_finished(self, sent: int, failed: int) -> None:
         self.set_send_enabled(True)
-        label = "Sent/dry-run" if self.config.dry_run else "Sent/verified"
+        label = "Sent/dry-run" if self.config.dry_run else "Needs review"
         self.append_activity(f"Done. {label}: {sent}. Failed: {failed}.")
         if self.monitor_batch_active and failed:
             self.monitor_batch_failed = True
@@ -5348,7 +4983,7 @@ class SmsReminderWindow(QMainWindow):
         elif self.active_send_kind == "treatment":
             self.load_treatment_patients()
         elif self.active_send_kind == "campaign":
-            status_text = "sent" if failed == 0 else "check log"
+            status_text = "needs review" if failed == 0 else "check log"
             visible_patients = self.holiday_visible_patients()
             for row_index, patient in enumerate(visible_patients):
                 if self.campaign_recipient_key(patient) not in self.active_campaign_recipient_keys:
