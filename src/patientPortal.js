@@ -630,8 +630,8 @@ export function parsePatientPortalPasswordChangeBody(body) {
   const session = authenticatedAccountBody(body);
   const currentPassword = requiredString(body, 'currentPassword', 'Current password');
   const newPassword = requiredString(body, 'newPassword', 'New password');
-  if (newPassword.length < 8) {
-    throw badRequest('New password must be at least 8 characters.');
+  if (newPassword.length < 6) {
+    throw badRequest('New password must be at least 6 characters.');
   }
   if (currentPassword === newPassword) {
     throw badRequest('New password must be different from the current password.');
