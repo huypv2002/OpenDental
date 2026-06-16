@@ -626,6 +626,23 @@ export function parsePatientPortalAccountBody(body) {
   return { accountId: session.accountId };
 }
 
+export function parsePatientPortalPasswordChangeBody(body) {
+  const session = authenticatedAccountBody(body);
+  const currentPassword = requiredString(body, 'currentPassword', 'Current password');
+  const newPassword = requiredString(body, 'newPassword', 'New password');
+  if (newPassword.length < 8) {
+    throw badRequest('New password must be at least 8 characters.');
+  }
+  if (currentPassword === newPassword) {
+    throw badRequest('New password must be different from the current password.');
+  }
+  return {
+    accountId: session.accountId,
+    currentPassword,
+    newPassword
+  };
+}
+
 export function parsePatientPortalCheckoutVerifyBody(body) {
   const session = authenticatedAccountBody(body);
   const sessionId = requiredString(body, 'sessionId', 'Stripe checkout session').slice(0, 190);
@@ -1813,4 +1830,44 @@ export async function updatePatientAccountPassword(input) {
     throw error;
   }
   return { ok: true };
+}
+
+export async function changePatientPortalPassword(input) {
+  await ensurePatientPortalTables();
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.execute(
+      `SELECT AccountId, PasswordHash, Status
+       FROM luk_patient_accounts
+       WHERE AccountId = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [input.accountId]
+    );
+    const account = rows[0];
+    if (!account || account.Status !== 'active') {
+      const error = new Error('Patient account was not found or is inactive.');
+      error.status = 404;
+      throw error;
+    }
+    if (!verifyPassword(input.currentPassword, account.PasswordHash)) {
+      const error = new Error('Current password is not correct.');
+      error.status = 401;
+      throw error;
+    }
+    await connection.execute(
+      `UPDATE luk_patient_accounts
+       SET PasswordHash = ?
+       WHERE AccountId = ?`,
+      [hashPassword(input.newPassword), input.accountId]
+    );
+    await connection.commit();
+    return { ok: true };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
