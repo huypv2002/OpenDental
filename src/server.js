@@ -34,6 +34,7 @@ import {
   deletePatientAccount,
   deleteMembershipPlan,
   ensurePatientPortalTables,
+  cancelMembershipAutoRenewal,
   createMembershipCheckoutSession,
   createMembershipCustomerPortalSession,
   getPatientAccount,
@@ -49,6 +50,7 @@ import {
   parsePatientPortalAccountBody,
   parsePatientPortalCheckoutBody,
   parsePatientPortalCheckoutVerifyBody,
+  parsePatientPortalCancelRenewalBody,
   parsePatientPortalCustomerPortalBody,
   parsePatientPortalPasswordChangeBody,
   parsePatientAccountLinkBody,
@@ -71,6 +73,7 @@ import {
   addSmsTemplate,
   deleteSmsTemplate,
   ensureSmsCampaignLogTable,
+  ensureSmsPatientLogTable,
   ensureSmsSettingsTable,
   ensureSmsTemplatesTable,
   ensureSmsTreatmentLogTable,
@@ -85,11 +88,14 @@ import {
   getSmsRecallCandidates,
   getSmsReminderAppointments,
   getSmsReminderLogs,
+  getSmsPatientLogs,
   logSmsCampaignResult,
+  logSmsPatientResult,
   logSmsRecallResult,
   logSmsReminderResult,
   logSmsTreatmentResult,
-  resetSmsReminderLog
+  resetSmsReminderLog,
+  resetSmsPatientLog
 } from './smsReminders.js';
 import { getAvailableSlots, getAvailableSlotsRange, getReferenceData, parseSlotQuery, parseSlotRangeQuery } from './slots.js';
 
@@ -577,6 +583,16 @@ app.post('/api/patient-portal/stripe/customer-portal', requireApiToken, async (r
   }
 });
 
+app.post('/api/patient-portal/membership/cancel-renewal', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientPortalCancelRenewalBody(req.body ?? {});
+    const data = await cancelMembershipAutoRenewal(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/patient-portal/accounts/link', requireApiToken, async (req, res, next) => {
   try {
     const body = parsePatientAccountLinkBody(req.body ?? {});
@@ -690,6 +706,24 @@ app.post('/api/sms-reminders/campaign-log', requireApiToken, async (req, res, ne
   }
 });
 
+app.get('/api/sms-reminders/patient-logs', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getSmsPatientLogs(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/sms-reminders/patient-log', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await logSmsPatientResult(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/sms-reminders/log', requireApiToken, async (req, res, next) => {
   try {
     const data = await logSmsReminderResult(req.body ?? {});
@@ -711,6 +745,15 @@ app.post('/api/sms-reminders/clear-dry-run', requireApiToken, async (_req, res, 
 app.post('/api/sms-reminders/reset-log', requireApiToken, async (req, res, next) => {
   try {
     const data = await resetSmsReminderLog(req.body ?? {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/sms-reminders/reset-patient-log', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await resetSmsPatientLog(req.body ?? {});
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
@@ -862,7 +905,7 @@ app.use((error, _req, res, _next) => {
 });
 
 // Auto-create SMS template/settings tables and seed defaults on startup
-ensurePatientPortalTables().then(() => ensureSmsTemplatesTable()).then(() => ensureSmsSettingsTable()).then(() => ensureSmsCampaignLogTable()).then(() => ensureSmsTreatmentLogTable()).then(() => initDefaultSmsTemplates()).then((init) => {
+ensurePatientPortalTables().then(() => ensureSmsTemplatesTable()).then(() => ensureSmsSettingsTable()).then(() => ensureSmsCampaignLogTable()).then(() => ensureSmsTreatmentLogTable()).then(() => ensureSmsPatientLogTable()).then(() => initDefaultSmsTemplates()).then((init) => {
   if (init.initialized) {
     console.log(`SMS templates: seeded ${init.count} default templates.`);
   } else {

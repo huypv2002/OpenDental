@@ -12,7 +12,8 @@ const TOKEN_ISSUER = 'luk-patient-portal';
 let stripeClient = null;
 const ACCOUNT_PUBLIC_COLUMNS = `AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense,
        MembershipPlan, StripeCustomerId, StripeSubscriptionId, MembershipPaymentStatus,
-       MembershipCurrentPeriodEnd, MembershipActivatedAt, Status, CreatedAt, UpdatedAt, LastLoginAt`;
+       MembershipCurrentPeriodEnd, MembershipActivatedAt, MembershipCancelAtPeriodEnd,
+       Status, CreatedAt, UpdatedAt, LastLoginAt`;
 const PLAN_PUBLIC_COLUMNS = `PlanId, PlanKey, Badge, Title, PriceLabel, Content, CheckoutUrl, StripeProductId, StripePriceId,
        Cost, IsFeatured, IsActive, DisplayOrder, CreatedAt, UpdatedAt`;
 
@@ -114,6 +115,7 @@ function publicAccount(row) {
     membershipPaymentStatus: row.MembershipPaymentStatus || '',
     membershipCurrentPeriodEnd: accountMembershipPeriodEnd(row),
     membershipActivatedAt: row.MembershipActivatedAt || null,
+    membershipCancelAtPeriodEnd: Boolean(row.MembershipCancelAtPeriodEnd),
     status: row.Status,
     createdAt: row.CreatedAt,
     lastLoginAt: row.LastLoginAt || null
@@ -437,6 +439,7 @@ export async function ensurePatientPortalTables() {
       MembershipPaymentStatus VARCHAR(50) NOT NULL DEFAULT '',
       MembershipCurrentPeriodEnd DATETIME NULL,
       MembershipActivatedAt DATETIME NULL,
+      MembershipCancelAtPeriodEnd TINYINT(1) NOT NULL DEFAULT 0,
       Status ENUM('active','inactive','pending') NOT NULL DEFAULT 'active',
       CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -463,6 +466,7 @@ export async function ensurePatientPortalTables() {
   await ensureColumn(columns, 'luk_patient_accounts', 'MembershipPaymentStatus', "VARCHAR(50) NOT NULL DEFAULT ''");
   await ensureColumn(columns, 'luk_patient_accounts', 'MembershipCurrentPeriodEnd', 'DATETIME NULL');
   await ensureColumn(columns, 'luk_patient_accounts', 'MembershipActivatedAt', 'DATETIME NULL');
+  await ensureColumn(columns, 'luk_patient_accounts', 'MembershipCancelAtPeriodEnd', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn(columns, 'luk_patient_accounts', 'Status', "ENUM('active','inactive','pending') NOT NULL DEFAULT 'active'");
   await ensureColumn(columns, 'luk_patient_accounts', 'CreatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn(columns, 'luk_patient_accounts', 'UpdatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
@@ -660,6 +664,13 @@ export function parsePatientPortalCustomerPortalBody(body) {
       optionalString(body, 'returnUrl') || config.stripe.customerPortalReturnUrl || config.stripe.successUrl,
       'returnUrl'
     )
+  };
+}
+
+export function parsePatientPortalCancelRenewalBody(body) {
+  const session = authenticatedAccountBody(body);
+  return {
+    accountId: session.accountId
   };
 }
 
@@ -1497,7 +1508,8 @@ export async function updatePatientAccountMembership(input) {
          MembershipPaymentStatus = CASE
            WHEN MembershipPaymentStatus = '' OR MembershipPaymentStatus IS NULL THEN 'manual'
            ELSE MembershipPaymentStatus
-         END
+         END,
+         MembershipCancelAtPeriodEnd = 0
      WHERE AccountId = ?`,
     [input.membershipPlan, activatedAt, periodEnd, input.accountId]
   );
@@ -1647,6 +1659,49 @@ export async function createMembershipCustomerPortalSession(input) {
   };
 }
 
+export async function cancelMembershipAutoRenewal(input) {
+  await ensurePatientPortalTables();
+  const [accountRows] = await pool.execute(
+    `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
+     FROM luk_patient_accounts
+     WHERE AccountId = ?
+     LIMIT 1`,
+    [input.accountId]
+  );
+  const account = accountRows[0];
+  if (!account || account.Status !== 'active') {
+    const error = new Error('Patient account was not found or is inactive.');
+    error.status = 404;
+    throw error;
+  }
+  if (!account.MembershipPlan || !accountHasCurrentMembership(account)) {
+    const error = new Error('No active membership is available to update.');
+    error.status = 400;
+    throw error;
+  }
+  if (!account.StripeSubscriptionId) {
+    return {
+      autoRenewCanceled: false,
+      message: 'This membership is not linked to automatic Stripe renewal. The plan remains active until the current period ends.',
+      account: publicAccount(account)
+    };
+  }
+
+  const subscription = await stripe().subscriptions.update(account.StripeSubscriptionId, {
+    cancel_at_period_end: true
+  });
+  await updateSubscriptionStatusBySubscription(subscription, {
+    accountId: String(account.AccountId),
+    planKey: account.MembershipPlan || ''
+  });
+  const nextAccount = await getPatientAccount({ accountId: input.accountId });
+  return {
+    autoRenewCanceled: true,
+    message: 'Auto-renewal is turned off. Your membership remains active until the current period ends.',
+    account: nextAccount.account
+  };
+}
+
 async function updateSubscriptionStatusBySubscription(subscription, fallbackMetadata = {}) {
   const subscriptionId = typeof subscription === 'string' ? subscription : subscription?.id;
   if (!subscriptionId) {
@@ -1655,6 +1710,7 @@ async function updateSubscriptionStatusBySubscription(subscription, fallbackMeta
   const status = typeof subscription === 'string' ? '' : String(subscription.status || '');
   const periodEnd = typeof subscription === 'string' ? null : mysqlDateTimeFromEpoch(subscription.current_period_end);
   const customerId = typeof subscription === 'string' ? '' : stripeObjectId(subscription.customer);
+  const cancelAtPeriodEnd = typeof subscription === 'string' ? 0 : (subscription.cancel_at_period_end ? 1 : 0);
   const metadata = typeof subscription === 'string' ? fallbackMetadata : (subscription.metadata || fallbackMetadata || {});
   const accountId = Number.parseInt(metadata.accountId ?? '', 10);
   const planKey = String(metadata.planKey || '').slice(0, 100);
@@ -1663,7 +1719,8 @@ async function updateSubscriptionStatusBySubscription(subscription, fallbackMeta
     customerId,
     subscriptionId,
     status || 'active',
-    periodEnd
+    periodEnd,
+    cancelAtPeriodEnd
   ];
   let where = 'StripeSubscriptionId = ?';
   let whereValue = subscriptionId;
@@ -1679,6 +1736,7 @@ async function updateSubscriptionStatusBySubscription(subscription, fallbackMeta
          StripeSubscriptionId = ?,
          MembershipPaymentStatus = ?,
          MembershipCurrentPeriodEnd = ?,
+         MembershipCancelAtPeriodEnd = ?,
          MembershipActivatedAt = COALESCE(MembershipActivatedAt, NOW())
      WHERE ${where}`,
     values
@@ -1714,6 +1772,7 @@ async function completeCheckoutSession(session) {
            StripeSubscriptionId = ?,
            MembershipPlan = ?,
            MembershipPaymentStatus = ?,
+           MembershipCancelAtPeriodEnd = 0,
            MembershipActivatedAt = COALESCE(MembershipActivatedAt, NOW())
        WHERE AccountId = ?`,
       [

@@ -5,6 +5,7 @@ const LOG_TABLE = 'luk_sms_reminder_log';
 const RECALL_LOG_TABLE = 'luk_sms_recall_log';
 const CAMPAIGN_LOG_TABLE = 'luk_sms_campaign_log';
 const TREATMENT_LOG_TABLE = 'luk_sms_treatment_log';
+const PATIENT_LOG_TABLE = 'luk_sms_patient_log';
 const SMS_SETTINGS_TABLE = 'luk_sms_settings';
 
 function parseDate(value) {
@@ -190,6 +191,25 @@ export async function ensureSmsTreatmentLogTable(connection = pool) {
       PRIMARY KEY (TreatmentLogNum),
       KEY idx_luk_sms_treatment_patient (PatNum, Phone),
       KEY idx_luk_sms_treatment_sent (SentAt)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
+
+export async function ensureSmsPatientLogTable(connection = pool) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS ${PATIENT_LOG_TABLE} (
+      PatientLogNum BIGINT NOT NULL AUTO_INCREMENT,
+      PatNum BIGINT NOT NULL,
+      Phone VARCHAR(30) NOT NULL,
+      TemplateKey VARCHAR(50) NOT NULL DEFAULT '',
+      Message TEXT NOT NULL,
+      Status VARCHAR(30) NOT NULL,
+      SentAt DATETIME NULL,
+      ErrorMessage TEXT NULL,
+      CreatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (PatientLogNum),
+      KEY idx_luk_sms_patient_patient (PatNum, Phone),
+      KEY idx_luk_sms_patient_sent (SentAt)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 }
@@ -559,10 +579,39 @@ export async function logSmsCampaignResult(body) {
   return { patNum, phone, campaignType, campaignName, status };
 }
 
+export async function logSmsPatientResult(body) {
+  await ensureSmsPatientLogTable();
+  const patNum = Number.parseInt(String(body.patNum ?? ''), 10);
+  const phone = String(body.phone ?? '').trim();
+  const templateKey = String(body.templateKey ?? '').trim();
+  const message = String(body.message ?? '');
+  const status = String(body.status ?? '').trim();
+  const errorMessage = String(body.errorMessage ?? '');
+
+  if (!Number.isInteger(patNum) || !phone || !status) {
+    const error = new Error('patNum, phone, and status are required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const sentAt = ['sent', 'dry-run'].includes(status) ? new Date() : null;
+  await pool.execute(
+    `
+      INSERT INTO ${PATIENT_LOG_TABLE}
+        (PatNum, Phone, TemplateKey, Message, Status, SentAt, ErrorMessage)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    [patNum, phone, templateKey, message, status, sentAt, errorMessage]
+  );
+
+  return { patNum, phone, templateKey, status };
+}
+
 export async function clearSmsDryRunLogs() {
   await ensureSmsReminderLogTable();
   await ensureSmsRecallLogTable();
   await ensureSmsTreatmentLogTable();
+  await ensureSmsPatientLogTable();
   const [reminderResult] = await pool.execute(
     `DELETE FROM ${LOG_TABLE} WHERE Status = 'dry-run'`
   );
@@ -572,10 +621,14 @@ export async function clearSmsDryRunLogs() {
   const [treatmentResult] = await pool.execute(
     `DELETE FROM ${TREATMENT_LOG_TABLE} WHERE Status = 'dry-run'`
   );
+  const [patientResult] = await pool.execute(
+    `DELETE FROM ${PATIENT_LOG_TABLE} WHERE Status = 'dry-run'`
+  );
   return {
     reminderDryRunDeleted: reminderResult.affectedRows ?? 0,
     recallDryRunDeleted: recallResult.affectedRows ?? 0,
-    treatmentDryRunDeleted: treatmentResult.affectedRows ?? 0
+    treatmentDryRunDeleted: treatmentResult.affectedRows ?? 0,
+    patientDryRunDeleted: patientResult.affectedRows ?? 0
   };
 }
 
@@ -678,6 +731,57 @@ export async function getSmsReminderLogs(query = {}) {
     [...params, limit]
   );
   return { logs: rows };
+}
+
+export async function getSmsPatientLogs(query = {}) {
+  const limit = parseLimit(query.limit, 1000);
+  const patNums = String(query.patNums ?? '')
+    .split(',')
+    .map((item) => Number.parseInt(item.trim(), 10))
+    .filter(Number.isInteger)
+    .slice(0, 500);
+  const where = [];
+  const params = [];
+  if (patNums.length) {
+    where.push(`PatNum IN (${patNums.map(() => '?').join(',')})`);
+    params.push(...patNums);
+  }
+  await ensureSmsPatientLogTable();
+  const [rows] = await pool.execute(
+    `
+      SELECT
+        PatientLogNum,
+        PatNum,
+        Phone,
+        TemplateKey,
+        Status,
+        DATE_FORMAT(SentAt, '%Y-%m-%d %H:%i:%s') AS SentAt,
+        ErrorMessage,
+        DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt
+      FROM ${PATIENT_LOG_TABLE}
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY PatientLogNum DESC
+      LIMIT ?
+    `,
+    [...params, limit]
+  );
+  return { logs: rows };
+}
+
+export async function resetSmsPatientLog(body) {
+  await ensureSmsPatientLogTable();
+  const patNum = Number.parseInt(String(body.patNum ?? ''), 10);
+  const phone = String(body.phone ?? '').trim();
+  if (!Number.isInteger(patNum) || !phone) {
+    const error = new Error('patNum and phone are required.');
+    error.status = 400;
+    throw error;
+  }
+  const [result] = await pool.execute(
+    `DELETE FROM ${PATIENT_LOG_TABLE} WHERE PatNum = ? AND Phone = ?`,
+    [patNum, phone]
+  );
+  return { patNum, phone, deleted: result.affectedRows ?? 0 };
 }
 
 // ===== SMS TEMPLATES TABLE & CRUD =====
