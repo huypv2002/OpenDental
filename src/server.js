@@ -27,6 +27,12 @@ import {
   saveAdminAppointment,
   saveAdminPatient
 } from './admin.js';
+import {
+  deleteAdminAccount,
+  listAdminAccounts,
+  loginAdminAccount,
+  saveAdminAccount
+} from './adminAuth.js';
 import { createBooking, parseBookingBody } from './bookings.js';
 import { sendBookingEmails } from './email.js';
 import { saveBookingFiles } from './files.js';
@@ -233,6 +239,9 @@ async function adminBatchPayload(surface, params = {}) {
     case 'sms-logs':
     case 'smslogs':
       return getSmsReminderLogs({ date: params.date, limit: params.limit ?? 100 });
+    case 'admin-accounts':
+    case 'adminaccounts':
+      return listAdminAccounts();
     default:
       throw batchError(`Unsupported admin batch surface: ${surface}`);
   }
@@ -301,6 +310,38 @@ app.post('/api/admin/batch', requireApiToken, async (req, res, next) => {
         items: Object.fromEntries(entries)
       }
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/auth/login', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await loginAdminAccount(req.body ?? {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/auth/accounts', requireApiToken, async (_req, res, next) => {
+  try {
+    res.json({ ok: true, data: await listAdminAccounts() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/auth/accounts/save', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await saveAdminAccount(req.body ?? {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/auth/accounts/delete', requireApiToken, async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await deleteAdminAccount(req.body ?? {}) });
   } catch (error) {
     next(error);
   }

@@ -80,6 +80,11 @@ export const config = {
     tokenSecret: process.env.PATIENT_PORTAL_TOKEN_SECRET ?? process.env.API_TOKEN ?? '',
     tokenTtlSeconds: intEnv('PATIENT_PORTAL_TOKEN_TTL_SECONDS', 60 * 60 * 24 * 30, 300, 60 * 60 * 24 * 90)
   },
+  adminAuth: {
+    bootstrapUsername: process.env.ADMIN_BOOTSTRAP_USERNAME ?? '',
+    bootstrapPassword: process.env.ADMIN_BOOTSTRAP_PASSWORD ?? '',
+    bootstrapDisplayName: process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME ?? ''
+  },
   chatbot: {
     baseUrl: process.env.CHATBOT_9ROUTER_BASE_URL ?? '',
     modelsUrl: process.env.CHATBOT_9ROUTER_MODELS_URL ?? '',
