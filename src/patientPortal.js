@@ -605,6 +605,23 @@ export function parsePatientAccountDeleteBody(body) {
   return { accountId };
 }
 
+export function parsePatientAccountProfileBody(body) {
+  const accountId = Number.parseInt(body.accountId ?? body.AccountId ?? '', 10);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    throw badRequest('accountId is required.');
+  }
+  return {
+    accountId,
+    firstName: plainLatinName(requiredString(body, 'firstName', 'First name'), 'First name'),
+    lastName: plainLatinName(requiredString(body, 'lastName', 'Last name'), 'Last name'),
+    birthdate: normalizeDate(requiredString(body, 'birthdate', 'Date of birth'), 'Date of birth'),
+    phone: optionalString(body, 'phone'),
+    driverLicense: optionalString(body, 'driverLicense'),
+    username: normalizeUsername(requiredString(body, 'username', 'Username')),
+    email: normalizeEmail(requiredString(body, 'email', 'Email'))
+  };
+}
+
 export function parseMembershipPlanBody(body) {
   const planId = Number.parseInt(body.planId ?? body.PlanId ?? '', 10) || 0;
   const title = requiredString(body, 'title', 'Plan title').slice(0, 190);
@@ -1523,6 +1540,70 @@ export async function updatePatientAccountStatus(input) {
   return {
     account: publicAccount(rows[0])
   };
+}
+
+export async function updatePatientAccountProfile(input) {
+  await ensurePatientPortalTables();
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [duplicateRows] = await connection.execute(
+      `SELECT AccountId
+       FROM luk_patient_accounts
+       WHERE AccountId <> ?
+         AND (Email = ? OR Username = ?)
+       LIMIT 1`,
+      [input.accountId, input.email, input.username]
+    );
+    if (duplicateRows.length) {
+      throw badRequest('Another patient account already uses this email address or username.');
+    }
+
+    const [result] = await connection.execute(
+      `UPDATE luk_patient_accounts
+       SET FirstName = ?,
+           LastName = ?,
+           Birthdate = ?,
+           Phone = ?,
+           DriverLicense = ?,
+           Username = ?,
+           Email = ?
+       WHERE AccountId = ?`,
+      [
+        input.firstName,
+        input.lastName,
+        input.birthdate,
+        input.phone,
+        input.driverLicense,
+        input.username,
+        input.email,
+        input.accountId
+      ]
+    );
+    if (result.affectedRows < 1) {
+      const error = new Error('Patient account was not found.');
+      error.status = 404;
+      throw error;
+    }
+
+    const [rows] = await connection.execute(
+      `SELECT ${ACCOUNT_PUBLIC_COLUMNS}
+       FROM luk_patient_accounts
+       WHERE AccountId = ?
+       LIMIT 1`,
+      [input.accountId]
+    );
+
+    await connection.commit();
+    return {
+      account: publicAccount(rows[0])
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 export async function updatePatientAccountMembership(input) {

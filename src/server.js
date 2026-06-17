@@ -63,6 +63,7 @@ import {
   parsePatientAccountDeleteBody,
   parsePatientAccountMembershipBody,
   parsePatientAccountPasswordBody,
+  parsePatientAccountProfileBody,
   parsePatientAccountStatusBody,
   parsePatientLoginBody,
   parsePatientRegisterBody,
@@ -71,6 +72,7 @@ import {
   changePatientPortalPassword,
   updatePatientAccountMembership,
   updatePatientAccountPassword,
+  updatePatientAccountProfile,
   updatePatientAccountStatus,
   verifyMembershipCheckoutSession
 } from './patientPortal.js';
@@ -588,6 +590,16 @@ app.post('/api/patient-portal/accounts/membership', requireApiToken, async (req,
   try {
     const body = parsePatientAccountMembershipBody(req.body ?? {});
     const data = await updatePatientAccountMembership(body);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/patient-portal/accounts/profile', requireApiToken, async (req, res, next) => {
+  try {
+    const body = parsePatientAccountProfileBody(req.body ?? {});
+    const data = await updatePatientAccountProfile(body);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);
