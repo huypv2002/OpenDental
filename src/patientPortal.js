@@ -10,7 +10,7 @@ const PASSWORD_KEY_LENGTH = 32;
 const PASSWORD_DIGEST = 'sha256';
 const TOKEN_ISSUER = 'luk-patient-portal';
 let stripeClient = null;
-const ACCOUNT_PUBLIC_COLUMNS = `AccountId, PatNum, Email, FirstName, LastName, Phone, Birthdate, DriverLicense,
+const ACCOUNT_PUBLIC_COLUMNS = `AccountId, PatNum, Username, Email, FirstName, LastName, Phone, Birthdate, DriverLicense,
        MembershipPlan, StripeCustomerId, StripeSubscriptionId, MembershipPaymentStatus,
        MembershipCurrentPeriodEnd, MembershipActivatedAt, MembershipCancelAtPeriodEnd,
        Status, CreatedAt, UpdatedAt, LastLoginAt`;
@@ -66,6 +66,17 @@ function normalizeEmail(value) {
   return email;
 }
 
+function normalizeUsername(value, required = true) {
+  const username = String(value || '').trim().toLowerCase();
+  if (!username && !required) {
+    return '';
+  }
+  if (!/^[a-z0-9][a-z0-9._-]{2,63}$/.test(username)) {
+    throw badRequest('Username must be 3-64 characters and use letters, numbers, dot, dash, or underscore.');
+  }
+  return username;
+}
+
 function dateKey(value) {
   if (!value) return '';
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -103,6 +114,7 @@ function publicAccount(row) {
   return {
     accountId: row.AccountId,
     patNum: row.PatNum || null,
+    username: row.Username || '',
     email: row.Email,
     firstName: row.FirstName,
     lastName: row.LastName,
@@ -361,6 +373,17 @@ async function ensureColumn(columns, tableName, columnName, definition) {
   columns.add(columnName);
 }
 
+async function ensureUniqueIndex(tableName, indexName, expression) {
+  const [rows] = await pool.execute(
+    `SHOW INDEX FROM ${tableName} WHERE Key_name = ?`,
+    [indexName]
+  );
+  if (rows.length) {
+    return;
+  }
+  await pool.execute(`ALTER TABLE ${tableName} ADD UNIQUE KEY ${indexName} (${expression})`);
+}
+
 async function ensureMembershipPlanDefaults() {
   const [rows] = await pool.execute('SELECT COUNT(*) AS total FROM luk_membership_plans');
   if (Number(rows[0]?.total || 0) > 0) {
@@ -426,6 +449,7 @@ export async function ensurePatientPortalTables() {
     `CREATE TABLE IF NOT EXISTS luk_patient_accounts (
       AccountId BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
       PatNum BIGINT NULL,
+      Username VARCHAR(100) NULL,
       Email VARCHAR(190) NOT NULL,
       PasswordHash VARCHAR(255) NOT NULL,
       FirstName VARCHAR(100) NOT NULL DEFAULT '',
@@ -453,6 +477,7 @@ export async function ensurePatientPortalTables() {
 
   const columns = await tableColumnNames('luk_patient_accounts');
   await ensureColumn(columns, 'luk_patient_accounts', 'PatNum', 'BIGINT NULL');
+  await ensureColumn(columns, 'luk_patient_accounts', 'Username', 'VARCHAR(100) NULL');
   await ensureColumn(columns, 'luk_patient_accounts', 'Email', "VARCHAR(190) NOT NULL DEFAULT ''");
   await ensureColumn(columns, 'luk_patient_accounts', 'PasswordHash', "VARCHAR(255) NOT NULL DEFAULT ''");
   await ensureColumn(columns, 'luk_patient_accounts', 'FirstName', "VARCHAR(100) NOT NULL DEFAULT ''");
@@ -471,6 +496,7 @@ export async function ensurePatientPortalTables() {
   await ensureColumn(columns, 'luk_patient_accounts', 'CreatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn(columns, 'luk_patient_accounts', 'UpdatedAt', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
   await ensureColumn(columns, 'luk_patient_accounts', 'LastLoginAt', 'DATETIME NULL');
+  await ensureUniqueIndex('luk_patient_accounts', 'uq_luk_patient_accounts_username', 'Username');
 
   await pool.execute(
     `CREATE TABLE IF NOT EXISTS luk_membership_plans (
@@ -517,6 +543,7 @@ export function parsePatientRegisterBody(body) {
   const lastName = plainLatinName(requiredString(body, 'lastName', 'Last name'), 'Last name');
   const birthdate = normalizeDate(requiredString(body, 'birthdate', 'Date of birth'), 'Date of birth');
   const driverLicense = optionalString(body, 'driverLicense');
+  const username = normalizeUsername(requiredString(body, 'username', 'Username'));
   const email = normalizeEmail(requiredString(body, 'email', 'Email'));
   const password = requiredString(body, 'password', 'Password');
   requiredAgreement(body);
@@ -529,6 +556,7 @@ export function parsePatientRegisterBody(body) {
     lastName,
     birthdate,
     driverLicense,
+    username,
     email,
     password,
     phone: optionalString(body, 'phone'),
@@ -538,8 +566,12 @@ export function parsePatientRegisterBody(body) {
 }
 
 export function parsePatientLoginBody(body) {
+  const identifier = requiredString({
+    identifier: body.identifier ?? body.email ?? body.username
+  }, 'identifier', 'Username or email');
   return {
-    email: normalizeEmail(requiredString(body, 'email', 'Email')),
+    identifier: identifier.includes('@') ? normalizeEmail(identifier) : normalizeUsername(identifier),
+    identifierType: identifier.includes('@') ? 'email' : 'username',
     password: requiredString(body, 'password', 'Password')
   };
 }
@@ -802,12 +834,12 @@ export async function registerPatientAccount(input) {
     const [existingRows] = await connection.execute(
       `SELECT AccountId
        FROM luk_patient_accounts
-       WHERE Email = ?
+       WHERE Email = ? OR Username = ?
        LIMIT 1`,
-      [input.email]
+      [input.email, input.username]
     );
     if (existingRows.length) {
-      throw badRequest('An account already exists for this email address.');
+      throw badRequest('An account already exists for this email address or username.');
     }
 
     let patient = await findMatchingPatient(connection, input);
@@ -819,10 +851,11 @@ export async function registerPatientAccount(input) {
 
     const [result] = await connection.execute(
       `INSERT INTO luk_patient_accounts
-        (PatNum, Email, PasswordHash, FirstName, LastName, Phone, Birthdate, DriverLicense, Status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+        (PatNum, Username, Email, PasswordHash, FirstName, LastName, Phone, Birthdate, DriverLicense, Status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
       [
         patNum,
+        input.username,
         input.email,
         passwordHash,
         input.firstName,
@@ -868,13 +901,13 @@ export async function loginPatientAccount(input) {
     const [rows] = await connection.execute(
       `SELECT ${ACCOUNT_PUBLIC_COLUMNS}, PasswordHash
        FROM luk_patient_accounts
-       WHERE Email = ?
+       WHERE ${input.identifierType === 'email' ? 'Email' : 'Username'} = ?
        LIMIT 1`,
-      [input.email]
+      [input.identifier]
     );
     const account = rows[0];
     if (!account || account.Status !== 'active' || !verifyPassword(input.password, account.PasswordHash)) {
-      const error = new Error('Invalid email or password.');
+      const error = new Error('Invalid username/email or password.');
       error.status = 401;
       throw error;
     }
@@ -905,6 +938,7 @@ export async function listPatientAccounts(query = {}) {
   if (search) {
     where = `WHERE
       Email LIKE ?
+      OR Username LIKE ?
       OR FirstName LIKE ?
       OR LastName LIKE ?
       OR Phone LIKE ?
@@ -912,7 +946,7 @@ export async function listPatientAccounts(query = {}) {
       OR MembershipPlan LIKE ?
       OR CAST(PatNum AS CHAR) LIKE ?`;
     const like = `%${search}%`;
-    values.push(like, like, like, like, like, like, like);
+    values.push(like, like, like, like, like, like, like, like);
   }
 
   const [rows] = await pool.execute(
