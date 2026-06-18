@@ -10,7 +10,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin
 
 import pyperclip
@@ -593,15 +593,24 @@ class PhoneLinkSender:
         "photos",
     )
 
-    def __init__(self, dry_run: bool = True, fd2_mode: bool = False):
+    def __init__(self, dry_run: bool = True, fd2_mode: bool = False, trace: Callable[[str], None] | None = None):
         self.dry_run = dry_run
         self.fd2_mode = fd2_mode
+        self.trace = trace
         if fd2_mode:
             self.STEP_DELAY_SECONDS = 0.45
             self.OPEN_DELAY_SECONDS = 1.25
             self.COMPOSE_DELAY_SECONDS = 1.1
             self.RECIPIENT_SETTLE_SECONDS = 1.0
             self.MESSAGE_SETTLE_SECONDS = 1.0
+
+    def fd2_trace(self, message: str) -> None:
+        if not self.fd2_mode or self.trace is None:
+            return
+        try:
+            self.trace(f"FD2 debug: {message}")
+        except Exception:
+            pass
 
     @staticmethod
     def open_phone_link() -> None:
@@ -688,33 +697,76 @@ class PhoneLinkSender:
             pass
 
     @staticmethod
-    def click_fd2_compose_coords(window: Any) -> None:
+    def describe_control(control: Any) -> str:
+        try:
+            rect = control.rectangle()
+            rect_text = f"rect=({rect.left},{rect.top},{rect.right},{rect.bottom})"
+        except Exception:
+            rect_text = "rect=?"
+        name = PhoneLinkSender.control_name(control) or "unnamed"
+        control_type = PhoneLinkSender.control_type(control) or "unknown"
+        return f"{name} [{control_type}] {rect_text}"
+
+    @staticmethod
+    def clipboard_preview(limit: int = 80) -> str:
+        try:
+            value = PhoneLinkSender.normalize_clipboard_text(pyperclip.paste())
+        except Exception as exc:
+            return f"<clipboard read failed: {exc}>"
+        compact = " ".join(value.split())
+        if len(compact) > limit:
+            compact = f"{compact[:limit]}..."
+        return compact or "<empty>"
+
+    @staticmethod
+    def click_fd2_compose_coords(window: Any) -> tuple[int, int]:
         from pywinauto import mouse
 
         rect = window.wrapper_object().rectangle()
         width = rect.right - rect.left
         height = rect.bottom - rect.top
+        coords = (
+            int(rect.left + (width * 0.72)),
+            int(rect.top + (height * 0.93)),
+        )
         mouse.click(
             button="left",
-            coords=(
-                int(rect.left + (width * 0.72)),
-                int(rect.top + (height * 0.93)),
-            ),
+            coords=coords,
         )
+        return coords
 
     @staticmethod
-    def copy_template_to_clipboard(message: str, timeout: float = 1.2) -> None:
+    def normalize_clipboard_text(value: str) -> str:
+        return str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+
+    @staticmethod
+    def clipboard_matches(expected: str) -> bool:
+        try:
+            return PhoneLinkSender.normalize_clipboard_text(pyperclip.paste()) == PhoneLinkSender.normalize_clipboard_text(expected)
+        except Exception:
+            return False
+
+    @staticmethod
+    def copy_text_to_clipboard(text: str, label: str, timeout: float = 3.0) -> None:
         deadline = time.time() + timeout
-        while True:
-            pyperclip.copy(message)
-            time.sleep(0.12)
-            try:
-                if pyperclip.paste() == message:
-                    return
-            except Exception:
-                pass
-            if time.time() >= deadline:
+        last_error = ""
+        while time.time() < deadline:
+            for value in ("", text):
+                try:
+                    pyperclip.copy(value)
+                    time.sleep(0.18)
+                except Exception as exc:
+                    last_error = str(exc)
+                    time.sleep(0.18)
+                    continue
+            if PhoneLinkSender.clipboard_matches(text):
                 return
+            time.sleep(0.2)
+        raise RuntimeError(f"Could not copy {label} to the Windows clipboard. Last clipboard error: {last_error or 'clipboard still held a different value'}.")
+
+    @staticmethod
+    def copy_template_to_clipboard(message: str, timeout: float = 3.0) -> None:
+        PhoneLinkSender.copy_text_to_clipboard(message, "template message", timeout=timeout)
 
     @staticmethod
     def read_edit_value(control: Any) -> str:
@@ -1001,15 +1053,25 @@ class PhoneLinkSender:
             if refreshed:
                 candidate = refreshed[0]
             if candidate is not None:
+                self.fd2_trace(f"compose candidate: {PhoneLinkSender.describe_control(candidate)}")
                 PhoneLinkSender.click_control(candidate)
             time.sleep(0.2)
             try:
-                PhoneLinkSender.click_fd2_compose_coords(window)
-                time.sleep(0.2)
-            except Exception:
-                pass
-            PhoneLinkSender.copy_template_to_clipboard(message)
+                coords = PhoneLinkSender.click_fd2_compose_coords(window)
+                self.fd2_trace(f"clicked compose coordinate: {coords}")
+                time.sleep(0.25)
+            except Exception as exc:
+                self.fd2_trace(f"compose coordinate click failed: {exc}")
+            self.fd2_trace(f"clipboard before template copy: {PhoneLinkSender.clipboard_preview()}")
+            PhoneLinkSender.copy_template_to_clipboard(message, timeout=4.0)
+            if not PhoneLinkSender.clipboard_matches(message):
+                raise RuntimeError(
+                    "FD2 mode stopped before paste because the clipboard did not contain the template message. "
+                    f"Clipboard now: {PhoneLinkSender.clipboard_preview()}."
+                )
+            self.fd2_trace(f"template copied to clipboard: chars={len(message)}, preview={PhoneLinkSender.clipboard_preview()}")
             PhoneLinkSender.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
+            self.fd2_trace("Ctrl+V sent to compose box; leaving Phone Link open for manual send.")
             # Phone Link on FD2 often does not expose the typed text through UIA.
             # Once Ctrl+V is issued in the compose box, leave focus alone for manual send.
             return
@@ -1092,9 +1154,16 @@ class PhoneLinkSender:
                 window = app.top_window()
 
             self.focus_new_message(window)
-            pyperclip.copy(phone)
+            if self.fd2_mode:
+                self.fd2_trace(f"copying phone to clipboard: {phone}")
+                self.copy_text_to_clipboard(phone, "phone number", timeout=3.0)
+                self.fd2_trace(f"phone clipboard ready: {PhoneLinkSender.clipboard_preview()}")
+            else:
+                pyperclip.copy(phone)
             self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
             self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
+            if self.fd2_mode:
+                self.fd2_trace("recipient pasted and Enter pressed; focusing compose message box.")
 
             if self.fd2_mode:
                 message_box = self.focus_message_box_fd2(window, click_delay=self.STEP_DELAY_SECONDS)
@@ -1132,9 +1201,16 @@ class PhoneLinkSender:
             window = app.top_window()
 
         self.focus_new_message(window)
-        pyperclip.copy(phone)
+        if self.fd2_mode:
+            self.fd2_trace(f"copying phone to clipboard: {phone}")
+            self.copy_text_to_clipboard(phone, "phone number", timeout=3.0)
+            self.fd2_trace(f"phone clipboard ready: {PhoneLinkSender.clipboard_preview()}")
+        else:
+            pyperclip.copy(phone)
         self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
         self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
+        if self.fd2_mode:
+            self.fd2_trace("recipient pasted and Enter pressed; focusing compose message box.")
         if self.fd2_mode:
             message_box = self.focus_message_box_fd2(window, click_delay=self.STEP_DELAY_SECONDS)
             self.paste_message_with_fd2_fallback(window, message_box, message)
@@ -1309,11 +1385,17 @@ class SendWorker(QThread):
     def run(self) -> None:
         repo = BridgeClient(self.config)
         try:
-            sender = PhoneLinkSender(self.config.dry_run, fd2_mode=self.fd2_mode)
+            sender = PhoneLinkSender(
+                self.config.dry_run,
+                fd2_mode=self.fd2_mode,
+                trace=self.progress.emit if self.fd2_mode else None,
+            )
         except TypeError:
             sender = PhoneLinkSender(self.config.dry_run)
             if hasattr(sender, "fd2_mode"):
                 sender.fd2_mode = self.fd2_mode
+            if self.fd2_mode and hasattr(sender, "trace"):
+                sender.trace = self.progress.emit
         completed = 0
         failed = 0
         skipped = 0
@@ -1322,6 +1404,11 @@ class SendWorker(QThread):
         for appointment in self.appointments:
             message = render_message(self.config, appointment, appointment.get("_TemplateText") or default_template(self.config))
             patient = patient_name(appointment)
+            if self.fd2_mode:
+                preview = " ".join(message.split())
+                if len(preview) > 90:
+                    preview = f"{preview[:90]}..."
+                self.progress.emit(f"FD2 debug: rendered template chars={len(message)}, preview={preview}")
             targets = [
                 target for target in appointment.get("PhoneTargets", [])
                 if digits_only(target.get("phone", "")) and target.get("status") not in SEND_SKIP_STATUSES
