@@ -155,17 +155,19 @@ export async function listAdminPatients(query = {}) {
   const q = text(query.q || query.query);
   const limit = Math.max(1, Math.min(intValue(query.limit, 100), 300));
   const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-  const values = q ? [like, like, like, like, limit] : [limit];
+    const values = q ? [like, like, like, like, like, limit] : [limit];
   const where = q
-    ? `WHERE p.FName LIKE ? ESCAPE '\\\\' OR p.LName LIKE ? ESCAPE '\\\\' OR p.WirelessPhone LIKE ? ESCAPE '\\\\' OR p.Email LIKE ? ESCAPE '\\\\'`
+    ? `WHERE p.FName LIKE ? ESCAPE '\\\\' OR p.LName LIKE ? ESCAPE '\\\\' OR p.WirelessPhone LIKE ? ESCAPE '\\\\' OR p.Email LIKE ? ESCAPE '\\\\' OR pa.Username LIKE ? ESCAPE '\\\\'`
     : '';
   const [rows] = await pool.execute(
     `
       SELECT
         p.PatNum, p.FName, p.LName, p.WirelessPhone, p.HmPhone, p.WkPhone, p.Email, p.Gender,
         DATE_FORMAT(p.Birthdate, '%Y-%m-%d') AS Birthdate, p.Address, p.City, p.State, p.Zip, p.Language, p.PatStatus,
+        MAX(pa.Username) AS PortalUsername,
         DATE_FORMAT(MAX(a.AptDateTime), '%Y-%m-%d %H:%i:%s') AS LastAppointment
       FROM patient p
+      LEFT JOIN luk_patient_accounts pa ON pa.PatNum = p.PatNum
       LEFT JOIN appointment a ON a.PatNum = p.PatNum
       ${where}
       GROUP BY p.PatNum
