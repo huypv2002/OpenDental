@@ -688,6 +688,35 @@ class PhoneLinkSender:
             pass
 
     @staticmethod
+    def click_fd2_compose_coords(window: Any) -> None:
+        from pywinauto import mouse
+
+        rect = window.wrapper_object().rectangle()
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        mouse.click(
+            button="left",
+            coords=(
+                int(rect.left + (width * 0.72)),
+                int(rect.top + (height * 0.93)),
+            ),
+        )
+
+    @staticmethod
+    def copy_template_to_clipboard(message: str, timeout: float = 1.2) -> None:
+        deadline = time.time() + timeout
+        while True:
+            pyperclip.copy(message)
+            time.sleep(0.12)
+            try:
+                if pyperclip.paste() == message:
+                    return
+            except Exception:
+                pass
+            if time.time() >= deadline:
+                return
+
+    @staticmethod
     def read_edit_value(control: Any) -> str:
         for getter in (
             lambda: control.get_value(),
@@ -966,6 +995,25 @@ class PhoneLinkSender:
         return False
 
     def paste_message_with_fd2_fallback(self, window: Any, field: Any, message: str) -> None:
+        if self.fd2_mode:
+            candidate = field
+            refreshed = PhoneLinkSender.message_box_candidates_fd2(window)
+            if refreshed:
+                candidate = refreshed[0]
+            if candidate is not None:
+                PhoneLinkSender.click_control(candidate)
+            time.sleep(0.2)
+            try:
+                PhoneLinkSender.click_fd2_compose_coords(window)
+                time.sleep(0.2)
+            except Exception:
+                pass
+            PhoneLinkSender.copy_template_to_clipboard(message)
+            PhoneLinkSender.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
+            # Phone Link on FD2 often does not expose the typed text through UIA.
+            # Once Ctrl+V is issued in the compose box, leave focus alone for manual send.
+            return
+
         attempts: list[Any] = [field]
         attempts.extend(PhoneLinkSender.message_box_candidates_fd2(window))
 
