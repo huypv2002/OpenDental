@@ -1071,36 +1071,26 @@ class PhoneLinkSender:
             time.sleep(0.25)
         return False
 
-    def paste_message_with_fd2_fallback(self, window: Any, field: Any, message: str) -> None:
-        if self.fd2_mode:
-            candidate = field
-            refreshed = PhoneLinkSender.message_box_candidates_fd2(window)
-            if refreshed:
-                candidate = refreshed[0]
-            if candidate is not None:
-                self.fd2_trace(f"compose candidate: {PhoneLinkSender.describe_control(candidate)}")
-                PhoneLinkSender.click_control(candidate)
-            time.sleep(0.2)
-            try:
-                coords = PhoneLinkSender.click_fd2_compose_coords(window)
-                self.fd2_trace(f"clicked compose coordinate: {coords}")
-                time.sleep(0.25)
-            except Exception as exc:
-                self.fd2_trace(f"compose coordinate click failed: {exc}")
-            self.fd2_trace(f"clipboard before template copy: {PhoneLinkSender.clipboard_preview()}")
-            PhoneLinkSender.copy_template_to_clipboard(message, timeout=4.0)
-            if not PhoneLinkSender.clipboard_matches(message):
-                raise RuntimeError(
-                    "FD2 mode stopped before paste because the clipboard did not contain the template message. "
-                    f"Clipboard now: {PhoneLinkSender.clipboard_preview()}."
-                )
-            self.fd2_trace(f"template copied to clipboard: chars={len(message)}, preview={PhoneLinkSender.clipboard_preview()}")
-            PhoneLinkSender.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
-            self.fd2_trace("Ctrl+V sent to compose box; leaving Phone Link open for manual send.")
-            # Phone Link on FD2 often does not expose the typed text through UIA.
-            # Once Ctrl+V is issued in the compose box, leave focus alone for manual send.
-            return
+    def paste_message_fd2_direct(self, window: Any, message: str) -> None:
+        try:
+            coords = PhoneLinkSender.click_fd2_compose_coords(window)
+            self.fd2_trace(f"clicked compose coordinate without UIA scan: {coords}")
+            time.sleep(0.45)
+        except Exception as exc:
+            self.fd2_trace(f"compose coordinate click failed: {exc}")
+            raise RuntimeError(f"FD2 mode could not click the Phone Link compose box: {exc}") from exc
+        self.fd2_trace(f"clipboard before template copy: {PhoneLinkSender.clipboard_preview()}")
+        PhoneLinkSender.copy_template_to_clipboard(message, timeout=4.0)
+        if not PhoneLinkSender.clipboard_matches(message):
+            raise RuntimeError(
+                "FD2 mode stopped before paste because the clipboard did not contain the template message. "
+                f"Clipboard now: {PhoneLinkSender.clipboard_preview()}."
+            )
+        self.fd2_trace(f"template copied to clipboard: chars={len(message)}, preview={PhoneLinkSender.clipboard_preview()}")
+        PhoneLinkSender.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
+        self.fd2_trace("Ctrl+V sent to compose box; leaving Phone Link open for manual send.")
 
+    def paste_message_with_fd2_fallback(self, window: Any, field: Any, message: str) -> None:
         attempts: list[Any] = [field]
         attempts.extend(PhoneLinkSender.message_box_candidates_fd2(window))
 
@@ -1188,11 +1178,10 @@ class PhoneLinkSender:
             self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
             self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
             if self.fd2_mode:
-                self.fd2_trace("recipient pasted and Enter pressed; focusing compose message box.")
+                self.fd2_trace("recipient pasted and Enter pressed; clicking compose box directly.")
 
             if self.fd2_mode:
-                message_box = self.focus_message_box_fd2(window, click_delay=self.STEP_DELAY_SECONDS)
-                self.paste_message_with_fd2_fallback(window, message_box, message)
+                self.paste_message_fd2_direct(window, message)
             else:
                 message_box = self.focus_message_box(window)
                 self.paste_message_with_fallback(window, message_box, message)
@@ -1235,10 +1224,9 @@ class PhoneLinkSender:
         self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
         self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
         if self.fd2_mode:
-            self.fd2_trace("recipient pasted and Enter pressed; focusing compose message box.")
+            self.fd2_trace("recipient pasted and Enter pressed; clicking compose box directly.")
         if self.fd2_mode:
-            message_box = self.focus_message_box_fd2(window, click_delay=self.STEP_DELAY_SECONDS)
-            self.paste_message_with_fd2_fallback(window, message_box, message)
+            self.paste_message_fd2_direct(window, message)
         else:
             message_box = self.focus_message_box(window)
             self.paste_message_with_fallback(window, message_box, message)
@@ -5777,13 +5765,13 @@ class SmsReminderWindow(QMainWindow):
         return self.start_send(pending, confirm_real=confirm_real, silent=silent)
 
     def send_manual_patient_fd2_not_sent(self) -> None:
-        selected_rows = self.selected_manual_patient_rows()
-        if not selected_rows:
+        selected = self.selected_manual_patients()
+        if not selected:
             QMessageBox.information(self, "No selection", "Please select one Patient row for FD2 draft mode.")
             return
         pending = [
-            self.manual_patient_with_template(row)
-            for row in selected_rows
+            row
+            for row in selected
             if row.get("ReminderStatus") not in {"sent", "dry-run", "needs review"}
         ]
         if not pending:
