@@ -596,6 +596,12 @@ class PhoneLinkSender:
     def __init__(self, dry_run: bool = True, fd2_mode: bool = False):
         self.dry_run = dry_run
         self.fd2_mode = fd2_mode
+        if fd2_mode:
+            self.STEP_DELAY_SECONDS = 0.45
+            self.OPEN_DELAY_SECONDS = 1.25
+            self.COMPOSE_DELAY_SECONDS = 1.1
+            self.RECIPIENT_SETTLE_SECONDS = 1.0
+            self.MESSAGE_SETTLE_SECONDS = 1.0
 
     @staticmethod
     def open_phone_link() -> None:
@@ -616,9 +622,9 @@ class PhoneLinkSender:
 
     def focus_new_message(self, window: Any) -> None:
         window.set_focus()
-        time.sleep(self.STEP_DELAY_SECONDS)
+        time.sleep(0.25 if self.fd2_mode else self.STEP_DELAY_SECONDS)
         # Escape clears transient focus such as a selected recipient chip or an open flyout.
-        self.slow_keys("{ESC}", 0.75)
+        self.slow_keys("{ESC}", 0.2 if self.fd2_mode else 0.75)
         self.slow_keys("^n", self.COMPOSE_DELAY_SECONDS)
 
     @staticmethod
@@ -854,17 +860,18 @@ class PhoneLinkSender:
         return field
 
     @staticmethod
-    def focus_message_box_fd2(window: Any) -> Any:
+    def focus_message_box_fd2(window: Any, click_delay: float | None = None) -> Any:
+        settle_delay = PhoneLinkSender.STEP_DELAY_SECONDS if click_delay is None else click_delay
         try:
             window.set_focus()
-            time.sleep(0.4)
+            time.sleep(min(0.25, settle_delay))
         except Exception:
             pass
 
         candidates = PhoneLinkSender.message_box_candidates_fd2(window)
         for field in candidates[:8]:
             PhoneLinkSender.click_control(field)
-            time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+            time.sleep(settle_delay)
             try:
                 if field.has_keyboard_focus():
                     return field
@@ -890,7 +897,7 @@ class PhoneLinkSender:
                             int(rect.top + (height * y_ratio)),
                         ),
                     )
-                    time.sleep(0.45)
+                    time.sleep(settle_delay)
                     refreshed = PhoneLinkSender.message_box_candidates_fd2(window)
                     if refreshed:
                         return refreshed[0]
@@ -958,8 +965,7 @@ class PhoneLinkSender:
             time.sleep(0.25)
         return False
 
-    @staticmethod
-    def paste_message_with_fd2_fallback(window: Any, field: Any, message: str) -> None:
+    def paste_message_with_fd2_fallback(self, window: Any, field: Any, message: str) -> None:
         attempts: list[Any] = [field]
         attempts.extend(PhoneLinkSender.message_box_candidates_fd2(window))
 
@@ -972,12 +978,12 @@ class PhoneLinkSender:
                 continue
             seen.add(identity)
             PhoneLinkSender.click_control(candidate)
-            time.sleep(0.45)
-            PhoneLinkSender.slow_keys("^a", 0.2)
-            PhoneLinkSender.slow_keys("{BACKSPACE}", 0.2)
+            time.sleep(0.18 if self.fd2_mode else 0.45)
+            PhoneLinkSender.slow_keys("^a", 0.08 if self.fd2_mode else 0.2)
+            PhoneLinkSender.slow_keys("{BACKSPACE}", 0.08 if self.fd2_mode else 0.2)
             pyperclip.copy(message)
-            PhoneLinkSender.slow_keys("^v", PhoneLinkSender.MESSAGE_SETTLE_SECONDS)
-            if PhoneLinkSender.wait_for_message_box_value_fd2(window, candidate, message, 5.0):
+            PhoneLinkSender.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
+            if PhoneLinkSender.wait_for_message_box_value_fd2(window, candidate, message, 3.0 if self.fd2_mode else 5.0):
                 return
 
         raise RuntimeError(
@@ -1043,7 +1049,7 @@ class PhoneLinkSender:
             self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
 
             if self.fd2_mode:
-                message_box = self.focus_message_box_fd2(window)
+                message_box = self.focus_message_box_fd2(window, click_delay=self.STEP_DELAY_SECONDS)
                 self.paste_message_with_fd2_fallback(window, message_box, message)
             else:
                 message_box = self.focus_message_box(window)
@@ -1082,7 +1088,7 @@ class PhoneLinkSender:
         self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
         self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
         if self.fd2_mode:
-            message_box = self.focus_message_box_fd2(window)
+            message_box = self.focus_message_box_fd2(window, click_delay=self.STEP_DELAY_SECONDS)
             self.paste_message_with_fd2_fallback(window, message_box, message)
         else:
             message_box = self.focus_message_box(window)
@@ -4602,6 +4608,27 @@ class SmsReminderWindow(QMainWindow):
     def manual_patient_filtered_patients(self) -> list[dict[str, Any]]:
         return list(self.manual_patient_table.property("_filtered_patients") or self.manual_patients)
 
+    def selected_manual_patient_row_indices(self) -> list[int]:
+        rows = {index.row() for index in self.manual_patient_table.selectedIndexes()}
+        current_row = self.manual_patient_table.currentRow()
+        if not rows and current_row >= 0:
+            rows.add(current_row)
+        focus_widget = QApplication.focusWidget()
+        for row, combo in self.manual_patient_template_combos.items():
+            if focus_widget is combo or (focus_widget and combo.isAncestorOf(focus_widget)):
+                rows.add(row)
+        visible = self.manual_patient_visible_patients()
+        selected: list[int] = []
+        for row in sorted(rows):
+            if row < 0 or row >= len(visible) or self.manual_patient_table.isRowHidden(row):
+                continue
+            selected.append(row)
+        return selected
+
+    def selected_manual_patient_rows(self) -> list[dict[str, Any]]:
+        visible = self.manual_patient_visible_patients()
+        return [dict(visible[row]) for row in self.selected_manual_patient_row_indices()]
+
     def review_visible_patients(self) -> list[dict[str, Any]]:
         return list(self.review_table.property("_visible_patients") or [])
 
@@ -4642,19 +4669,9 @@ class SmsReminderWindow(QMainWindow):
         return selected
 
     def selected_manual_patients(self) -> list[dict[str, Any]]:
-        rows = {index.row() for index in self.manual_patient_table.selectedIndexes()}
-        current_row = self.manual_patient_table.currentRow()
-        if not rows and current_row >= 0:
-            rows.add(current_row)
-        focus_widget = QApplication.focusWidget()
-        for row, combo in self.manual_patient_template_combos.items():
-            if focus_widget is combo or (focus_widget and combo.isAncestorOf(focus_widget)):
-                rows.add(row)
         visible = self.manual_patient_visible_patients()
         selected: list[dict[str, Any]] = []
-        for row in sorted(rows):
-            if row < 0 or row >= len(visible) or self.manual_patient_table.isRowHidden(row):
-                continue
+        for row in self.selected_manual_patient_row_indices():
             patient = dict(visible[row])
             combo = self.manual_patient_template_combos.get(row)
             key = str(combo.currentData() or patient.get("_TemplateKey") or self.config.default_template_key) if combo else str(patient.get("_TemplateKey") or self.config.default_template_key)
@@ -5596,15 +5613,19 @@ class SmsReminderWindow(QMainWindow):
         return self.start_send(pending, confirm_real=confirm_real, silent=silent)
 
     def send_manual_patient_fd2_not_sent(self) -> None:
+        selected_rows = self.selected_manual_patient_rows()
+        if not selected_rows:
+            QMessageBox.information(self, "No selection", "Please select one Patient row for FD2 draft mode.")
+            return
         pending = [
             self.manual_patient_with_template(row)
-            for row in self.manual_patient_filtered_patients()
+            for row in selected_rows
             if row.get("ReminderStatus") not in {"sent", "dry-run", "needs review"}
         ]
         if not pending:
-            QMessageBox.information(self, "Nothing to send", "There are no not-sent Patient SMS rows in this list.")
+            QMessageBox.information(self, "Nothing to send", "The selected Patient row is already sent, dry-run, or waiting for review.")
             return
-        self.start_send(pending, fd2_mode=True)
+        self.start_send(pending[:1], fd2_mode=True)
 
     def start_send(self, appointments: list[dict[str, Any]], confirm_real: bool = True, silent: bool = False, fd2_mode: bool = False) -> bool:
         if self.worker and self.worker.isRunning():
