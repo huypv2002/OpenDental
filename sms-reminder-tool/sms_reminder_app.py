@@ -566,9 +566,26 @@ class PhoneLinkSender:
         "nhập tin nhắn",
         "tin nhắn",
     }
+    MESSAGE_BOX_HINTS = (
+        "send a message",
+        "type a message",
+        "write a message",
+        "message",
+        "nhập tin nhắn",
+        "tin nhắn",
+    )
+    NON_MESSAGE_BOX_HINTS = (
+        "search",
+        "search messages",
+        "new message",
+        "to:",
+        "recipient",
+        "conversation",
+    )
 
-    def __init__(self, dry_run: bool = True):
+    def __init__(self, dry_run: bool = True, fd2_mode: bool = False):
         self.dry_run = dry_run
+        self.fd2_mode = fd2_mode
 
     @staticmethod
     def open_phone_link() -> None:
@@ -606,6 +623,55 @@ class PhoneLinkSender:
         return ""
 
     @staticmethod
+    def normalized_control_text(control: Any) -> str:
+        parts = []
+        for getter in (
+            lambda: control.element_info.name,
+            lambda: control.window_text(),
+            lambda: getattr(control.element_info, "automation_id", ""),
+            lambda: getattr(control.element_info, "class_name", ""),
+        ):
+            try:
+                value = str(getter() or "").strip()
+                if value:
+                    parts.append(value)
+            except Exception:
+                continue
+        return " ".join(" ".join(parts).lower().split())
+
+    @staticmethod
+    def control_type(control: Any) -> str:
+        try:
+            return str(getattr(getattr(control, "element_info", None), "control_type", "") or "")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def click_control(control: Any) -> None:
+        try:
+            control.set_focus()
+        except Exception:
+            pass
+        try:
+            control.click_input()
+            return
+        except Exception:
+            pass
+        try:
+            from pywinauto import mouse
+
+            rect = control.rectangle()
+            mouse.click(
+                button="left",
+                coords=(
+                    int((rect.left + rect.right) / 2),
+                    int((rect.top + rect.bottom) / 2),
+                ),
+            )
+        except Exception:
+            pass
+
+    @staticmethod
     def read_edit_value(control: Any) -> str:
         for getter in (
             lambda: control.get_value(),
@@ -630,6 +696,59 @@ class PhoneLinkSender:
         except Exception:
             pass
         return [control for control in controls if control is not None]
+
+    @staticmethod
+    def message_box_candidates_fd2(window: Any, expected: str = "") -> list[Any]:
+        wrapper = window.wrapper_object()
+        window_rect = wrapper.rectangle()
+        window_height = max(1, window_rect.bottom - window_rect.top)
+        expected_normalized = " ".join(str(expected or "").split())
+        scored: list[tuple[int, int, Any]] = []
+        try:
+            descendants = wrapper.descendants()
+        except Exception:
+            descendants = []
+
+        for control in descendants:
+            try:
+                rect = control.rectangle()
+            except Exception:
+                continue
+            if rect.top <= window_rect.top + (window_height * 0.42):
+                continue
+            try:
+                if hasattr(control, "is_visible") and not control.is_visible():
+                    continue
+            except Exception:
+                pass
+            try:
+                if hasattr(control, "is_enabled") and not control.is_enabled():
+                    continue
+            except Exception:
+                pass
+
+            name = PhoneLinkSender.normalized_control_text(control)
+            value = " ".join(PhoneLinkSender.read_edit_value(control).split())
+            control_type = PhoneLinkSender.control_type(control)
+            score = 0
+            if PhoneLinkSender.control_name(control).lower() in PhoneLinkSender.MESSAGE_BOX_TITLES:
+                score += 120
+            if any(hint in name for hint in PhoneLinkSender.MESSAGE_BOX_HINTS):
+                score += 80
+            if any(hint in name for hint in PhoneLinkSender.NON_MESSAGE_BOX_HINTS):
+                score -= 80
+            score += {"Edit": 90, "Document": 70, "Pane": 25, "Text": 15}.get(control_type, 0)
+            if expected_normalized and value == expected_normalized:
+                score += 180
+            if rect.bottom > window_rect.top + (window_height * 0.72):
+                score += 30
+            if (rect.right - rect.left) > 180:
+                score += 10
+            if score <= 0:
+                continue
+            scored.append((score, rect.top, control))
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [item[2] for item in scored]
 
     @staticmethod
     def find_message_box(window: Any) -> tuple[Any, Any] | None:
@@ -701,6 +820,54 @@ class PhoneLinkSender:
         return field
 
     @staticmethod
+    def focus_message_box_fd2(window: Any) -> Any:
+        try:
+            window.set_focus()
+            time.sleep(0.4)
+        except Exception:
+            pass
+
+        candidates = PhoneLinkSender.message_box_candidates_fd2(window)
+        for field in candidates[:8]:
+            PhoneLinkSender.click_control(field)
+            time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
+            try:
+                if field.has_keyboard_focus():
+                    return field
+            except Exception:
+                pass
+            if PhoneLinkSender.control_type(field) in {"Edit", "Document"}:
+                return field
+
+        # Last-resort FD2 path: sweep the lower compose band inside the Phone Link
+        # window. This is still window-relative, not monitor-size-relative.
+        try:
+            from pywinauto import mouse
+
+            rect = window.wrapper_object().rectangle()
+            width = rect.right - rect.left
+            height = rect.bottom - rect.top
+            for y_ratio in (0.78, 0.84, 0.90):
+                for x_ratio in (0.42, 0.58, 0.74):
+                    mouse.click(
+                        button="left",
+                        coords=(
+                            int(rect.left + (width * x_ratio)),
+                            int(rect.top + (height * y_ratio)),
+                        ),
+                    )
+                    time.sleep(0.45)
+                    refreshed = PhoneLinkSender.message_box_candidates_fd2(window)
+                    if refreshed:
+                        return refreshed[0]
+        except Exception:
+            pass
+
+        if candidates:
+            return candidates[0]
+        raise RuntimeError("FD2 mode could not find the Phone Link message box.")
+
+    @staticmethod
     def wait_for_value(window: Any, field: Any, expected: str, timeout: float, present: bool = True) -> bool:
         expected = " ".join(str(expected or "").split())
         deadline = time.time() + timeout
@@ -730,6 +897,62 @@ class PhoneLinkSender:
         PhoneLinkSender.slow_keys("^v", PhoneLinkSender.MESSAGE_SETTLE_SECONDS)
         if not PhoneLinkSender.wait_for_value(window, field, message, 5.0):
             raise RuntimeError("Template was not pasted into the Phone Link message box.")
+
+    @staticmethod
+    def wait_for_message_box_value_fd2(window: Any, field: Any, expected: str, timeout: float) -> bool:
+        expected_normalized = " ".join(str(expected or "").split())
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            candidates = [field] + PhoneLinkSender.message_box_candidates_fd2(window, expected)
+            for control in candidates:
+                if control is None:
+                    continue
+                value = " ".join(PhoneLinkSender.read_edit_value(control).split())
+                if value and value == expected_normalized:
+                    return True
+            time.sleep(0.25)
+        return False
+
+    @staticmethod
+    def paste_message_with_fd2_fallback(window: Any, field: Any, message: str) -> None:
+        attempts: list[Any] = [field]
+        attempts.extend(PhoneLinkSender.message_box_candidates_fd2(window))
+
+        seen: set[int] = set()
+        for candidate in attempts[:10]:
+            if candidate is None:
+                continue
+            identity = id(candidate)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            PhoneLinkSender.click_control(candidate)
+            time.sleep(0.45)
+            PhoneLinkSender.slow_keys("^a", 0.2)
+            PhoneLinkSender.slow_keys("{BACKSPACE}", 0.2)
+            pyperclip.copy(message)
+            PhoneLinkSender.slow_keys("^v", PhoneLinkSender.MESSAGE_SETTLE_SECONDS)
+            if PhoneLinkSender.wait_for_message_box_value_fd2(window, candidate, message, 5.0):
+                return
+
+        # FD2 emergency fallback: tab through focusable controls and only accept
+        # success if the value appears in a lower message-box candidate.
+        try:
+            window.set_focus()
+        except Exception:
+            pass
+        for _ in range(12):
+            PhoneLinkSender.slow_keys("{TAB}", 0.18)
+            pyperclip.copy(message)
+            PhoneLinkSender.slow_keys("^v", 0.7)
+            candidates = PhoneLinkSender.message_box_candidates_fd2(window, message)
+            for candidate in candidates[:3]:
+                if PhoneLinkSender.wait_for_message_box_value_fd2(window, candidate, message, 1.0):
+                    return
+            PhoneLinkSender.slow_keys("^a", 0.1)
+            PhoneLinkSender.slow_keys("{BACKSPACE}", 0.1)
+
+        raise RuntimeError("FD2 mode could not paste the template into the Phone Link message box.")
 
     @staticmethod
     def close_phone_link(window: Any | None = None) -> bool:
@@ -788,12 +1011,18 @@ class PhoneLinkSender:
             self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
             self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
 
-            message_box = self.focus_message_box(window)
-            self.paste_message_with_fallback(window, message_box, message)
+            if self.fd2_mode:
+                message_box = self.focus_message_box_fd2(window)
+                self.paste_message_with_fd2_fallback(window, message_box, message)
+            else:
+                message_box = self.focus_message_box(window)
+                self.paste_message_with_fallback(window, message_box, message)
 
-            self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
+            if not self.fd2_mode:
+                self.slow_keys("{ENTER}", self.SEND_SETTLE_SECONDS)
         finally:
-            self.close_phone_link(window)
+            if not self.fd2_mode:
+                self.close_phone_link(window)
 
     def compose_sms(self, phone: str, message: str) -> None:
         if platform.system() != "Windows":
@@ -821,8 +1050,12 @@ class PhoneLinkSender:
         pyperclip.copy(phone)
         self.slow_keys("^v", self.RECIPIENT_SETTLE_SECONDS)
         self.slow_keys("{ENTER}", self.RECIPIENT_SETTLE_SECONDS)
-        message_box = self.focus_message_box(window)
-        self.paste_message_with_fallback(window, message_box, message)
+        if self.fd2_mode:
+            message_box = self.focus_message_box_fd2(window)
+            self.paste_message_with_fd2_fallback(window, message_box, message)
+        else:
+            message_box = self.focus_message_box(window)
+            self.paste_message_with_fallback(window, message_box, message)
 
 
 class OpenDentalPatientViewer:
@@ -982,17 +1215,25 @@ class SendWorker(QThread):
     progress = Signal(str)
     finished = Signal(int, int)
 
-    def __init__(self, config: AppConfig, appointments: list[dict[str, Any]]):
+    def __init__(self, config: AppConfig, appointments: list[dict[str, Any]], fd2_mode: bool = False):
         super().__init__()
         self.config = config
         self.appointments = appointments
+        self.fd2_mode = fd2_mode
 
     def run(self) -> None:
         repo = BridgeClient(self.config)
-        sender = PhoneLinkSender(self.config.dry_run)
+        try:
+            sender = PhoneLinkSender(self.config.dry_run, fd2_mode=self.fd2_mode)
+        except TypeError:
+            sender = PhoneLinkSender(self.config.dry_run)
+            if hasattr(sender, "fd2_mode"):
+                sender.fd2_mode = self.fd2_mode
         completed = 0
         failed = 0
         skipped = 0
+        if self.fd2_mode:
+            self.progress.emit("FD2 no-send mode enabled: the tool will paste one draft, leave Phone Link open, and stop without pressing Enter.")
         for appointment in self.appointments:
             message = render_message(self.config, appointment, appointment.get("_TemplateText") or default_template(self.config))
             patient = patient_name(appointment)
@@ -1012,6 +1253,15 @@ class SendWorker(QThread):
                 try:
                     self.progress.emit(f"Preparing SMS: {patient} {source} -> {phone}")
                     sender.send_sms(phone, message)
+                    if self.fd2_mode:
+                        completed += 1
+                        self.progress.emit(
+                            f"FD2 DRAFT READY: {patient} {source} -> {phone}. "
+                            "The message was pasted only; click Send in Phone Link manually, then use Mark selected sent."
+                        )
+                        self.progress.emit("FD2 no-send mode stopped after one draft so the open draft is not replaced.")
+                        self.finished.emit(completed, failed)
+                        return
                     status = "dry-run" if self.config.dry_run else "needs-review"
                     if appointment.get("_PatientManual"):
                         repo.log_patient_result(appointment, message, status, phone=phone)
@@ -1409,18 +1659,60 @@ def template_icon(key_or_country: str) -> QIcon:
     return QIcon(str(path)) if path else QIcon()
 
 
+CUSTOM_DEFAULT_PLACEHOLDER_PREFIXES = {"password", "default", "custom"}
+
+
+class SafeTemplateValues(dict):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def first_template_value(row: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def patient_user_name(row: dict[str, Any]) -> str:
+    return first_template_value(
+        row,
+        "Username",
+        "UserName",
+        "PortalUsername",
+        "PortalUserName",
+        "user_name",
+        "Email",
+    )
+
+
+def render_custom_default_placeholders(message: str) -> str:
+    def replace_default(match: re.Match[str]) -> str:
+        tag = match.group(1).lower()
+        default_value = match.group(2)
+        if tag in CUSTOM_DEFAULT_PLACEHOLDER_PREFIXES:
+            return default_value
+        return match.group(0)
+
+    return re.sub(r"\{([A-Za-z][A-Za-z0-9]*)_([^{}\n]+)\}", replace_default, message)
+
+
 def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str:
     apt_time = row.get("AptDateTime")
     first_name = str(row.get("FName") or "").strip() or "there"
     formatted_time = display_time(apt_time)
     relative_day, relative_day_es, relative_day_vi = relative_day_labels(reminder_offset_days(row))
     country = str(row.get("_TemplateCountry") or template_country(config, row.get("_TemplateKey") or config.default_template_key)).upper()
-    return template.format(
+    rendered = template.format_map(SafeTemplateValues(
         clinic_name=config.clinic_name,
         clinic_phone=config.clinic_phone,
         review_link=config.review_link,
         holiday_name=row.get("_HolidayName") or row.get("_CampaignName") or "",
         campaign_name=row.get("_CampaignName") or "",
+        user_name=patient_user_name(row),
+        email=first_template_value(row, "Email", "email"),
+        password=first_template_value(row, "Password", "PortalPassword", "_Password"),
         first_name=first_name,
         formal_first_name=patient_formal_first_name(row),
         last_name=str(row.get("LName") or "").strip(),
@@ -1447,7 +1739,8 @@ def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str
         last_pending_proc_date=display_date(row.get("LastPendingProcDate") or row.get("LastProcDate")),
         procedure_codes=row.get("ProcedureCodes", ""),
         procedure_descriptions=row.get("ProcedureDescriptions", ""),
-    )
+    ))
+    return render_custom_default_placeholders(rendered)
 
 
 class SmsReminderWindow(QMainWindow):
@@ -1770,6 +2063,9 @@ class SmsReminderWindow(QMainWindow):
         self.send_all_button = QPushButton("Send all not sent")
         self.send_all_button.setObjectName("PrimaryButton")
         self.send_all_button.clicked.connect(self.send_all_not_sent)
+        self.send_fd2_not_sent_button = QPushButton("Send FD2 not sent")
+        self.send_fd2_not_sent_button.setToolTip("Use only on FD2 when Phone Link cannot focus the message box with the normal send path.")
+        self.send_fd2_not_sent_button.clicked.connect(self.send_fd2_not_sent)
         controls.addWidget(self.date_edit)
         controls.addStretch()
         controls.addWidget(QLabel(CLINIC_TIME_ZONE_NOTE))
@@ -1793,6 +2089,7 @@ class SmsReminderWindow(QMainWindow):
         controls.addWidget(self.mark_selected_sent_button)
         controls.addWidget(self.test_selected_button)
         controls.addWidget(self.send_selected_button)
+        controls.addWidget(self.send_fd2_not_sent_button)
         controls.addWidget(self.send_all_button)
         layout.addWidget(controls_card)
 
@@ -2611,7 +2908,7 @@ class SmsReminderWindow(QMainWindow):
         template_layout.addWidget(self.template_country_select, 1, 3)
         template_layout.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
         template_layout.addWidget(self.template_text, 2, 1, 1, 3)
-        helper = QLabel("Placeholders: {formal_first_name}, {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {age}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
+        helper = QLabel("Placeholders: {formal_first_name}, {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {user_name}, {email}, {password_LUK2026#1}, {age}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
         helper.setObjectName("Muted")
         helper.setWordWrap(True)
         template_layout.addWidget(helper, 3, 1, 1, 3)
@@ -5254,7 +5551,18 @@ class SmsReminderWindow(QMainWindow):
             return False
         return self.start_send(pending, confirm_real=confirm_real, silent=silent)
 
-    def start_send(self, appointments: list[dict[str, Any]], confirm_real: bool = True, silent: bool = False) -> bool:
+    def send_fd2_not_sent(self) -> None:
+        pending = [
+            self.appointment_with_template(row_index)
+            for row_index, row in enumerate(self.appointments)
+            if row.get("ReminderStatus") not in {"sent", "dry-run", "needs review"}
+        ]
+        if not pending:
+            QMessageBox.information(self, "Nothing to send", "There are no pending reminders for this date.")
+            return
+        self.start_send(pending, fd2_mode=True)
+
+    def start_send(self, appointments: list[dict[str, Any]], confirm_real: bool = True, silent: bool = False, fd2_mode: bool = False) -> bool:
         if self.worker and self.worker.isRunning():
             if not silent:
                 QMessageBox.information(self, "Sending", "A send job is already running.")
@@ -5284,10 +5592,17 @@ class SmsReminderWindow(QMainWindow):
                     self.append_activity(f"Skipped {missing_phone_count} row(s) with no valid phone number.")
             return False
         if not self.config.dry_run and confirm_real:
+            title = "Create FD2 draft?" if fd2_mode else "Send real SMS?"
+            message = (
+                "FD2 mode will paste only the first pending SMS draft in Phone Link, "
+                "leave Phone Link open, stop immediately, and will not press Enter or write a send log.\n\nContinue?"
+                if fd2_mode
+                else f"Send {sms_count} real SMS messages through Phone Link?"
+            )
             confirm = QMessageBox.question(
                 self,
-                "Send real SMS?",
-                f"Send {sms_count} real SMS messages through Phone Link?",
+                title,
+                message,
             )
             if confirm != QMessageBox.Yes:
                 return False
@@ -5301,7 +5616,7 @@ class SmsReminderWindow(QMainWindow):
             self.active_send_kind = "recall"
         else:
             self.active_send_kind = "appointments"
-        self.worker = SendWorker(self.config, appointments)
+        self.worker = SendWorker(self.config, appointments, fd2_mode=fd2_mode)
         self.worker.progress.connect(self.append_activity)
         self.worker.finished.connect(self.send_finished)
         self.worker.start()
@@ -5359,6 +5674,8 @@ class SmsReminderWindow(QMainWindow):
         if hasattr(self, "test_selected_button"):
             self.test_selected_button.setEnabled(enabled)
         self.send_all_button.setEnabled(enabled)
+        if hasattr(self, "send_fd2_not_sent_button"):
+            self.send_fd2_not_sent_button.setEnabled(enabled)
         self.preview_button.setEnabled(enabled)
         self.open_phone_button.setEnabled(enabled)
         self.test_sms_button.setEnabled(enabled)
