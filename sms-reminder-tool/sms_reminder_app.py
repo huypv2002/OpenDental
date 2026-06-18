@@ -581,6 +581,16 @@ class PhoneLinkSender:
         "to:",
         "recipient",
         "conversation",
+        "notification",
+        "notifications",
+        "clear all",
+        "zalo",
+        "connected",
+        "motorola",
+        "battery",
+        "mute",
+        "calls",
+        "photos",
     )
 
     def __init__(self, dry_run: bool = True, fd2_mode: bool = False):
@@ -698,9 +708,30 @@ class PhoneLinkSender:
         return [control for control in controls if control is not None]
 
     @staticmethod
+    def control_is_in_fd2_compose_pane(window_rect: Any, rect: Any) -> bool:
+        window_width = max(1, window_rect.right - window_rect.left)
+        window_height = max(1, window_rect.bottom - window_rect.top)
+        center_x = (rect.left + rect.right) / 2
+        center_y = (rect.top + rect.bottom) / 2
+        control_width = rect.right - rect.left
+
+        if center_x < window_rect.left + (window_width * 0.42):
+            return False
+        if rect.right < window_rect.left + (window_width * 0.50):
+            return False
+        if center_y < window_rect.top + (window_height * 0.60):
+            return False
+        if rect.bottom < window_rect.top + (window_height * 0.68):
+            return False
+        if control_width < min(220, window_width * 0.12):
+            return False
+        return True
+
+    @staticmethod
     def message_box_candidates_fd2(window: Any, expected: str = "") -> list[Any]:
         wrapper = window.wrapper_object()
         window_rect = wrapper.rectangle()
+        window_width = max(1, window_rect.right - window_rect.left)
         window_height = max(1, window_rect.bottom - window_rect.top)
         expected_normalized = " ".join(str(expected or "").split())
         scored: list[tuple[int, int, Any]] = []
@@ -714,7 +745,7 @@ class PhoneLinkSender:
                 rect = control.rectangle()
             except Exception:
                 continue
-            if rect.top <= window_rect.top + (window_height * 0.42):
+            if not PhoneLinkSender.control_is_in_fd2_compose_pane(window_rect, rect):
                 continue
             try:
                 if hasattr(control, "is_visible") and not control.is_visible():
@@ -730,13 +761,14 @@ class PhoneLinkSender:
             name = PhoneLinkSender.normalized_control_text(control)
             value = " ".join(PhoneLinkSender.read_edit_value(control).split())
             control_type = PhoneLinkSender.control_type(control)
+            exact_title = PhoneLinkSender.control_name(control).lower() in PhoneLinkSender.MESSAGE_BOX_TITLES
+            if any(hint in name for hint in PhoneLinkSender.NON_MESSAGE_BOX_HINTS):
+                continue
             score = 0
-            if PhoneLinkSender.control_name(control).lower() in PhoneLinkSender.MESSAGE_BOX_TITLES:
+            if exact_title:
                 score += 120
             if any(hint in name for hint in PhoneLinkSender.MESSAGE_BOX_HINTS):
                 score += 80
-            if any(hint in name for hint in PhoneLinkSender.NON_MESSAGE_BOX_HINTS):
-                score -= 80
             score += {"Edit": 90, "Document": 70, "Pane": 25, "Text": 15}.get(control_type, 0)
             if expected_normalized and value == expected_normalized:
                 score += 180
@@ -744,6 +776,8 @@ class PhoneLinkSender:
                 score += 30
             if (rect.right - rect.left) > 180:
                 score += 10
+            score += int((((rect.left + rect.right) / 2) - window_rect.left) / window_width * 15)
+            score += int((rect.top - window_rect.top) / window_height * 30)
             if score <= 0:
                 continue
             scored.append((score, rect.top, control))
@@ -847,8 +881,8 @@ class PhoneLinkSender:
             rect = window.wrapper_object().rectangle()
             width = rect.right - rect.left
             height = rect.bottom - rect.top
-            for y_ratio in (0.78, 0.84, 0.90):
-                for x_ratio in (0.42, 0.58, 0.74):
+            for y_ratio in (0.88, 0.92, 0.95):
+                for x_ratio in (0.55, 0.70, 0.86):
                     mouse.click(
                         button="left",
                         coords=(
@@ -903,10 +937,21 @@ class PhoneLinkSender:
         expected_normalized = " ".join(str(expected or "").split())
         deadline = time.time() + timeout
         while time.time() < deadline:
+            try:
+                window_rect = window.wrapper_object().rectangle()
+            except Exception:
+                window_rect = None
             candidates = [field] + PhoneLinkSender.message_box_candidates_fd2(window, expected)
             for control in candidates:
                 if control is None:
                     continue
+                if window_rect is not None:
+                    try:
+                        rect = control.rectangle()
+                    except Exception:
+                        continue
+                    if not PhoneLinkSender.control_is_in_fd2_compose_pane(window_rect, rect):
+                        continue
                 value = " ".join(PhoneLinkSender.read_edit_value(control).split())
                 if value and value == expected_normalized:
                     return True
@@ -935,24 +980,10 @@ class PhoneLinkSender:
             if PhoneLinkSender.wait_for_message_box_value_fd2(window, candidate, message, 5.0):
                 return
 
-        # FD2 emergency fallback: tab through focusable controls and only accept
-        # success if the value appears in a lower message-box candidate.
-        try:
-            window.set_focus()
-        except Exception:
-            pass
-        for _ in range(12):
-            PhoneLinkSender.slow_keys("{TAB}", 0.18)
-            pyperclip.copy(message)
-            PhoneLinkSender.slow_keys("^v", 0.7)
-            candidates = PhoneLinkSender.message_box_candidates_fd2(window, message)
-            for candidate in candidates[:3]:
-                if PhoneLinkSender.wait_for_message_box_value_fd2(window, candidate, message, 1.0):
-                    return
-            PhoneLinkSender.slow_keys("^a", 0.1)
-            PhoneLinkSender.slow_keys("{BACKSPACE}", 0.1)
-
-        raise RuntimeError("FD2 mode could not paste the template into the Phone Link message box.")
+        raise RuntimeError(
+            "FD2 mode could not verify the Phone Link compose message box. "
+            "Run snapshot-phone-link-elements.bat on FD2 and send phone_link_snapshot_latest.log."
+        )
 
     @staticmethod
     def close_phone_link(window: Any | None = None) -> bool:
