@@ -1756,6 +1756,7 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_patients: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
         self.active_send_kind = "appointments"
+        self.active_send_fd2_mode = False
         self.load_worker: LoadAppointmentsWorker | None = None
         self.recall_load_worker: LoadRecallWorker | None = None
         self.treatment_load_worker: LoadTreatmentWorker | None = None
@@ -2063,9 +2064,6 @@ class SmsReminderWindow(QMainWindow):
         self.send_all_button = QPushButton("Send all not sent")
         self.send_all_button.setObjectName("PrimaryButton")
         self.send_all_button.clicked.connect(self.send_all_not_sent)
-        self.send_fd2_not_sent_button = QPushButton("Send FD2 not sent")
-        self.send_fd2_not_sent_button.setToolTip("Use only on FD2 when Phone Link cannot focus the message box with the normal send path.")
-        self.send_fd2_not_sent_button.clicked.connect(self.send_fd2_not_sent)
         controls.addWidget(self.date_edit)
         controls.addStretch()
         controls.addWidget(QLabel(CLINIC_TIME_ZONE_NOTE))
@@ -2089,7 +2087,6 @@ class SmsReminderWindow(QMainWindow):
         controls.addWidget(self.mark_selected_sent_button)
         controls.addWidget(self.test_selected_button)
         controls.addWidget(self.send_selected_button)
-        controls.addWidget(self.send_fd2_not_sent_button)
         controls.addWidget(self.send_all_button)
         layout.addWidget(controls_card)
 
@@ -2192,11 +2189,15 @@ class SmsReminderWindow(QMainWindow):
         self.send_manual_patient_button = QPushButton("Send selected")
         self.send_manual_patient_button.setObjectName("PrimaryButton")
         self.send_manual_patient_button.clicked.connect(self.send_selected_manual_patient_sms)
+        self.send_manual_patient_fd2_button = QPushButton("Send FD2 not sent")
+        self.send_manual_patient_fd2_button.setToolTip("Use on FD2 to paste the first not-sent Patient SMS draft without pressing Enter.")
+        self.send_manual_patient_fd2_button.clicked.connect(self.send_manual_patient_fd2_not_sent)
         controls.addWidget(self.load_manual_patient_button)
         controls.addWidget(self.preview_manual_patient_button)
         controls.addWidget(self.test_manual_patient_button)
         controls.addWidget(self.reset_manual_patient_button)
         controls.addWidget(self.mark_manual_patient_sent_button)
+        controls.addWidget(self.send_manual_patient_fd2_button)
         controls.addWidget(self.send_manual_patient_button)
         layout.addWidget(controls_card)
 
@@ -4567,6 +4568,9 @@ class SmsReminderWindow(QMainWindow):
     def manual_patient_visible_patients(self) -> list[dict[str, Any]]:
         return list(self.manual_patient_table.property("_visible_patients") or [])
 
+    def manual_patient_filtered_patients(self) -> list[dict[str, Any]]:
+        return list(self.manual_patient_table.property("_filtered_patients") or self.manual_patients)
+
     def review_visible_patients(self) -> list[dict[str, Any]]:
         return list(self.review_table.property("_visible_patients") or [])
 
@@ -5241,6 +5245,15 @@ class SmsReminderWindow(QMainWindow):
         appointment["_TemplateCountry"] = template_country(self.config, key)
         return appointment
 
+    def manual_patient_with_template(self, row: dict[str, Any]) -> dict[str, Any]:
+        patient = dict(row)
+        key = template_key_for_language(self.config, patient.get("Language"))
+        patient["_TemplateKey"] = key
+        patient["_TemplateText"] = self.config.sms_templates.get(key) or default_template(self.config)
+        patient["_TemplateCountry"] = template_country(self.config, key)
+        patient["_PatientManual"] = True
+        return patient
+
     def apply_appointment_filter(self) -> None:
         if not hasattr(self, "appointment_table"):
             return
@@ -5551,14 +5564,14 @@ class SmsReminderWindow(QMainWindow):
             return False
         return self.start_send(pending, confirm_real=confirm_real, silent=silent)
 
-    def send_fd2_not_sent(self) -> None:
+    def send_manual_patient_fd2_not_sent(self) -> None:
         pending = [
-            self.appointment_with_template(row_index)
-            for row_index, row in enumerate(self.appointments)
+            self.manual_patient_with_template(row)
+            for row in self.manual_patient_filtered_patients()
             if row.get("ReminderStatus") not in {"sent", "dry-run", "needs review"}
         ]
         if not pending:
-            QMessageBox.information(self, "Nothing to send", "There are no pending reminders for this date.")
+            QMessageBox.information(self, "Nothing to send", "There are no not-sent Patient SMS rows in this list.")
             return
         self.start_send(pending, fd2_mode=True)
 
@@ -5616,6 +5629,7 @@ class SmsReminderWindow(QMainWindow):
             self.active_send_kind = "recall"
         else:
             self.active_send_kind = "appointments"
+        self.active_send_fd2_mode = fd2_mode
         self.worker = SendWorker(self.config, appointments, fd2_mode=fd2_mode)
         self.worker.progress.connect(self.append_activity)
         self.worker.finished.connect(self.send_finished)
@@ -5721,6 +5735,10 @@ class SmsReminderWindow(QMainWindow):
 
     def send_finished(self, sent: int, failed: int) -> None:
         self.set_send_enabled(True)
+        if self.active_send_fd2_mode:
+            self.active_send_fd2_mode = False
+            self.append_activity(f"FD2 draft finished. Drafts ready: {sent}. Failed: {failed}.")
+            return
         label = "Sent/dry-run" if self.config.dry_run else "Needs review"
         self.append_activity(f"Done. {label}: {sent}. Failed: {failed}.")
         if self.monitor_batch_active and failed:
