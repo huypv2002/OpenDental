@@ -55,6 +55,7 @@ FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
 SCHEDULER_ON_PATH = APP_DIR / "scheduler-on.bat"
 BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
+FD2_DEBUG_LOG_PATH = APP_DIR / "fd2-debug.log"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
 DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
 DEFAULT_TREATMENT_DAYS = 21
@@ -81,6 +82,26 @@ HOLIDAY_EVENTS = [
     "Christmas",
     "New Year Promotion",
 ]
+
+
+def append_fd2_debug_log(message: str) -> None:
+    try:
+        timestamp = clinic_now().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with FD2_DEBUG_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{timestamp}] {message}\n")
+    except Exception:
+        pass
+
+
+def reset_fd2_debug_log() -> None:
+    try:
+        with FD2_DEBUG_LOG_PATH.open("w", encoding="utf-8") as handle:
+            handle.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] FD2 debug log started.\n")
+    except Exception:
+        pass
 SCHEDULER_TIME_FIELDS = [
     ("ENABLE_LOGIN_TIME", "Enable auto-login"),
     ("RESTART_TIME", "Restart Windows"),
@@ -605,10 +626,14 @@ class PhoneLinkSender:
             self.MESSAGE_SETTLE_SECONDS = 1.0
 
     def fd2_trace(self, message: str) -> None:
-        if not self.fd2_mode or self.trace is None:
+        if not self.fd2_mode:
+            return
+        entry = f"FD2 debug: {message}"
+        append_fd2_debug_log(entry)
+        if self.trace is None:
             return
         try:
-            self.trace(f"FD2 debug: {message}")
+            self.trace(entry)
         except Exception:
             pass
 
@@ -1400,7 +1425,9 @@ class SendWorker(QThread):
         failed = 0
         skipped = 0
         if self.fd2_mode:
+            reset_fd2_debug_log()
             self.progress.emit("FD2 no-send mode enabled: the tool will paste one draft, leave Phone Link open, and stop without pressing Enter.")
+            self.progress.emit(f"FD2 debug log file: {FD2_DEBUG_LOG_PATH}")
         for appointment in self.appointments:
             message = render_message(self.config, appointment, appointment.get("_TemplateText") or default_template(self.config))
             patient = patient_name(appointment)
@@ -1408,7 +1435,9 @@ class SendWorker(QThread):
                 preview = " ".join(message.split())
                 if len(preview) > 90:
                     preview = f"{preview[:90]}..."
-                self.progress.emit(f"FD2 debug: rendered template chars={len(message)}, preview={preview}")
+                debug_message = f"FD2 debug: rendered template chars={len(message)}, preview={preview}"
+                append_fd2_debug_log(debug_message)
+                self.progress.emit(debug_message)
             targets = [
                 target for target in appointment.get("PhoneTargets", [])
                 if digits_only(target.get("phone", "")) and target.get("status") not in SEND_SKIP_STATUSES
