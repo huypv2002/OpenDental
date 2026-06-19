@@ -711,6 +711,34 @@ class PhoneLinkSender:
             return ""
 
     @staticmethod
+    def control_automation_id(control: Any) -> str:
+        for getter in (
+            lambda: getattr(control.element_info, "automation_id", ""),
+            lambda: control.automation_id(),
+        ):
+            try:
+                value = str(getter() or "").strip()
+                if value:
+                    return value
+            except Exception:
+                continue
+        return ""
+
+    @staticmethod
+    def control_class_name(control: Any) -> str:
+        for getter in (
+            lambda: getattr(control.element_info, "class_name", ""),
+            lambda: control.class_name(),
+        ):
+            try:
+                value = str(getter() or "").strip()
+                if value:
+                    return value
+            except Exception:
+                continue
+        return ""
+
+    @staticmethod
     def click_control(control: Any) -> None:
         try:
             control.set_focus()
@@ -734,6 +762,27 @@ class PhoneLinkSender:
             )
         except Exception:
             pass
+
+    @staticmethod
+    def click_control_center(control: Any) -> tuple[int, int]:
+        rect = control.rectangle()
+        coords = (
+            int((rect.left + rect.right) / 2),
+            int((rect.top + rect.bottom) / 2),
+        )
+        try:
+            control.set_focus()
+        except Exception:
+            pass
+        try:
+            control.click_input()
+            return coords
+        except Exception:
+            pass
+        from pywinauto import mouse
+
+        mouse.click(button="left", coords=coords)
+        return coords
 
     @staticmethod
     def describe_control(control: Any) -> str:
@@ -761,18 +810,32 @@ class PhoneLinkSender:
     def click_fd2_compose_coords(window: Any) -> tuple[int, int]:
         from pywinauto import mouse
 
+        for control in PhoneLinkSender.message_box_candidates_fd2(window)[:6]:
+            try:
+                return PhoneLinkSender.click_control_center(control)
+            except Exception:
+                continue
+
         rect = window.wrapper_object().rectangle()
         width = rect.right - rect.left
         height = rect.bottom - rect.top
-        coords = (
-            int(rect.left + (width * 0.72)),
-            int(rect.top + (height * 0.93)),
-        )
-        mouse.click(
-            button="left",
-            coords=coords,
-        )
-        return coords
+        last_coords = (int(rect.left + (width * 0.72)), int(rect.top + (height * 0.93)))
+        for y_ratio in (0.94, 0.97, 0.99):
+            for x_ratio in (0.72, 0.62, 0.84):
+                last_coords = (
+                    int(rect.left + (width * x_ratio)),
+                    int(rect.top + (height * y_ratio)),
+                )
+                mouse.click(button="left", coords=last_coords)
+                time.sleep(0.12)
+                refreshed = PhoneLinkSender.message_box_candidates_fd2(window)
+                if refreshed:
+                    try:
+                        return PhoneLinkSender.click_control_center(refreshed[0])
+                    except Exception:
+                        return last_coords
+        return last_coords
+
 
     @staticmethod
     def normalize_clipboard_text(value: str) -> str:
@@ -887,12 +950,24 @@ class PhoneLinkSender:
             name = PhoneLinkSender.normalized_control_text(control)
             value = " ".join(PhoneLinkSender.read_edit_value(control).split())
             control_type = PhoneLinkSender.control_type(control)
+            automation_id = PhoneLinkSender.control_automation_id(control).lower()
+            class_name = PhoneLinkSender.control_class_name(control).lower()
+            is_input_text_box = automation_id == "inputtextbox"
             exact_title = PhoneLinkSender.control_name(control).lower() in PhoneLinkSender.MESSAGE_BOX_TITLES
-            if any(hint in name for hint in PhoneLinkSender.NON_MESSAGE_BOX_HINTS):
+            starts_with_message_title = PhoneLinkSender.control_name(control).lower().startswith(
+                ("send a message", "type a message")
+            )
+            if not is_input_text_box and any(hint in name for hint in PhoneLinkSender.NON_MESSAGE_BOX_HINTS):
                 continue
             score = 0
+            if is_input_text_box:
+                score += 280
+            if class_name == "textbox":
+                score += 40
             if exact_title:
                 score += 120
+            if starts_with_message_title:
+                score += 100
             if any(hint in name for hint in PhoneLinkSender.MESSAGE_BOX_HINTS):
                 score += 80
             score += {"Edit": 90, "Document": 70, "Pane": 25, "Text": 15}.get(control_type, 0)
@@ -1086,13 +1161,6 @@ class PhoneLinkSender:
         return False
 
     def paste_message_fd2_direct(self, window: Any, message: str) -> None:
-        try:
-            coords = PhoneLinkSender.click_fd2_compose_coords(window)
-            self.fd2_trace(f"clicked compose coordinate without UIA scan: {coords}")
-            time.sleep(0.45)
-        except Exception as exc:
-            self.fd2_trace(f"compose coordinate click failed: {exc}")
-            raise RuntimeError(f"FD2 mode could not click the Phone Link compose box: {exc}") from exc
         self.fd2_trace(f"clipboard before template copy: {PhoneLinkSender.clipboard_preview()}")
         PhoneLinkSender.copy_template_to_clipboard(message, timeout=4.0)
         if not PhoneLinkSender.clipboard_matches(message):
@@ -1101,8 +1169,37 @@ class PhoneLinkSender:
                 f"Clipboard now: {PhoneLinkSender.clipboard_preview()}."
             )
         self.fd2_trace(f"template copied to clipboard: chars={len(message)}, preview={PhoneLinkSender.clipboard_preview()}")
-        PhoneLinkSender.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
-        self.fd2_trace("Ctrl+V sent to compose box; leaving Phone Link open for manual send.")
+
+        last_error = ""
+        for attempt in range(1, 3):
+            try:
+                coords = PhoneLinkSender.click_fd2_compose_coords(window)
+                self.fd2_trace(f"clicked FD2 compose box attempt {attempt}: {coords}")
+                time.sleep(0.35)
+                if attempt > 1:
+                    PhoneLinkSender.slow_keys("^a", 0.08)
+                    PhoneLinkSender.slow_keys("{BACKSPACE}", 0.08)
+                if not PhoneLinkSender.clipboard_matches(message):
+                    self.fd2_trace(f"clipboard drifted before paste attempt {attempt}: {PhoneLinkSender.clipboard_preview()}")
+                    PhoneLinkSender.copy_template_to_clipboard(message, timeout=3.0)
+                PhoneLinkSender.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
+                self.fd2_trace(f"Ctrl+V sent to compose box attempt {attempt}.")
+
+                candidates = PhoneLinkSender.message_box_candidates_fd2(window, message)
+                if candidates and PhoneLinkSender.wait_for_message_box_value_fd2(window, candidates[0], message, 1.2):
+                    self.fd2_trace("template paste verified in FD2 InputTextBox; leaving Phone Link open for manual send.")
+                    return
+                self.fd2_trace(
+                    "FD2 paste verification was inconclusive after attempt "
+                    f"{attempt}; {'retrying compose focus' if attempt == 1 else 'leaving draft open'}."
+                )
+            except Exception as exc:
+                last_error = str(exc)
+                self.fd2_trace(f"compose paste attempt {attempt} failed: {exc}")
+
+        if last_error:
+            raise RuntimeError(f"FD2 mode could not focus the Phone Link compose box: {last_error}") from None
+        self.fd2_trace("FD2 paste attempts completed without UIA verification; leaving Phone Link open for manual send.")
 
     def paste_message_with_fd2_fallback(self, window: Any, field: Any, message: str) -> None:
         attempts: list[Any] = [field]
@@ -1369,10 +1466,11 @@ class ComposeReminderWorker(QThread):
     succeeded = Signal(str, str)
     failed = Signal(str)
 
-    def __init__(self, config: AppConfig, appointment: dict[str, Any]):
+    def __init__(self, config: AppConfig, appointment: dict[str, Any], fd2_mode: bool = False):
         super().__init__()
         self.config = config
         self.appointment = appointment
+        self.fd2_mode = fd2_mode
 
     def run(self) -> None:
         appointment = self.appointment
@@ -1389,7 +1487,17 @@ class ComposeReminderWorker(QThread):
             return
         phone = str(targets[0].get("phone") or "")
         try:
-            PhoneLinkSender(dry_run=False).compose_sms(phone, message)
+            if self.fd2_mode:
+                reset_fd2_debug_log()
+                append_fd2_debug_log(
+                    f"FD2 debug: draft worker rendered template chars={len(message)}, preview={' '.join(message.split())[:90]}"
+                )
+            try:
+                sender = PhoneLinkSender(dry_run=False, fd2_mode=self.fd2_mode)
+            except TypeError:
+                sender = PhoneLinkSender(dry_run=False)
+                sender.fd2_mode = self.fd2_mode
+            sender.compose_sms(phone, message)
         except Exception as exc:  # noqa: BLE001 - surface Phone Link automation errors in UI
             self.failed.emit(str(exc))
             return
@@ -2541,7 +2649,8 @@ class SmsReminderWindow(QMainWindow):
         self.test_manual_patient_button.clicked.connect(self.test_manual_patient_without_sending)
         self.log_manual_patient_sent_button = QPushButton("Log selected sent")
         self.log_manual_patient_sent_button.clicked.connect(self.log_manual_patient_sent)
-        self.send_manual_patient_button = QPushButton("Send selected")
+        self.send_manual_patient_button = QPushButton("Fill selected draft")
+        self.send_manual_patient_button.setToolTip("Patient tab fills one Phone Link draft only. It never presses the final Enter.")
         self.send_manual_patient_button.setObjectName("PrimaryButton")
         self.send_manual_patient_button.clicked.connect(self.send_selected_manual_patient_sms)
         self.send_manual_patient_fd2_button = QPushButton("Create FD2 draft")
@@ -5270,9 +5379,15 @@ class SmsReminderWindow(QMainWindow):
     def send_selected_manual_patient_sms(self) -> None:
         selected = self.selected_manual_patients()
         if not selected:
-            QMessageBox.information(self, "No selection", "Please select at least one patient.")
+            QMessageBox.information(self, "No selection", "Please select one patient.")
             return
-        self.start_send(selected)
+        if len(selected) > 1:
+            QMessageBox.information(
+                self,
+                "One patient at a time",
+                "Patient draft mode fills one SMS at a time. The first selected patient will be filled only.",
+            )
+        self.start_send(selected[:1], fd2_mode=True)
 
     def test_manual_patient_without_sending(self) -> None:
         if self.compose_worker and self.compose_worker.isRunning():
@@ -5289,7 +5404,7 @@ class SmsReminderWindow(QMainWindow):
         patient = selected[0]
         self.set_send_enabled(False)
         self.append_activity(f"Testing manual patient SMS draft without sending: {patient_name(patient)}")
-        worker = ComposeReminderWorker(self.config, patient)
+        worker = ComposeReminderWorker(self.config, patient, fd2_mode=True)
         self.compose_worker = worker
 
         def on_success(phone: str, name: str) -> None:
@@ -6072,6 +6187,8 @@ class SmsReminderWindow(QMainWindow):
             self.load_treatment_button.setEnabled(enabled)
         if hasattr(self, "send_manual_patient_button"):
             self.send_manual_patient_button.setEnabled(enabled)
+        if hasattr(self, "send_manual_patient_fd2_button"):
+            self.send_manual_patient_fd2_button.setEnabled(enabled)
         if hasattr(self, "test_manual_patient_button"):
             self.test_manual_patient_button.setEnabled(enabled)
         if hasattr(self, "preview_manual_patient_button"):
