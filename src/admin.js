@@ -153,11 +153,19 @@ export async function listAdminAppointments(query = {}) {
 
 export async function listAdminPatients(query = {}) {
   const q = text(query.q || query.query);
-  const limit = Math.max(1, Math.min(intValue(query.limit, 100), 300));
+  const limit = Math.max(1, Math.min(intValue(query.limit, 100), 1000));
   const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-    const values = q ? [like, like, like, like, like, limit] : [limit];
+  const values = q ? [like, like, like, like, like, like, like, like, like, limit] : [limit];
   const where = q
-    ? `WHERE p.FName LIKE ? ESCAPE '\\\\' OR p.LName LIKE ? ESCAPE '\\\\' OR p.WirelessPhone LIKE ? ESCAPE '\\\\' OR p.Email LIKE ? ESCAPE '\\\\' OR pa.Username LIKE ? ESCAPE '\\\\'`
+    ? `WHERE p.FName LIKE ? ESCAPE '\\\\'
+        OR p.LName LIKE ? ESCAPE '\\\\'
+        OR CONCAT_WS(' ', p.FName, p.LName) LIKE ? ESCAPE '\\\\'
+        OR CAST(p.PatNum AS CHAR) LIKE ? ESCAPE '\\\\'
+        OR p.WirelessPhone LIKE ? ESCAPE '\\\\'
+        OR p.HmPhone LIKE ? ESCAPE '\\\\'
+        OR p.WkPhone LIKE ? ESCAPE '\\\\'
+        OR p.Email LIKE ? ESCAPE '\\\\'
+        OR pa.Username LIKE ? ESCAPE '\\\\'`
     : '';
   const [rows] = await pool.execute(
     `

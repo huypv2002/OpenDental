@@ -84,6 +84,20 @@ HOLIDAY_EVENTS = [
 ]
 
 
+def is_manual_send_row(row: dict[str, Any]) -> bool:
+    return bool(row.get("_PatientManual") or row.get("_Treatment") or row.get("_Recall"))
+
+
+def sendable_phone_targets(row: dict[str, Any]) -> list[dict[str, Any]]:
+    targets = [
+        target for target in row.get("PhoneTargets", [])
+        if digits_only(target.get("phone", ""))
+    ]
+    if is_manual_send_row(row):
+        return targets
+    return [target for target in targets if target.get("status") not in SEND_SKIP_STATUSES]
+
+
 def append_fd2_debug_log(message: str) -> None:
     try:
         timestamp = clinic_now().strftime("%Y-%m-%d %H:%M:%S")
@@ -399,7 +413,7 @@ class BridgeClient:
         )
         return data.get("patients") or []
 
-    def fetch_patients(self, query: str = "", limit: int = 300) -> list[dict[str, Any]]:
+    def fetch_patients(self, query: str = "", limit: int = 500) -> list[dict[str, Any]]:
         data = self.request(
             "GET",
             "/api/admin/patients",
@@ -1367,10 +1381,7 @@ class ComposeReminderWorker(QThread):
             appointment,
             appointment.get("_TemplateText") or default_template(self.config),
         )
-        targets = [
-            target for target in appointment.get("PhoneTargets", [])
-            if digits_only(target.get("phone", "")) and target.get("status") not in SEND_SKIP_STATUSES
-        ]
+        targets = sendable_phone_targets(appointment)
         if "PhoneTargets" not in appointment and not targets and digits_only(appointment.get("Phone", "")):
             targets = [{"phone": appointment.get("Phone", "")}]
         if not targets:
@@ -1426,10 +1437,7 @@ class SendWorker(QThread):
                 debug_message = f"FD2 debug: rendered template chars={len(message)}, preview={preview}"
                 append_fd2_debug_log(debug_message)
                 self.progress.emit(debug_message)
-            targets = [
-                target for target in appointment.get("PhoneTargets", [])
-                if digits_only(target.get("phone", "")) and target.get("status") not in SEND_SKIP_STATUSES
-            ]
+            targets = sendable_phone_targets(appointment)
             if "PhoneTargets" not in appointment and not targets and digits_only(appointment.get("Phone", "")):
                 targets = [{"source": appointment.get("PhoneSource") or "Phone", "phone": appointment.get("Phone", "")}]
             if not targets:
@@ -1446,12 +1454,12 @@ class SendWorker(QThread):
                         completed += 1
                         self.progress.emit(
                             f"FD2 DRAFT READY: {patient} {source} -> {phone}. "
-                            "The message was pasted only; click Send in Phone Link manually, then use Mark selected sent."
+                            "The message was pasted only; click Send in Phone Link manually, then use Log selected sent."
                         )
                         self.progress.emit("FD2 no-send mode stopped after one draft so the open draft is not replaced.")
                         self.finished.emit(completed, failed)
                         return
-                    status = "dry-run" if self.config.dry_run else "needs-review"
+                    status = "dry-run" if self.config.dry_run else ("sent" if is_manual_send_row(appointment) else "needs-review")
                     if appointment.get("_PatientManual"):
                         repo.log_patient_result(appointment, message, status, phone=phone)
                     elif appointment.get("_Treatment"):
@@ -1518,13 +1526,10 @@ class CampaignSendWorker(QThread):
                 try:
                     self.progress.emit(f"Preparing campaign SMS: {name} {source} -> {phone}")
                     sender.send_sms(phone, message)
-                    status = "dry-run" if self.config.dry_run else "needs-review"
+                    status = "dry-run" if self.config.dry_run else "sent"
                     repo.log_campaign_result(patient, message, status, phone=phone)
                     completed += 1
-                    if status == "needs-review":
-                        self.progress.emit(f"NEEDS REVIEW CAMPAIGN: {name} {source} -> {phone}. Confirm in Phone Link before marking sent.")
-                    else:
-                        self.progress.emit(f"{status.upper()} CAMPAIGN: {name} {source} -> {phone}")
+                    self.progress.emit(f"{status.upper()} CAMPAIGN: {name} {source} -> {phone}")
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
                     repo.log_campaign_result(patient, message, "failed", str(exc), phone=phone)
@@ -1620,9 +1625,7 @@ class LoadManualPatientsWorker(QThread):
         try:
             repo = BridgeClient(self.config)
             patients = repo.fetch_patients(self.query, limit=500)
-            pat_nums = [patient.get("PatNum") for patient in patients]
-            logs = repo.fetch_patient_logs(pat_nums, limit=1000)
-            self.loaded.emit(patients, logs)
+            self.loaded.emit(patients, [])
         except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
             self.failed.emit(str(exc))
 
@@ -1966,8 +1969,17 @@ class SmsReminderWindow(QMainWindow):
         self.review_template_combos: dict[int, QComboBox] = {}
         self.holiday_template_combos: dict[int, QComboBox] = {}
         self.activity_messages: list[str] = []
+        self.recall_patients_loaded_once = False
+        self.treatment_patients_loaded_once = False
         self.manual_patients_loaded_once = False
+        self.review_patients_loaded_once = False
+        self.holiday_patients_loaded_once = False
+        self.recall_patients_auto_load_started = False
+        self.treatment_patients_auto_load_started = False
         self.manual_patients_auto_load_started = False
+        self.review_patients_auto_load_started = False
+        self.holiday_patients_auto_load_started = False
+        self.pending_auto_loads: set[str] = set()
         self.suppress_auto_load = False
         self.settings = QSettings("LUK Dental", "SMS Reminder Tool")
         self._restoring_column_widths: set[str] = set()
@@ -1987,8 +1999,40 @@ class SmsReminderWindow(QMainWindow):
 
         self.manual_patient_search_timer = QTimer(self)
         self.manual_patient_search_timer.setSingleShot(True)
-        self.manual_patient_search_timer.setInterval(180)
-        self.manual_patient_search_timer.timeout.connect(self.render_manual_patients)
+        self.manual_patient_search_timer.setInterval(420)
+        self.manual_patient_search_timer.timeout.connect(self.load_manual_patients_auto)
+
+        self.recall_filter_timer = QTimer(self)
+        self.recall_filter_timer.setSingleShot(True)
+        self.recall_filter_timer.setInterval(160)
+        self.recall_filter_timer.timeout.connect(self.render_recall_patients)
+        self.recall_auto_load_timer = QTimer(self)
+        self.recall_auto_load_timer.setSingleShot(True)
+        self.recall_auto_load_timer.setInterval(420)
+        self.recall_auto_load_timer.timeout.connect(self.load_recall_patients_auto)
+
+        self.treatment_filter_timer = QTimer(self)
+        self.treatment_filter_timer.setSingleShot(True)
+        self.treatment_filter_timer.setInterval(160)
+        self.treatment_filter_timer.timeout.connect(self.render_treatment_patients)
+        self.treatment_auto_load_timer = QTimer(self)
+        self.treatment_auto_load_timer.setSingleShot(True)
+        self.treatment_auto_load_timer.setInterval(420)
+        self.treatment_auto_load_timer.timeout.connect(self.load_treatment_patients_auto)
+
+        self.review_auto_load_timer = QTimer(self)
+        self.review_auto_load_timer.setSingleShot(True)
+        self.review_auto_load_timer.setInterval(420)
+        self.review_auto_load_timer.timeout.connect(self.load_review_patients_auto)
+
+        self.holiday_filter_timer = QTimer(self)
+        self.holiday_filter_timer.setSingleShot(True)
+        self.holiday_filter_timer.setInterval(160)
+        self.holiday_filter_timer.timeout.connect(self.render_holiday_patients)
+        self.holiday_auto_load_timer = QTimer(self)
+        self.holiday_auto_load_timer.setSingleShot(True)
+        self.holiday_auto_load_timer.setInterval(420)
+        self.holiday_auto_load_timer.timeout.connect(self.load_holiday_patients_auto)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("AppTabs")
@@ -1998,13 +2042,18 @@ class SmsReminderWindow(QMainWindow):
         self.patient_tab = self.build_patient_tab()
         self.tabs.addTab(self.patient_tab, "Patient")
         self.tabs.addTab(self.build_monitoring_tab(), "Monitoring")
-        self.tabs.addTab(self.build_recall_tab(), "Recall")
-        self.tabs.addTab(self.build_treatment_tab(), "Treatment")
-        self.tabs.addTab(self.build_review_google_tab(), "Review Google")
-        self.tabs.addTab(self.build_holiday_birthday_tab(), "Holiday & Birthday")
+        self.recall_tab = self.build_recall_tab()
+        self.tabs.addTab(self.recall_tab, "Recall")
+        self.treatment_tab = self.build_treatment_tab()
+        self.tabs.addTab(self.treatment_tab, "Treatment")
+        self.review_tab = self.build_review_google_tab()
+        self.tabs.addTab(self.review_tab, "Review Google")
+        self.holiday_tab = self.build_holiday_birthday_tab()
+        self.tabs.addTab(self.holiday_tab, "Holiday & Birthday")
         self.tabs.addTab(self.build_templates_tab(), "Templates")
         self.tabs.addTab(self.build_settings_tab(), "Settings")
-        self.tabs.addTab(self.build_logs_tab(), "Logs")
+        self.logs_tab = self.build_logs_tab()
+        self.tabs.addTab(self.logs_tab, "Logs")
         self.tabs.currentChanged.connect(self.handle_tab_changed)
 
         self.load_debounce = QTimer(self)
@@ -2020,7 +2069,7 @@ class SmsReminderWindow(QMainWindow):
         self.statusBar().showMessage("Open Monitoring and click Start Monitoring to begin automatic reminders.", 6000)
         if self.config.bridge_url and self.config.api_token:
             QTimer.singleShot(300, self.load_appointments)
-            QTimer.singleShot(650, self.schedule_manual_patient_auto_load)
+            QTimer.singleShot(650, self.schedule_current_tab_auto_load)
 
     def card(self, object_name: str = "Card") -> QFrame:
         frame = QFrame()
@@ -2067,6 +2116,19 @@ class SmsReminderWindow(QMainWindow):
             self.config.holiday_template_countries = {}
             self.config.review_link = ""
             self.config.holiday_events = list(HOLIDAY_EVENTS)
+
+    def templates_are_loaded(self) -> bool:
+        return bool(
+            self.config.sms_templates
+            and self.config.recall_templates
+            and self.config.treatment_templates
+            and self.config.review_templates
+            and self.config.holiday_templates
+        )
+
+    def ensure_templates_loaded(self) -> None:
+        if not self.templates_are_loaded():
+            self.load_templates_from_bridge()
 
     def parse_holiday_events_setting(self, raw_value: Any) -> list[str]:
         events: list[str] = []
@@ -2169,11 +2231,49 @@ class SmsReminderWindow(QMainWindow):
 
     def handle_tab_changed(self, _index: int) -> None:
         QTimer.singleShot(0, self.fill_configured_tables)
+        self.schedule_current_tab_auto_load()
+
+    def has_bridge_credentials(self) -> bool:
+        return bool(self.config.bridge_url and self.config.api_token)
+
+    def schedule_current_tab_auto_load(self) -> None:
+        if not hasattr(self, "tabs") or not self.has_bridge_credentials():
+            return
+        current = self.tabs.currentWidget()
         if self.tabs.currentWidget() is getattr(self, "patient_tab", None):
             self.schedule_manual_patient_auto_load()
+        elif current is getattr(self, "recall_tab", None):
+            self.schedule_recall_auto_load()
+        elif current is getattr(self, "treatment_tab", None):
+            self.schedule_treatment_auto_load()
+        elif current is getattr(self, "review_tab", None):
+            self.schedule_review_auto_load()
+        elif current is getattr(self, "holiday_tab", None):
+            self.schedule_holiday_auto_load()
+        elif current is getattr(self, "logs_tab", None):
+            self.load_logs()
+
+    def is_current_tab(self, tab_attr: str) -> bool:
+        return hasattr(self, "tabs") and self.tabs.currentWidget() is getattr(self, tab_attr, None)
+
+    def schedule_recall_auto_load(self, force: bool = False) -> None:
+        if not hasattr(self, "recall_table") or not self.has_bridge_credentials():
+            return
+        if not force and (self.recall_patients_loaded_once or self.recall_patients_auto_load_started):
+            return
+        self.recall_patients_auto_load_started = True
+        self.recall_auto_load_timer.start(80 if not force else 420)
+
+    def schedule_treatment_auto_load(self, force: bool = False) -> None:
+        if not hasattr(self, "treatment_table") or not self.has_bridge_credentials():
+            return
+        if not force and (self.treatment_patients_loaded_once or self.treatment_patients_auto_load_started):
+            return
+        self.treatment_patients_auto_load_started = True
+        self.treatment_auto_load_timer.start(80 if not force else 420)
 
     def schedule_manual_patient_auto_load(self) -> None:
-        if not hasattr(self, "manual_patient_table"):
+        if not hasattr(self, "manual_patient_table") or not self.has_bridge_credentials():
             return
         if self.manual_patients_loaded_once or self.manual_patients_auto_load_started:
             return
@@ -2182,6 +2282,51 @@ class SmsReminderWindow(QMainWindow):
             return
         self.manual_patients_auto_load_started = True
         self.load_manual_patients(show_busy_message=False)
+
+    def schedule_review_auto_load(self, force: bool = False) -> None:
+        if not hasattr(self, "review_table") or not self.has_bridge_credentials():
+            return
+        if not force and (self.review_patients_loaded_once or self.review_patients_auto_load_started):
+            return
+        self.review_patients_auto_load_started = True
+        self.review_auto_load_timer.start(80 if not force else 420)
+
+    def schedule_holiday_auto_load(self, force: bool = False) -> None:
+        if not hasattr(self, "holiday_table") or not self.has_bridge_credentials():
+            return
+        if not force and (self.holiday_patients_loaded_once or self.holiday_patients_auto_load_started):
+            return
+        self.holiday_patients_auto_load_started = True
+        self.holiday_auto_load_timer.start(80 if not force else 420)
+
+    def load_recall_patients_auto(self) -> None:
+        self.load_recall_patients(show_busy_message=False)
+
+    def load_treatment_patients_auto(self) -> None:
+        self.load_treatment_patients(show_busy_message=False)
+
+    def load_manual_patients_auto(self) -> None:
+        self.load_manual_patients(show_busy_message=False)
+
+    def load_review_patients_auto(self) -> None:
+        self.load_review_patients(show_busy_message=False)
+
+    def load_holiday_patients_auto(self) -> None:
+        self.load_holiday_patients(show_busy_message=False)
+
+    def queue_pending_auto_load(self, key: str, show_busy_message: bool, busy_message: str) -> None:
+        if show_busy_message:
+            QMessageBox.information(self, "Loading", busy_message)
+        else:
+            self.pending_auto_loads.add(key)
+            self.statusBar().showMessage("Refreshing after the current load finishes...", 2500)
+
+    def run_pending_auto_load(self, key: str, loader: Callable[..., None]) -> bool:
+        if key not in self.pending_auto_loads:
+            return False
+        self.pending_auto_loads.discard(key)
+        QTimer.singleShot(50, lambda: loader(show_busy_message=False))
+        return True
 
     def fill_table_width(self, table: QTableWidget, settings_key: str) -> None:
         viewport_width = table.viewport().width()
@@ -2394,20 +2539,17 @@ class SmsReminderWindow(QMainWindow):
         self.preview_manual_patient_button.clicked.connect(self.preview_manual_patient_selected)
         self.test_manual_patient_button = QPushButton("Test selected (no send)")
         self.test_manual_patient_button.clicked.connect(self.test_manual_patient_without_sending)
-        self.reset_manual_patient_button = QPushButton("Reset selected to not sent")
-        self.reset_manual_patient_button.clicked.connect(self.reset_manual_patient_to_not_sent)
-        self.mark_manual_patient_sent_button = QPushButton("Mark selected sent")
-        self.mark_manual_patient_sent_button.clicked.connect(self.mark_manual_patient_as_sent)
+        self.log_manual_patient_sent_button = QPushButton("Log selected sent")
+        self.log_manual_patient_sent_button.clicked.connect(self.log_manual_patient_sent)
         self.send_manual_patient_button = QPushButton("Send selected")
         self.send_manual_patient_button.setObjectName("PrimaryButton")
         self.send_manual_patient_button.clicked.connect(self.send_selected_manual_patient_sms)
-        self.send_manual_patient_fd2_button = QPushButton("Send FD2 not sent")
-        self.send_manual_patient_fd2_button.setToolTip("Use on FD2 to paste the first not-sent Patient SMS draft without pressing Enter.")
+        self.send_manual_patient_fd2_button = QPushButton("Create FD2 draft")
+        self.send_manual_patient_fd2_button.setToolTip("Use on FD2 to paste the first selected Patient SMS draft without pressing Enter.")
         self.send_manual_patient_fd2_button.clicked.connect(self.send_manual_patient_fd2_not_sent)
         controls.addWidget(self.preview_manual_patient_button)
         controls.addWidget(self.test_manual_patient_button)
-        controls.addWidget(self.reset_manual_patient_button)
-        controls.addWidget(self.mark_manual_patient_sent_button)
+        controls.addWidget(self.log_manual_patient_sent_button)
         controls.addWidget(self.send_manual_patient_fd2_button)
         controls.addWidget(self.send_manual_patient_button)
         layout.addWidget(controls_card)
@@ -2415,24 +2557,20 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.manual_patient_table = QTableWidget(0, 10)
+        self.manual_patient_table = QTableWidget(0, 6)
         self.manual_patient_table.setHorizontalHeaderLabels(
-            ["Status", "Patient", "Phone", "Email", "Language", "Pat #", "Sent", "Last sent", "Template", "View"]
+            ["Patient", "Phone", "Email", "Pat #", "Template", "View"]
         )
         self.configure_resizable_columns(
             self.manual_patient_table,
             "manual_patient/patient_column_widths",
             {
-                0: 120,
-                1: 190,
-                2: 340,
-                3: 220,
-                4: 110,
+                0: 210,
+                1: 340,
+                2: 220,
+                3: 90,
+                4: 210,
                 5: 90,
-                6: 70,
-                7: 150,
-                8: 210,
-                9: 90,
             },
         )
         self.manual_patient_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -2686,13 +2824,15 @@ class SmsReminderWindow(QMainWindow):
         self.recall_months.setValue(self.config.recall_months)
         self.recall_months.setSuffix(" months")
         self.recall_months.setMinimumHeight(34)
+        self.recall_months.valueChanged.connect(lambda _value: self.schedule_recall_auto_load(force=True))
         controls.addWidget(self.recall_months)
         controls.addWidget(QLabel("Procedure codes"))
         self.recall_codes = QLineEdit(self.config.recall_codes)
         self.recall_codes.setPlaceholderText(DEFAULT_RECALL_CODES)
         self.recall_codes.setMinimumWidth(220)
+        self.recall_codes.textChanged.connect(lambda _text: self.schedule_recall_auto_load(force=True))
         controls.addWidget(self.recall_codes)
-        self.load_recall_button = QPushButton("Load recall list")
+        self.load_recall_button = QPushButton("Refresh recall list")
         self.load_recall_button.clicked.connect(self.load_recall_patients)
         self.preview_recall_button = QPushButton("Preview selected")
         self.preview_recall_button.clicked.connect(self.preview_recall_selected)
@@ -2714,7 +2854,7 @@ class SmsReminderWindow(QMainWindow):
         search_layout.addWidget(QLabel("Search"))
         self.recall_search = QLineEdit()
         self.recall_search.setPlaceholderText("Patient, phone, email, code, patient #...")
-        self.recall_search.textChanged.connect(lambda _text: self.render_recall_patients())
+        self.recall_search.textChanged.connect(lambda _text: self.recall_filter_timer.start())
         search_layout.addWidget(self.recall_search, 1)
         layout.addWidget(search_card)
 
@@ -2789,20 +2929,23 @@ class SmsReminderWindow(QMainWindow):
         self.treatment_days.setSuffix(" days")
         self.treatment_days.setMinimumHeight(34)
         self.treatment_days.setFixedWidth(132)
+        self.treatment_days.valueChanged.connect(lambda _value: self.schedule_treatment_auto_load(force=True))
         filter_row.addWidget(self.treatment_days)
         filter_row.addWidget(QLabel("Procedure codes"))
         self.treatment_codes = QLineEdit(self.config.treatment_codes)
         self.treatment_codes.setPlaceholderText("Optional, e.g. D3310,D2392. Blank = all planned codes")
         self.treatment_codes.setMinimumWidth(200)
+        self.treatment_codes.textChanged.connect(lambda _text: self.schedule_treatment_auto_load(force=True))
         filter_row.addWidget(self.treatment_codes, 1)
         filter_row.addWidget(QLabel("Proc status"))
         self.treatment_statuses = QLineEdit(self.config.treatment_statuses)
         self.treatment_statuses.setPlaceholderText("1")
         self.treatment_statuses.setFixedWidth(84)
+        self.treatment_statuses.textChanged.connect(lambda _text: self.schedule_treatment_auto_load(force=True))
         filter_row.addWidget(self.treatment_statuses)
         controls.addLayout(filter_row)
 
-        self.load_treatment_button = QPushButton("Load treatment list")
+        self.load_treatment_button = QPushButton("Refresh treatment list")
         self.load_treatment_button.clicked.connect(self.load_treatment_patients)
         self.manage_treatment_templates_button = QPushButton("Treatment templates")
         self.manage_treatment_templates_button.clicked.connect(self.open_treatment_templates_popup)
@@ -2826,7 +2969,7 @@ class SmsReminderWindow(QMainWindow):
         search_layout.addWidget(QLabel("Search"))
         self.treatment_search = QLineEdit()
         self.treatment_search.setPlaceholderText("Patient, phone, email, pending code, patient #...")
-        self.treatment_search.textChanged.connect(lambda _text: self.render_treatment_patients())
+        self.treatment_search.textChanged.connect(lambda _text: self.treatment_filter_timer.start())
         search_layout.addWidget(self.treatment_search, 1)
         layout.addWidget(search_card)
 
@@ -2894,10 +3037,10 @@ class SmsReminderWindow(QMainWindow):
         controls.addWidget(QLabel("Patient filter"))
         self.review_search = QLineEdit()
         self.review_search.setPlaceholderText("Patient, phone, email, patient #...")
-        self.review_search.textChanged.connect(lambda _text: self.render_review_patients())
+        self.review_search.textChanged.connect(lambda _text: self.schedule_review_auto_load(force=True))
         self.review_search.returnPressed.connect(self.load_review_patients)
         controls.addWidget(self.review_search, 1)
-        self.load_review_button = QPushButton("Load patients")
+        self.load_review_button = QPushButton("Refresh patients")
         self.load_review_button.clicked.connect(self.load_review_patients)
         self.manage_review_templates_button = QPushButton("Review templates")
         self.manage_review_templates_button.clicked.connect(self.open_review_templates_popup)
@@ -2973,9 +3116,10 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_campaign_type = QComboBox()
         self.holiday_campaign_type.addItem("Holiday promotion", "holiday")
         self.holiday_campaign_type.addItem("Birthday", "birthday")
-        self.holiday_campaign_type.currentIndexChanged.connect(self.update_holiday_campaign_controls)
+        self.holiday_campaign_type.currentIndexChanged.connect(self.handle_holiday_campaign_changed)
         self.holiday_event = QComboBox()
         self.refresh_holiday_event_combo()
+        self.holiday_event.currentIndexChanged.connect(lambda _index: self.handle_holiday_context_changed())
         self.add_holiday_event_button = QPushButton("Add holiday")
         self.add_holiday_event_button.clicked.connect(self.add_holiday_event)
         self.edit_holiday_event_button = QPushButton("Edit holiday")
@@ -2985,12 +3129,13 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_birthday_date = QDateEdit(clinic_qdate())
         self.holiday_birthday_date.setCalendarPopup(True)
         self.holiday_birthday_date.setDisplayFormat("MM/dd/yyyy")
+        self.holiday_birthday_date.dateChanged.connect(lambda _date: self.schedule_holiday_auto_load(force=True))
         self.holiday_date_label = QLabel("Send date")
         self.holiday_search = QLineEdit()
         self.holiday_search.setPlaceholderText("Patient, phone, email, patient #...")
-        self.holiday_search.textChanged.connect(lambda _text: self.render_holiday_patients())
+        self.holiday_search.textChanged.connect(lambda _text: self.handle_holiday_search_changed())
         self.holiday_search.returnPressed.connect(self.load_holiday_patients)
-        self.load_holiday_button = QPushButton("Load / filter patients")
+        self.load_holiday_button = QPushButton("Refresh patients")
         self.load_holiday_button.clicked.connect(self.load_holiday_patients)
         self.add_custom_holiday_button = QPushButton("Add custom")
         self.add_custom_holiday_button.clicked.connect(self.add_custom_holiday_patient)
@@ -3034,8 +3179,8 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.holiday_table = QTableWidget(0, 10)
-        self.holiday_table.setHorizontalHeaderLabels(["Patient", "Phone", "Email", "Language", "Birthdate", "Pat #", "Campaign", "Template", "Status", "View"])
+        self.holiday_table = QTableWidget(0, 9)
+        self.holiday_table.setHorizontalHeaderLabels(["Patient", "Phone", "Email", "Language", "Birthdate", "Pat #", "Campaign", "Template", "View"])
         self.configure_resizable_columns(
             self.holiday_table,
             "holiday_birthday/patient_column_widths",
@@ -3048,8 +3193,7 @@ class SmsReminderWindow(QMainWindow):
                 5: 80,
                 6: 160,
                 7: 190,
-                8: 120,
-                9: 90,
+                8: 90,
             },
         )
         self.holiday_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -3988,7 +4132,7 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.critical(self, "Bridge error", str(exc))
 
     def load_appointments(self) -> None:
-        self.load_templates_from_bridge()
+        self.ensure_templates_loaded()
         self.save_settings(silent=True)
         target = self.date_edit.date().toPython()
         if self.load_worker and self.load_worker.isRunning():
@@ -4148,7 +4292,7 @@ class SmsReminderWindow(QMainWindow):
 
     def normalize_manual_patient(self, patient: dict[str, Any], logs: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         logs = logs or []
-        latest_by_phone: dict[str, dict[str, Any]] = {}
+        logs_by_phone: dict[str, list[dict[str, Any]]] = {}
         pat_num = str(patient.get("PatNum") or "")
         for log in logs:
             if str(log.get("PatNum") or "") != pat_num:
@@ -4156,7 +4300,7 @@ class SmsReminderWindow(QMainWindow):
             phone_key = digits_only(log.get("Phone", ""))
             if not phone_key:
                 continue
-            latest_by_phone.setdefault(phone_key, log)
+            logs_by_phone.setdefault(phone_key, []).append(log)
 
         row = self.normalize_patient_phone_targets(patient)
         row.pop("_Recall", None)
@@ -4165,28 +4309,17 @@ class SmsReminderWindow(QMainWindow):
         row["_TemplateKey"] = key
         row["_TemplateText"] = self.config.sms_templates.get(key, "")
         row["_TemplateCountry"] = template_country(self.config, key)
+        log_rows: list[dict[str, Any]] = []
         for target in row.get("PhoneTargets", []):
-            log = latest_by_phone.get(digits_only(target.get("phone", "")))
-            if log:
-                target["status"] = str(log.get("Status") or "")
-                target["sent_at"] = str(log.get("SentAt") or "")
-                target["error"] = str(log.get("ErrorMessage") or "")
-        target_statuses = [target.get("status", "") for target in row.get("PhoneTargets", []) if digits_only(target.get("phone", ""))]
-        if target_statuses and all(status in SENT_STATUSES for status in target_statuses):
-            row["ReminderStatus"] = "sent" if any(status == "sent" for status in target_statuses) else "dry-run"
-        elif any(status in SENT_STATUSES for status in target_statuses):
-            row["ReminderStatus"] = "partial"
-        elif any(status in REVIEW_STATUSES for status in target_statuses):
-            row["ReminderStatus"] = "needs review"
-        elif any(status == "failed" for status in target_statuses):
-            row["ReminderStatus"] = "failed"
-        else:
-            row["ReminderStatus"] = ""
-        sent_targets = [target for target in row.get("PhoneTargets", []) if target.get("status") == "sent"]
-        sent_times = [target.get("sent_at", "") for target in sent_targets if target.get("sent_at")]
-        row["ReminderSentCount"] = len(sent_targets)
-        row["ReminderLastSentAt"] = max(sent_times) if sent_times else ""
-        row["ReminderError"] = "; ".join(target.get("error", "") for target in row.get("PhoneTargets", []) if target.get("error"))
+            log_rows.extend(logs_by_phone.get(digits_only(target.get("phone", "")), []))
+        log_times = [
+            str(log.get("SentAt") or log.get("CreatedAt") or "")
+            for log in log_rows
+            if str(log.get("SentAt") or log.get("CreatedAt") or "").strip()
+        ]
+        row["ManualLogCount"] = len(log_rows)
+        row["ManualLastLogAt"] = max(log_times) if log_times else ""
+        row["ManualLastError"] = "; ".join(str(log.get("ErrorMessage") or "") for log in log_rows if log.get("ErrorMessage"))
         return row
 
     def normalize_holiday_patient(self, patient: dict[str, Any]) -> dict[str, Any]:
@@ -4205,12 +4338,11 @@ class SmsReminderWindow(QMainWindow):
         row["_TemplateKey"] = key
         row["_TemplateText"] = self.config.holiday_templates.get(key, "")
         row["_TemplateCountry"] = str(self.config.holiday_template_countries.get(key) or infer_template_country(key)).upper()
-        row["_CampaignStatus"] = ""
         return row
 
-    def load_recall_patients(self) -> None:
+    def load_recall_patients(self, show_busy_message: bool = True) -> None:
         if self.recall_load_worker and self.recall_load_worker.isRunning():
-            QMessageBox.information(self, "Loading", "Recall list is already loading.")
+            self.queue_pending_auto_load("recall", show_busy_message, "Recall list is already loading.")
             return
         self.save_settings()
         self.load_recall_button.setEnabled(False)
@@ -4218,20 +4350,27 @@ class SmsReminderWindow(QMainWindow):
         self.recall_load_worker = LoadRecallWorker(self.config, self.config.recall_months, self.config.recall_codes)
         self.recall_load_worker.loaded.connect(self.recall_patients_loaded)
         self.recall_load_worker.failed.connect(self.recall_patients_failed)
-        self.recall_load_worker.finished.connect(lambda: self.load_recall_button.setEnabled(True))
+        self.recall_load_worker.finished.connect(self.recall_load_finished)
         self.recall_load_worker.start()
 
     def recall_patients_loaded(self, patients: list[dict[str, Any]]) -> None:
         self.recall_patients = [self.normalize_patient_phone_targets(patient) for patient in patients]
+        self.recall_patients_loaded_once = True
+        self.recall_patients_auto_load_started = False
         self.render_recall_patients()
         self.statusBar().showMessage(f"Loaded {len(self.recall_patients)} recall patients.", 4000)
 
     def recall_patients_failed(self, message: str) -> None:
+        self.recall_patients_auto_load_started = False
         QMessageBox.critical(self, "Recall load error", message)
 
-    def load_treatment_patients(self) -> None:
+    def recall_load_finished(self) -> None:
+        self.load_recall_button.setEnabled(True)
+        self.run_pending_auto_load("recall", self.load_recall_patients)
+
+    def load_treatment_patients(self, show_busy_message: bool = True) -> None:
         if self.treatment_load_worker and self.treatment_load_worker.isRunning():
-            QMessageBox.information(self, "Loading", "Treatment list is already loading.")
+            self.queue_pending_auto_load("treatment", show_busy_message, "Treatment list is already loading.")
             return
         self.save_settings()
         self.load_treatment_button.setEnabled(False)
@@ -4244,23 +4383,29 @@ class SmsReminderWindow(QMainWindow):
         )
         self.treatment_load_worker.loaded.connect(self.treatment_patients_loaded)
         self.treatment_load_worker.failed.connect(self.treatment_patients_failed)
-        self.treatment_load_worker.finished.connect(lambda: self.load_treatment_button.setEnabled(True))
+        self.treatment_load_worker.finished.connect(self.treatment_load_finished)
         self.treatment_load_worker.start()
 
     def treatment_patients_loaded(self, patients: list[dict[str, Any]]) -> None:
         self.treatment_patients = [self.normalize_patient_phone_targets(patient) for patient in patients]
+        self.treatment_patients_loaded_once = True
+        self.treatment_patients_auto_load_started = False
         self.render_treatment_patients()
         self.statusBar().showMessage(f"Loaded {len(self.treatment_patients)} treatment patients.", 4000)
 
     def treatment_patients_failed(self, message: str) -> None:
+        self.treatment_patients_auto_load_started = False
         QMessageBox.critical(self, "Treatment load error", message)
+
+    def treatment_load_finished(self) -> None:
+        self.load_treatment_button.setEnabled(True)
+        self.run_pending_auto_load("treatment", self.load_treatment_patients)
 
     def load_manual_patients(self, show_busy_message: bool = True) -> None:
         if self.manual_patient_load_worker and self.manual_patient_load_worker.isRunning():
-            if show_busy_message:
-                QMessageBox.information(self, "Loading", "Patient list is already loading.")
+            self.queue_pending_auto_load("manual_patient", show_busy_message, "Patient list is already loading.")
             return
-        self.load_templates_from_bridge()
+        self.ensure_templates_loaded()
         self.save_settings(silent=True)
         if hasattr(self, "load_manual_patient_button"):
             self.load_manual_patient_button.setEnabled(False)
@@ -4285,10 +4430,11 @@ class SmsReminderWindow(QMainWindow):
     def manual_patient_load_finished(self) -> None:
         if hasattr(self, "load_manual_patient_button"):
             self.load_manual_patient_button.setEnabled(True)
+        self.run_pending_auto_load("manual_patient", self.load_manual_patients)
 
-    def load_review_patients(self) -> None:
+    def load_review_patients(self, show_busy_message: bool = True) -> None:
         if self.review_load_worker and self.review_load_worker.isRunning():
-            QMessageBox.information(self, "Loading", "Review patient list is already loading.")
+            self.queue_pending_auto_load("review", show_busy_message, "Review patient list is already loading.")
             return
         self.save_settings(silent=True)
         self.load_review_button.setEnabled(False)
@@ -4297,20 +4443,27 @@ class SmsReminderWindow(QMainWindow):
         self.review_load_worker = LoadPatientsWorker(self.config, query)
         self.review_load_worker.loaded.connect(self.review_patients_loaded)
         self.review_load_worker.failed.connect(self.review_patients_failed)
-        self.review_load_worker.finished.connect(lambda: self.load_review_button.setEnabled(True))
+        self.review_load_worker.finished.connect(self.review_load_finished)
         self.review_load_worker.start()
 
     def review_patients_loaded(self, patients: list[dict[str, Any]]) -> None:
         self.review_patients = [self.normalize_review_patient_phone_targets(patient) for patient in patients]
+        self.review_patients_loaded_once = True
+        self.review_patients_auto_load_started = False
         self.render_review_patients()
         self.statusBar().showMessage(f"Loaded {len(self.review_patients)} patients for Google review SMS.", 4000)
 
     def review_patients_failed(self, message: str) -> None:
+        self.review_patients_auto_load_started = False
         QMessageBox.critical(self, "Review patient load error", message)
 
-    def load_holiday_patients(self) -> None:
+    def review_load_finished(self) -> None:
+        self.load_review_button.setEnabled(True)
+        self.run_pending_auto_load("review", self.load_review_patients)
+
+    def load_holiday_patients(self, show_busy_message: bool = True) -> None:
         if self.holiday_load_worker and self.holiday_load_worker.isRunning():
-            QMessageBox.information(self, "Loading", "Holiday/Birthday patient list is already loading.")
+            self.queue_pending_auto_load("holiday", show_busy_message, "Holiday/Birthday patient list is already loading.")
             return
         self.save_settings(silent=True)
         self.load_holiday_button.setEnabled(False)
@@ -4325,16 +4478,23 @@ class SmsReminderWindow(QMainWindow):
             self.statusBar().showMessage("Loading holiday promotion patients...", 4000)
         self.holiday_load_worker.loaded.connect(self.holiday_patients_loaded)
         self.holiday_load_worker.failed.connect(self.holiday_patients_failed)
-        self.holiday_load_worker.finished.connect(lambda: self.load_holiday_button.setEnabled(True))
+        self.holiday_load_worker.finished.connect(self.holiday_load_finished)
         self.holiday_load_worker.start()
 
     def holiday_patients_loaded(self, patients: list[dict[str, Any]]) -> None:
         self.holiday_patients = [self.normalize_holiday_patient(patient) for patient in patients]
+        self.holiday_patients_loaded_once = True
+        self.holiday_patients_auto_load_started = False
         self.render_holiday_patients()
         self.statusBar().showMessage(f"Loaded {len(self.holiday_patients)} campaign patients.", 4000)
 
     def holiday_patients_failed(self, message: str) -> None:
+        self.holiday_patients_auto_load_started = False
         QMessageBox.critical(self, "Holiday/Birthday load error", message)
+
+    def holiday_load_finished(self) -> None:
+        self.load_holiday_button.setEnabled(True)
+        self.run_pending_auto_load("holiday", self.load_holiday_patients)
 
     def update_holiday_campaign_controls(self) -> None:
         if not hasattr(self, "holiday_campaign_type"):
@@ -4358,6 +4518,26 @@ class SmsReminderWindow(QMainWindow):
                 if is_birthday
                 else "Patient, phone, email, patient #..."
             )
+
+    def handle_holiday_campaign_changed(self, *_args: Any) -> None:
+        self.update_holiday_campaign_controls()
+        self.schedule_holiday_auto_load(force=True)
+
+    def handle_holiday_context_changed(self) -> None:
+        if not hasattr(self, "holiday_table"):
+            return
+        if self.holiday_patients:
+            self.holiday_patients = [self.normalize_holiday_patient(patient) for patient in self.holiday_patients]
+            self.render_holiday_patients()
+        elif self.is_current_tab("holiday_tab"):
+            self.schedule_holiday_auto_load(force=True)
+
+    def handle_holiday_search_changed(self) -> None:
+        campaign_type = str(self.holiday_campaign_type.currentData() or "holiday") if hasattr(self, "holiday_campaign_type") else "holiday"
+        if campaign_type == "birthday":
+            self.holiday_filter_timer.start()
+        else:
+            self.schedule_holiday_auto_load(force=True)
 
     def refresh_holiday_event_combo(self, selected_event: str | None = None) -> None:
         if not hasattr(self, "holiday_event"):
@@ -4536,44 +4716,35 @@ class SmsReminderWindow(QMainWindow):
     def render_manual_patients(self) -> None:
         self.manual_patient_template_combos = {}
         query = self.manual_patient_search.text().strip().lower() if hasattr(self, "manual_patient_search") else ""
-        filtered_rows = [row for row in self.manual_patients if self.patient_matches_query(row, query, ("ReminderStatus", "ReminderLastSentAt"))]
+        filtered_rows = [row for row in self.manual_patients if self.patient_matches_query(row, query)]
         visible_rows, filtered_rows = self.lazy_rows_for_table("manual_patient", filtered_rows, query)
         self.manual_patient_table.setUpdatesEnabled(False)
         self.manual_patient_table.setRowCount(len(visible_rows))
         self.manual_patient_table.setProperty("_visible_patients", visible_rows)
         self.manual_patient_table.setProperty("_filtered_patients", filtered_rows)
         for row_index, row in enumerate(visible_rows):
-            reminder = row.get("ReminderStatus") or "not sent"
             values = [
-                reminder,
                 patient_name(row),
                 row.get("Phone", ""),
                 row.get("Email", ""),
-                row.get("Language", ""),
                 row.get("PatNum", ""),
-                row.get("ReminderSentCount", 0),
-                row.get("ReminderLastSentAt", ""),
                 "",
                 "",
             ]
             for col, value in enumerate(values):
-                if col == 8:
+                if col == 4:
                     combo = QComboBox()
                     self.populate_template_combo(combo, row.get("_TemplateKey") or template_key_for_language(self.config, row.get("Language")))
                     self.manual_patient_table.setCellWidget(row_index, col, combo)
                     self.manual_patient_template_combos[row_index] = combo
                     continue
-                if col == 9:
+                if col == 5:
                     self.manual_patient_table.setCellWidget(row_index, col, self.make_open_dental_view_button(row))
                     continue
                 item = QTableWidgetItem(str(value or ""))
-                if col in {5, 6}:
+                if col == 3:
                     item.setTextAlignment(Qt.AlignCenter)
-                if reminder in SENT_STATUSES:
-                    item.setForeground(QColor("#7a8794"))
-                elif reminder == "needs review":
-                    item.setForeground(QColor("#b54708"))
-                elif not digits_only(row.get("Phone", "")):
+                if not digits_only(row.get("Phone", "")):
                     item.setForeground(QColor("#b42318"))
                 self.manual_patient_table.setItem(row_index, col, item)
         self.manual_patient_table.setUpdatesEnabled(True)
@@ -4652,7 +4823,6 @@ class SmsReminderWindow(QMainWindow):
                 row.get("PatNum", ""),
                 row.get("_CampaignName", ""),
                 "",
-                row.get("_CampaignStatus", ""),
                 "",
             ]
             for col, value in enumerate(values):
@@ -4669,11 +4839,11 @@ class SmsReminderWindow(QMainWindow):
                     self.holiday_table.setCellWidget(row_index, col, combo)
                     self.holiday_template_combos[row_index] = combo
                     continue
-                if col == 9:
+                if col == 8:
                     self.holiday_table.setCellWidget(row_index, col, self.make_open_dental_view_button(row))
                     continue
                 item = QTableWidgetItem(str(value or ""))
-                if col in {5, 8}:
+                if col == 5:
                     item.setTextAlignment(Qt.AlignCenter)
                 self.holiday_table.setItem(row_index, col, item)
         self.holiday_table.setUpdatesEnabled(True)
@@ -4899,7 +5069,6 @@ class SmsReminderWindow(QMainWindow):
                 (4, "Birthdate"),
                 (5, "PatNum"),
                 (6, "_CampaignName"),
-                (8, "_CampaignStatus"),
             ):
                 item = self.holiday_table.item(row_index, col)
                 if item:
@@ -5095,7 +5264,7 @@ class SmsReminderWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Patient SMS preview",
-            f"To: {patient_name(patient)}\nPhone: {patient.get('Phone', '')}\nStatus: {patient.get('ReminderStatus') or 'not sent'}\n\n{message}",
+            f"To: {patient_name(patient)}\nPhone: {patient.get('Phone', '')}\n\n{message}",
         )
 
     def send_selected_manual_patient_sms(self) -> None:
@@ -5140,69 +5309,37 @@ class SmsReminderWindow(QMainWindow):
         worker.finished.connect(on_finished)
         worker.start()
 
-    def reset_manual_patient_to_not_sent(self) -> None:
+    def log_manual_patient_sent(self) -> None:
         selected = self.selected_manual_patients()
         if not selected:
-            QMessageBox.information(self, "No selection", "Please select at least one patient to reset.")
+            QMessageBox.information(self, "No selection", "Please select at least one patient to log.")
             return
         confirm = QMessageBox.question(
             self,
-            "Reset selected patient SMS status?",
-            "This will remove manual patient SMS logs for the selected patient row(s), so they can be sent again.\n\nContinue?",
+            "Log selected sent?",
+            "Only continue if you already clicked Send in Phone Link for these SMS messages.\n\nAdd simple sent log row(s) for the selected Patient SMS?",
         )
         if confirm != QMessageBox.Yes:
             return
-        reset_count = 0
-        try:
-            for patient in selected:
-                targets = [
-                    target for target in patient.get("PhoneTargets", [])
-                    if digits_only(target.get("phone", ""))
-                ]
-                if not targets and digits_only(patient.get("Phone", "")):
-                    targets = [{"phone": patient.get("Phone", "")}]
-                for target in targets:
-                    result = self.repo.reset_patient_log(patient, target.get("phone", ""))
-                    reset_count += int(result.get("deleted") or 0)
-            self.append_activity(f"Reset manual patient SMS logs: {reset_count} row(s).")
-            QMessageBox.information(self, "Reset complete", f"Reset {reset_count} manual patient SMS log row(s).")
-            self.load_manual_patients()
-        except Exception as exc:  # noqa: BLE001
-            self.append_activity(f"Reset manual patient SMS failed: {exc}")
-            QMessageBox.critical(self, "Reset failed", str(exc))
-
-    def mark_manual_patient_as_sent(self) -> None:
-        selected = self.selected_manual_patients()
-        if not selected:
-            QMessageBox.information(self, "No selection", "Please select at least one patient to mark sent.")
-            return
-        confirm = QMessageBox.question(
-            self,
-            "Mark selected sent?",
-            "Only continue if you already confirmed these SMS messages were sent in Phone Link.\n\nMark selected manual patient SMS log(s) as sent?",
-        )
-        if confirm != QMessageBox.Yes:
-            return
-        sent_count = 0
+        log_count = 0
         try:
             for patient in selected:
                 message = render_message(self.config, patient, patient.get("_TemplateText") or default_template(self.config))
                 targets = [
                     target for target in patient.get("PhoneTargets", [])
                     if digits_only(target.get("phone", ""))
-                    and (target.get("status") in REVIEW_STATUSES or not target.get("status"))
                 ]
                 if not targets and digits_only(patient.get("Phone", "")):
                     targets = [{"phone": patient.get("Phone", "")}]
                 for target in targets:
                     self.repo.log_patient_result(patient, message, "sent", phone=target.get("phone", ""))
-                    sent_count += 1
-            self.append_activity(f"Marked manual patient SMS logs sent: {sent_count} row(s).")
-            QMessageBox.information(self, "Marked sent", f"Marked {sent_count} manual patient SMS log row(s) as sent.")
+                    log_count += 1
+            self.append_activity(f"Logged manual patient SMS sent: {log_count} row(s).")
+            QMessageBox.information(self, "Logged sent", f"Added {log_count} manual patient SMS log row(s).")
             self.load_manual_patients()
         except Exception as exc:  # noqa: BLE001
-            self.append_activity(f"Mark manual patient SMS sent failed: {exc}")
-            QMessageBox.critical(self, "Mark sent failed", str(exc))
+            self.append_activity(f"Manual patient SMS log failed: {exc}")
+            QMessageBox.critical(self, "Log failed", str(exc))
 
     def preview_review_selected(self) -> None:
         self.save_settings(silent=True)
@@ -5799,15 +5936,7 @@ class SmsReminderWindow(QMainWindow):
         if not selected:
             QMessageBox.information(self, "No selection", "Please select one Patient row for FD2 draft mode.")
             return
-        pending = [
-            row
-            for row in selected
-            if row.get("ReminderStatus") not in {"sent", "dry-run", "needs review"}
-        ]
-        if not pending:
-            QMessageBox.information(self, "Nothing to send", "The selected Patient row is already sent, dry-run, or waiting for review.")
-            return
-        self.start_send(pending[:1], fd2_mode=True)
+        self.start_send(selected[:1], fd2_mode=True)
 
     def start_send(self, appointments: list[dict[str, Any]], confirm_real: bool = True, silent: bool = False, fd2_mode: bool = False) -> bool:
         if self.worker and self.worker.isRunning():
@@ -5820,10 +5949,8 @@ class SmsReminderWindow(QMainWindow):
             and not digits_only(appointment.get("Phone", ""))
         )
         sms_count = sum(
-            len([
-                target for target in appointment.get("PhoneTargets", [])
-                if digits_only(target.get("phone", "")) and target.get("status") not in SEND_SKIP_STATUSES
-            ]) or (1 if "PhoneTargets" not in appointment and digits_only(appointment.get("Phone", "")) else 0)
+            len(sendable_phone_targets(appointment))
+            or (1 if "PhoneTargets" not in appointment and digits_only(appointment.get("Phone", "")) else 0)
             for appointment in appointments
         )
         if sms_count == 0:
@@ -5841,7 +5968,7 @@ class SmsReminderWindow(QMainWindow):
         if not self.config.dry_run and confirm_real:
             title = "Create FD2 draft?" if fd2_mode else "Send real SMS?"
             message = (
-                "FD2 mode will paste only the first pending SMS draft in Phone Link, "
+                "FD2 mode will paste only the first selected SMS draft in Phone Link, "
                 "leave Phone Link open, stop immediately, and will not press Enter or write a send log.\n\nContinue?"
                 if fd2_mode
                 else f"Send {sms_count} real SMS messages through Phone Link?"
@@ -5949,10 +6076,8 @@ class SmsReminderWindow(QMainWindow):
             self.test_manual_patient_button.setEnabled(enabled)
         if hasattr(self, "preview_manual_patient_button"):
             self.preview_manual_patient_button.setEnabled(enabled)
-        if hasattr(self, "reset_manual_patient_button"):
-            self.reset_manual_patient_button.setEnabled(enabled)
-        if hasattr(self, "mark_manual_patient_sent_button"):
-            self.mark_manual_patient_sent_button.setEnabled(enabled)
+        if hasattr(self, "log_manual_patient_sent_button"):
+            self.log_manual_patient_sent_button.setEnabled(enabled)
         if hasattr(self, "load_manual_patient_button"):
             self.load_manual_patient_button.setEnabled(enabled)
         if hasattr(self, "preview_holiday_button"):
@@ -5973,7 +6098,8 @@ class SmsReminderWindow(QMainWindow):
             self.active_send_fd2_mode = False
             self.append_activity(f"FD2 draft finished. Drafts ready: {sent}. Failed: {failed}.")
             return
-        label = "Sent/dry-run" if self.config.dry_run else "Needs review"
+        manual_kind = self.active_send_kind in {"patient", "treatment", "recall", "campaign"}
+        label = "Sent/dry-run" if self.config.dry_run else ("Logged sent" if manual_kind else "Needs review")
         self.append_activity(f"Done. {label}: {sent}. Failed: {failed}.")
         if self.monitor_batch_active and failed:
             self.monitor_batch_failed = True
@@ -5984,18 +6110,6 @@ class SmsReminderWindow(QMainWindow):
         elif self.active_send_kind == "patient":
             self.load_manual_patients()
         elif self.active_send_kind == "campaign":
-            status_text = "needs review" if failed == 0 else "check log"
-            visible_patients = self.holiday_visible_patients()
-            for row_index, patient in enumerate(visible_patients):
-                if self.campaign_recipient_key(patient) not in self.active_campaign_recipient_keys:
-                    continue
-                patient["_CampaignStatus"] = status_text
-                item = self.holiday_table.item(row_index, 8)
-                if item:
-                    item.setText(status_text)
-            for patient in self.holiday_patients:
-                if self.campaign_recipient_key(patient) in self.active_campaign_recipient_keys:
-                    patient["_CampaignStatus"] = status_text
             self.active_campaign_recipient_keys = set()
         elif self.monitor_batch_active:
             self.process_next_monitor_target()
