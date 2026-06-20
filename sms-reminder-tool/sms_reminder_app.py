@@ -62,7 +62,6 @@ DEFAULT_TREATMENT_DAYS = 21
 SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 SCHEDULE_SEND_GRACE_MINUTES = 30
 LAZY_TABLE_BATCH_SIZE = 50
-MANUAL_PATIENT_FETCH_BATCH_SIZE = 120
 SENT_STATUSES = {"sent", "dry-run"}
 SEND_SKIP_STATUSES = {"sent", "dry-run", "needs-review"}
 REVIEW_STATUSES = {"needs-review"}
@@ -1563,7 +1562,7 @@ class SendWorker(QThread):
                         completed += 1
                         self.progress.emit(
                             f"FD2 DRAFT READY: {patient} {source} -> {phone}. "
-                            "The message was pasted only; click Send in Phone Link manually, then use Log selected sent."
+                            "The message was pasted only; click Send in Phone Link manually."
                         )
                         self.progress.emit("FD2 no-send mode stopped after one draft so the open draft is not replaced.")
                         self.finished.emit(completed, failed)
@@ -1725,11 +1724,11 @@ class LoadManualPatientsWorker(QThread):
     loaded = Signal(list, list, str, int, bool)
     failed = Signal(str)
 
-    def __init__(self, config: AppConfig, query: str, limit: int = MANUAL_PATIENT_FETCH_BATCH_SIZE, offset: int = 0):
+    def __init__(self, config: AppConfig, query: str, limit: int = 500, offset: int = 0):
         super().__init__()
         self.config = config
         self.query = query
-        self.limit = max(1, int(limit or MANUAL_PATIENT_FETCH_BATCH_SIZE))
+        self.limit = max(1, int(limit or 500))
         self.offset = max(0, int(offset or 0))
 
     def run(self) -> None:
@@ -2057,8 +2056,6 @@ class SmsReminderWindow(QMainWindow):
         self.treatment_patients: list[dict[str, Any]] = []
         self.manual_patients: list[dict[str, Any]] = []
         self.manual_patient_active_query = ""
-        self.manual_patient_next_offset = 0
-        self.manual_patient_has_more = False
         self.review_patients: list[dict[str, Any]] = []
         self.holiday_patients: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
@@ -2388,15 +2385,7 @@ class SmsReminderWindow(QMainWindow):
         self.treatment_auto_load_timer.start(80 if not force else 420)
 
     def schedule_manual_patient_auto_load(self) -> None:
-        if not hasattr(self, "manual_patient_table") or not self.has_bridge_credentials():
-            return
-        if self.manual_patients_loaded_once or self.manual_patients_auto_load_started:
-            return
-        if self.manual_patient_load_worker and self.manual_patient_load_worker.isRunning():
-            self.manual_patients_auto_load_started = True
-            return
-        self.manual_patients_auto_load_started = True
-        self.load_manual_patients(show_busy_message=False)
+        return
 
     def schedule_review_auto_load(self, force: bool = False) -> None:
         if not hasattr(self, "review_table") or not self.has_bridge_credentials():
@@ -2484,16 +2473,7 @@ class SmsReminderWindow(QMainWindow):
         return True
 
     def maybe_load_more_manual_patient_rows(self) -> None:
-        if self.maybe_load_more_lazy_rows(self.manual_patient_table, "manual_patient", self.render_manual_patients):
-            return
-        if not self.manual_patient_has_more:
-            return
-        if self.manual_patient_load_worker and self.manual_patient_load_worker.isRunning():
-            return
-        scrollbar = self.manual_patient_table.verticalScrollBar()
-        if scrollbar.value() < max(0, scrollbar.maximum() - 4):
-            return
-        self.load_more_manual_patients()
+        self.maybe_load_more_lazy_rows(self.manual_patient_table, "manual_patient", self.render_manual_patients)
 
     def build_dashboard_tab(self) -> QWidget:
         page = QWidget()
@@ -2667,8 +2647,6 @@ class SmsReminderWindow(QMainWindow):
         self.preview_manual_patient_button.clicked.connect(self.preview_manual_patient_selected)
         self.test_manual_patient_button = QPushButton("Test selected (no send)")
         self.test_manual_patient_button.clicked.connect(self.test_manual_patient_without_sending)
-        self.log_manual_patient_sent_button = QPushButton("Log selected sent")
-        self.log_manual_patient_sent_button.clicked.connect(self.log_manual_patient_sent)
         self.send_manual_patient_button = QPushButton("Fill selected draft")
         self.send_manual_patient_button.setToolTip("Patient tab fills one Phone Link draft only. It never presses the final Enter.")
         self.send_manual_patient_button.setObjectName("PrimaryButton")
@@ -2678,7 +2656,6 @@ class SmsReminderWindow(QMainWindow):
         self.send_manual_patient_fd2_button.clicked.connect(self.send_manual_patient_fd2_not_sent)
         controls.addWidget(self.preview_manual_patient_button)
         controls.addWidget(self.test_manual_patient_button)
-        controls.addWidget(self.log_manual_patient_sent_button)
         controls.addWidget(self.send_manual_patient_fd2_button)
         controls.addWidget(self.send_manual_patient_button)
         layout.addWidget(controls_card)
@@ -4533,67 +4510,57 @@ class SmsReminderWindow(QMainWindow):
     def manual_patient_search_query(self) -> str:
         return self.manual_patient_search.text().strip() if hasattr(self, "manual_patient_search") else ""
 
-    def load_manual_patients(self, show_busy_message: bool = True, append: bool = False) -> None:
+    def load_manual_patients(self, show_busy_message: bool = True) -> None:
+        query = self.manual_patient_search_query()
+        if not query:
+            self.pending_auto_loads.discard("manual_patient")
+            self.manual_patient_active_query = ""
+            self.manual_patients = []
+            self.manual_patients_loaded_once = False
+            self.manual_patients_auto_load_started = False
+            self.lazy_table_state.pop("manual_patient", None)
+            self.render_manual_patients()
+            self.statusBar().showMessage("Type in Patient search to load results.", 3000)
+            return
         if self.manual_patient_load_worker and self.manual_patient_load_worker.isRunning():
-            if not append:
-                self.queue_pending_auto_load("manual_patient", show_busy_message, "Patient list is already loading.")
+            self.queue_pending_auto_load("manual_patient", show_busy_message, "Patient list is already loading.")
             return
         self.ensure_templates_loaded()
         self.save_settings(silent=True)
         if hasattr(self, "load_manual_patient_button"):
             self.load_manual_patient_button.setEnabled(False)
-        query = self.manual_patient_search_query()
-        if append and query != self.manual_patient_active_query:
-            append = False
-        offset = self.manual_patient_next_offset if append else 0
-        if not append:
+        if query != self.manual_patient_active_query:
             self.manual_patient_active_query = query
-            self.manual_patient_next_offset = 0
-            self.manual_patient_has_more = False
             self.manual_patients = []
             self.lazy_table_state.pop("manual_patient", None)
             self.render_manual_patients()
-        phase = "Loading more patient search results..." if append else "Searching manual SMS patients..."
-        self.statusBar().showMessage(phase, 4000)
+        self.statusBar().showMessage("Searching manual SMS patients...", 4000)
         self.manual_patient_load_worker = LoadManualPatientsWorker(
             self.config,
             query,
-            limit=MANUAL_PATIENT_FETCH_BATCH_SIZE,
-            offset=offset,
+            offset=0,
         )
         self.manual_patient_load_worker.loaded.connect(self.manual_patients_loaded)
         self.manual_patient_load_worker.failed.connect(self.manual_patients_failed)
         self.manual_patient_load_worker.finished.connect(self.manual_patient_load_finished)
         self.manual_patient_load_worker.start()
 
-    def load_more_manual_patients(self) -> None:
-        if not self.manual_patient_has_more:
-            return
-        self.load_manual_patients(show_busy_message=False, append=True)
-
     def manual_patients_loaded(self, patients: list[dict[str, Any]], logs: list[dict[str, Any]], query: str, offset: int, has_more: bool) -> None:
         if query != self.manual_patient_search_query():
-            self.manual_patient_has_more = False
             self.manual_patients_auto_load_started = False
             self.statusBar().showMessage("Refreshing patient search...", 1500)
             return
-        normalized = [self.normalize_manual_patient(patient, logs) for patient in patients]
-        if offset <= 0:
-            self.manual_patients = normalized
-        else:
-            self.manual_patients.extend(normalized)
         self.manual_patient_active_query = query
-        self.manual_patient_next_offset = offset + len(normalized)
-        self.manual_patient_has_more = has_more
+        normalized = [self.normalize_manual_patient(patient, logs) for patient in patients]
+        self.manual_patients = normalized
         self.manual_patients_loaded_once = True
         self.manual_patients_auto_load_started = False
+        self.lazy_table_state.pop("manual_patient", None)
         self.render_manual_patients()
-        more_note = " Scroll for more." if self.manual_patient_has_more else ""
-        self.statusBar().showMessage(f"Loaded {len(self.manual_patients)} patient result(s).{more_note}", 4000)
+        self.statusBar().showMessage(f"Loaded {len(self.manual_patients)} patient search result(s).", 4000)
 
     def manual_patients_failed(self, message: str) -> None:
         self.manual_patients_auto_load_started = False
-        self.manual_patient_has_more = False
         QMessageBox.critical(self, "Patient SMS load error", message)
 
     def manual_patient_load_finished(self) -> None:
@@ -4888,6 +4855,7 @@ class SmsReminderWindow(QMainWindow):
         filtered_rows = list(self.manual_patients)
         visible_rows, filtered_rows = self.lazy_rows_for_table("manual_patient", filtered_rows, query)
         self.manual_patient_table.setUpdatesEnabled(False)
+        self.manual_patient_table.blockSignals(True)
         self.manual_patient_table.setRowCount(len(visible_rows))
         self.manual_patient_table.setProperty("_visible_patients", visible_rows)
         self.manual_patient_table.setProperty("_filtered_patients", filtered_rows)
@@ -4904,6 +4872,12 @@ class SmsReminderWindow(QMainWindow):
                 if col == 4:
                     combo = QComboBox()
                     self.populate_template_combo(combo, row.get("_TemplateKey") or template_key_for_language(self.config, row.get("Language")))
+                    combo.currentIndexChanged.connect(
+                        lambda _index, patient=row, template_combo=combo: self.update_manual_patient_template_from_combo(
+                            patient,
+                            template_combo,
+                        )
+                    )
                     self.manual_patient_table.setCellWidget(row_index, col, combo)
                     self.manual_patient_template_combos[row_index] = combo
                     continue
@@ -4916,6 +4890,7 @@ class SmsReminderWindow(QMainWindow):
                 if not digits_only(row.get("Phone", "")):
                     item.setForeground(QColor("#b42318"))
                 self.manual_patient_table.setItem(row_index, col, item)
+        self.manual_patient_table.blockSignals(False)
         self.manual_patient_table.setUpdatesEnabled(True)
         QTimer.singleShot(0, lambda: self.fill_table_width(self.manual_patient_table, "manual_patient/patient_column_widths"))
 
@@ -5065,6 +5040,12 @@ class SmsReminderWindow(QMainWindow):
         button.setObjectName("SmallActionButton")
         button.clicked.connect(lambda _checked=False, patient=dict(row), view_button=button: self.view_patient_in_open_dental(patient, view_button))
         return button
+
+    def update_manual_patient_template_from_combo(self, row: dict[str, Any], combo: QComboBox) -> None:
+        key = str(combo.currentData() or row.get("_TemplateKey") or self.config.default_template_key)
+        row["_TemplateKey"] = key
+        row["_TemplateText"] = self.config.sms_templates.get(key) or default_template(self.config)
+        row["_TemplateCountry"] = template_country(self.config, key)
 
     def view_patient_in_open_dental(self, row: dict[str, Any], button: QPushButton | None = None) -> None:
         if self.view_worker and self.view_worker.isRunning():
@@ -6253,8 +6234,6 @@ class SmsReminderWindow(QMainWindow):
             self.test_manual_patient_button.setEnabled(enabled)
         if hasattr(self, "preview_manual_patient_button"):
             self.preview_manual_patient_button.setEnabled(enabled)
-        if hasattr(self, "log_manual_patient_sent_button"):
-            self.log_manual_patient_sent_button.setEnabled(enabled)
         if hasattr(self, "load_manual_patient_button"):
             self.load_manual_patient_button.setEnabled(enabled)
         if hasattr(self, "preview_holiday_button"):
