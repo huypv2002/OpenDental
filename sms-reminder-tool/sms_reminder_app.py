@@ -2068,6 +2068,10 @@ class SmsReminderWindow(QMainWindow):
         self.worker: SendWorker | None = None
         self.active_send_kind = "appointments"
         self.active_send_fd2_mode = False
+        self.manual_draft_batch_queue: list[dict[str, Any]] = []
+        self.manual_draft_batch_label = ""
+        self.manual_draft_batch_total = 0
+        self.manual_draft_batch_completed = 0
         self.load_worker: LoadAppointmentsWorker | None = None
         self.recall_load_worker: LoadRecallWorker | None = None
         self.treatment_load_worker: LoadTreatmentWorker | None = None
@@ -3263,8 +3267,8 @@ class SmsReminderWindow(QMainWindow):
         self.send_holiday_selected_button.setToolTip("Fill one Holiday or Birthday SMS draft in Phone Link without pressing Enter.")
         self.send_holiday_selected_button.setObjectName("PrimaryButton")
         self.send_holiday_selected_button.clicked.connect(self.send_selected_holiday_sms)
-        self.send_holiday_all_button = QPushButton("Fill first in list")
-        self.send_holiday_all_button.setToolTip("Fill only the first visible Holiday or Birthday SMS draft.")
+        self.send_holiday_all_button = QPushButton("Fill all in list")
+        self.send_holiday_all_button.setToolTip("Fill Holiday or Birthday drafts one by one with Next/Cancel between rows.")
         self.send_holiday_all_button.clicked.connect(self.send_all_holiday_sms)
 
         controls.addWidget(QLabel("Campaign"), 0, 0)
@@ -5346,10 +5350,13 @@ class SmsReminderWindow(QMainWindow):
         self.save_settings(silent=True)
         selected = self.selected_recall_patients()
         if not selected:
-            QMessageBox.information(self, "No selection", "Please select one recall patient.")
-            return
-        if len(selected) != 1:
-            QMessageBox.information(self, "One patient only", "Please select one patient at a time for manual recall SMS.")
+            self.fill_first_draft_like_patient(
+                selected,
+                tab_label="Recall",
+                no_selection_message="Please select one recall patient.",
+                missing_template_message="Please choose a recall template first.",
+                flag_key="_Recall",
+            )
             return
         patient = selected[0]
         if int(patient.get("RecallSentCount") or 0) >= 2:
@@ -5360,10 +5367,13 @@ class SmsReminderWindow(QMainWindow):
             )
             if confirm != QMessageBox.Yes:
                 return
-        if not str(patient.get("_TemplateText") or "").strip():
-            QMessageBox.warning(self, "Missing template", "Please choose a recall template first.")
-            return
-        self.start_send([patient], fd2_mode=True)
+        self.fill_first_draft_like_patient(
+            selected,
+            tab_label="Recall",
+            no_selection_message="Please select one recall patient.",
+            missing_template_message="Please choose a recall template first.",
+            flag_key="_Recall",
+        )
 
     def preview_treatment_selected(self) -> None:
         self.save_settings(silent=True)
@@ -5381,20 +5391,13 @@ class SmsReminderWindow(QMainWindow):
 
     def send_selected_treatment_sms(self) -> None:
         selected = self.selected_treatment_patients()
-        if not selected:
-            QMessageBox.information(self, "No selection", "Please select one treatment patient.")
-            return
-        if len(selected) > 1:
-            QMessageBox.information(
-                self,
-                "One patient at a time",
-                "Treatment draft mode fills one SMS at a time. The first selected patient will be filled only.",
-            )
-        patient = selected[0]
-        if not str(patient.get("_TemplateText") or "").strip():
-            QMessageBox.warning(self, "Missing template", "Please choose a treatment template first.")
-            return
-        self.start_send([patient], fd2_mode=True)
+        self.fill_first_draft_like_patient(
+            selected,
+            tab_label="Treatment",
+            no_selection_message="Please select one treatment patient.",
+            missing_template_message="Please choose a treatment template first.",
+            flag_key="_Treatment",
+        )
 
     def preview_manual_patient_selected(self) -> None:
         self.save_settings(silent=True)
@@ -5412,16 +5415,13 @@ class SmsReminderWindow(QMainWindow):
 
     def send_selected_manual_patient_sms(self) -> None:
         selected = self.selected_manual_patients()
-        if not selected:
-            QMessageBox.information(self, "No selection", "Please select one patient.")
-            return
-        if len(selected) > 1:
-            QMessageBox.information(
-                self,
-                "One patient at a time",
-                "Patient draft mode fills one SMS at a time. The first selected patient will be filled only.",
-            )
-        self.start_send(selected[:1], fd2_mode=True)
+        self.fill_first_draft_like_patient(
+            selected,
+            tab_label="Patient",
+            no_selection_message="Please select one patient.",
+            missing_template_message="Please choose a patient template first.",
+            flag_key="_PatientManual",
+        )
 
     def test_manual_patient_without_sending(self) -> None:
         if self.compose_worker and self.compose_worker.isRunning():
@@ -5507,17 +5507,12 @@ class SmsReminderWindow(QMainWindow):
     def fill_selected_review_template(self) -> None:
         self.save_settings(silent=True)
         selected = self.selected_review_patients()
-        if not selected:
-            QMessageBox.information(self, "No selection", "Please select one patient.")
-            return
-        if len(selected) != 1:
-            QMessageBox.information(self, "One patient only", "Please select one patient at a time for manual Google review SMS.")
-            return
-        patient = selected[0]
-        if not str(patient.get("_TemplateText") or "").strip():
-            QMessageBox.warning(self, "Missing template", "Please choose a Google review template first.")
-            return
-        self.start_send([patient], fd2_mode=True)
+        self.fill_first_draft_like_patient(
+            selected,
+            tab_label="Google review",
+            no_selection_message="Please select one patient.",
+            missing_template_message="Please choose a Google review template first.",
+        )
 
     def preview_holiday_selected(self) -> None:
         self.save_settings(silent=True)
@@ -5535,32 +5530,26 @@ class SmsReminderWindow(QMainWindow):
 
     def send_selected_holiday_sms(self) -> None:
         selected = self.selected_holiday_patients()
-        if not selected:
-            QMessageBox.information(self, "No selection", "Please select one campaign patient.")
-            return
-        if len(selected) > 1:
-            QMessageBox.information(
-                self,
-                "One patient at a time",
-                "Holiday & Birthday draft mode fills one SMS at a time. The first selected patient will be filled only.",
-            )
-        self.start_holiday_send(selected[:1])
+        self.start_holiday_send(selected)
 
     def send_all_holiday_sms(self) -> None:
         filtered = list(self.holiday_table.property("_filtered_patients") or self.holiday_visible_patients())
         if not filtered:
             QMessageBox.information(self, "Nothing to fill", "There are no patients in the Holiday & Birthday list.")
             return
-        if self.holiday_table.rowCount() == 0:
+        state = self.lazy_table_state.setdefault("holiday_birthday", {"query": "", "limit": LAZY_TABLE_BATCH_SIZE})
+        if int(state.get("limit") or LAZY_TABLE_BATCH_SIZE) < len(filtered):
+            state["limit"] = len(filtered)
             self.render_holiday_patients()
         self.holiday_table.clearSelection()
-        self.holiday_table.selectRow(0)
+        for row in range(self.holiday_table.rowCount()):
+            self.holiday_table.selectRow(row)
         selected = self.selected_holiday_patients()
         self.holiday_table.clearSelection()
         if not selected:
             QMessageBox.information(self, "Nothing to fill", "There are no valid campaign recipients.")
             return
-        self.start_holiday_send(selected[:1])
+        self.start_holiday_send(selected)
 
     def render_appointments(self) -> None:
         self.row_template_combos = {}
@@ -6059,10 +6048,107 @@ class SmsReminderWindow(QMainWindow):
 
     def send_manual_patient_fd2_not_sent(self) -> None:
         selected = self.selected_manual_patients()
+        self.fill_first_draft_like_patient(
+            selected,
+            tab_label="Patient",
+            no_selection_message="Please select one Patient row for FD2 draft mode.",
+            missing_template_message="Please choose a patient template first.",
+            flag_key="_PatientManual",
+        )
+
+    def fill_first_draft_like_patient(
+        self,
+        selected: list[dict[str, Any]],
+        *,
+        tab_label: str,
+        no_selection_message: str,
+        missing_template_message: str,
+        flag_key: str = "",
+    ) -> bool:
         if not selected:
-            QMessageBox.information(self, "No selection", "Please select one Patient row for FD2 draft mode.")
+            QMessageBox.information(self, "No selection", no_selection_message)
+            return False
+        patients: list[dict[str, Any]] = []
+        for item in selected:
+            patient = dict(item)
+            if flag_key:
+                patient[flag_key] = True
+            if not str(patient.get("_TemplateText") or "").strip():
+                QMessageBox.warning(self, "Missing template", missing_template_message)
+                return False
+            patients.append(patient)
+        if not patients:
+            QMessageBox.information(self, "No selection", no_selection_message)
+            return False
+        self.clear_manual_draft_batch()
+        if len(patients) > 1:
+            self.manual_draft_batch_queue = patients[1:]
+            self.manual_draft_batch_label = tab_label
+            self.manual_draft_batch_total = len(patients)
+            self.manual_draft_batch_completed = 0
+            self.append_activity(f"{tab_label} draft batch started: {len(patients)} row(s).")
+            started = self.start_send([patients[0]], confirm_real=False, fd2_mode=True)
+            if not started:
+                self.clear_manual_draft_batch()
+            return started
+        return self.start_send([patients[0]], fd2_mode=True)
+
+    def clear_manual_draft_batch(self) -> None:
+        self.manual_draft_batch_queue = []
+        self.manual_draft_batch_label = ""
+        self.manual_draft_batch_total = 0
+        self.manual_draft_batch_completed = 0
+
+    def continue_manual_draft_batch(self, sent: int, failed: int) -> None:
+        if not self.manual_draft_batch_total:
             return
-        self.start_send(selected[:1], fd2_mode=True)
+        label = self.manual_draft_batch_label or "Manual"
+        if failed:
+            remaining = len(self.manual_draft_batch_queue)
+            self.append_activity(f"{label} draft batch stopped after a failed draft. Remaining: {remaining}.")
+            QMessageBox.warning(
+                self,
+                "Draft failed",
+                "The current draft could not be filled. Batch mode has stopped and no send log was written.",
+            )
+            self.clear_manual_draft_batch()
+            return
+        self.manual_draft_batch_completed += sent
+        if not self.manual_draft_batch_queue:
+            total = self.manual_draft_batch_total
+            self.append_activity(f"{label} draft batch complete: {self.manual_draft_batch_completed}/{total} draft(s) filled.")
+            QMessageBox.information(
+                self,
+                "Batch complete",
+                f"Finished filling {self.manual_draft_batch_completed} {label} draft(s).",
+            )
+            self.clear_manual_draft_batch()
+            return
+
+        remaining = len(self.manual_draft_batch_queue)
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Information)
+        message.setWindowTitle("Draft ready")
+        message.setText("Tin nhan da duoc dan vao Phone Link.")
+        message.setInformativeText(
+            "Vui long kiem tra noi dung SMS trong Phone Link. Neu dung, an Enter trong Phone Link de gui.\n\n"
+            "Sau khi da gui xong, bam Next de fill dong ke tiep. Bam Cancel de dung."
+        )
+        next_button = message.addButton("Next", QMessageBox.AcceptRole)
+        message.addButton("Cancel", QMessageBox.RejectRole)
+        message.setDefaultButton(next_button)
+        message.setDetailedText(f"Completed: {self.manual_draft_batch_completed}/{self.manual_draft_batch_total}\nRemaining: {remaining}")
+        message.exec()
+        if message.clickedButton() is not next_button:
+            self.append_activity(f"{label} draft batch canceled. Remaining: {remaining}.")
+            self.clear_manual_draft_batch()
+            return
+        next_patient = self.manual_draft_batch_queue.pop(0)
+        self.append_activity(
+            f"{label} draft batch next: {self.manual_draft_batch_completed + 1}/{self.manual_draft_batch_total} - {patient_name(next_patient)}"
+        )
+        if not self.start_send([next_patient], confirm_real=False, fd2_mode=True):
+            self.clear_manual_draft_batch()
 
     def start_send(self, appointments: list[dict[str, Any]], confirm_real: bool = True, silent: bool = False, fd2_mode: bool = False) -> bool:
         if self.worker and self.worker.isRunning():
@@ -6085,7 +6171,9 @@ class SmsReminderWindow(QMainWindow):
                     f"\n\nSkipped {missing_phone_count} row(s) with no valid phone number."
                     if missing_phone_count else ""
                 )
-                QMessageBox.information(self, "Nothing to send", "There are no pending phone numbers for this selection." + detail)
+                title = "Nothing to fill" if fd2_mode else "Nothing to send"
+                body = "There are no valid phone numbers for this draft." if fd2_mode else "There are no pending phone numbers for this selection."
+                QMessageBox.information(self, title, body + detail)
             else:
                 self.append_activity("No pending phone numbers for this target date.")
                 if missing_phone_count:
@@ -6126,32 +6214,13 @@ class SmsReminderWindow(QMainWindow):
         return True
 
     def start_holiday_send(self, patients: list[dict[str, Any]]) -> bool:
-        if not patients:
-            QMessageBox.information(self, "No selection", "Please select one campaign patient.")
-            return False
-        patient = patients[0]
-        missing_phone_count = sum(
-            1
-            for item in [patient]
-            if not any(digits_only(target.get("phone", "")) for target in item.get("PhoneTargets", []))
-            and not digits_only(item.get("Phone", ""))
+        return self.fill_first_draft_like_patient(
+            patients,
+            tab_label="Holiday & Birthday",
+            no_selection_message="Please select one campaign patient.",
+            missing_template_message="The selected patient does not have a campaign template. Please choose a Holiday & Birthday template first.",
+            flag_key="_Campaign",
         )
-        if missing_phone_count:
-            detail = (
-                f"\n\nSkipped {missing_phone_count} row(s) with no valid phone number."
-                if missing_phone_count else ""
-            )
-            QMessageBox.information(self, "Nothing to fill", "There are no valid phone numbers in this campaign selection." + detail)
-            return False
-        if not str(patient.get("_TemplateText") or "").strip():
-            QMessageBox.warning(
-                self,
-                "Missing template",
-                "The selected patient does not have a campaign template. Please choose a Holiday & Birthday template first.",
-            )
-            return False
-        patient["_Campaign"] = True
-        return self.start_send([patient], fd2_mode=True)
 
     def set_send_enabled(self, enabled: bool) -> None:
         self.send_selected_button.setEnabled(enabled)
@@ -6206,6 +6275,7 @@ class SmsReminderWindow(QMainWindow):
         if self.active_send_fd2_mode:
             self.active_send_fd2_mode = False
             self.append_activity(f"FD2 draft finished. Drafts ready: {sent}. Failed: {failed}.")
+            self.continue_manual_draft_batch(sent, failed)
             return
         manual_kind = self.active_send_kind in {"patient", "treatment", "recall", "campaign"}
         label = "Sent/dry-run" if self.config.dry_run else ("Logged sent" if manual_kind else "Needs review")
