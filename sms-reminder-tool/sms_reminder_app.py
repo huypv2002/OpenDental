@@ -85,7 +85,7 @@ HOLIDAY_EVENTS = [
 
 
 def is_manual_send_row(row: dict[str, Any]) -> bool:
-    return bool(row.get("_PatientManual") or row.get("_Treatment") or row.get("_Recall"))
+    return bool(row.get("_PatientManual") or row.get("_Treatment") or row.get("_Recall") or row.get("_Campaign"))
 
 
 def sendable_phone_targets(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1574,6 +1574,8 @@ class SendWorker(QThread):
                         repo.log_treatment_result(appointment, message, status, phone=phone)
                     elif appointment.get("_Recall"):
                         repo.log_recall_result(appointment, message, status, phone=phone)
+                    elif appointment.get("_Campaign"):
+                        repo.log_campaign_result(appointment, message, status, phone=phone)
                     else:
                         repo.log_result(appointment, message, status, phone=phone)
                     completed += 1
@@ -1583,15 +1585,20 @@ class SendWorker(QThread):
                         self.progress.emit(f"{status.upper()}: {patient} {source} -> {phone}")
                 except Exception as exc:  # noqa: BLE001 - show UI-friendly automation errors
                     failed += 1
-                    if appointment.get("_PatientManual"):
+                    if self.fd2_mode:
+                        self.progress.emit(f"Failed draft: {patient} {source} -> {exc}")
+                        self.progress.emit("Draft mode stopped. No send log was written.")
+                    elif appointment.get("_PatientManual"):
                         repo.log_patient_result(appointment, message, "failed", str(exc), phone=phone)
                     elif appointment.get("_Treatment"):
                         repo.log_treatment_result(appointment, message, "failed", str(exc), phone=phone)
                     elif appointment.get("_Recall"):
                         repo.log_recall_result(appointment, message, "failed", str(exc), phone=phone)
+                    elif appointment.get("_Campaign"):
+                        repo.log_campaign_result(appointment, message, "failed", str(exc), phone=phone)
                     else:
                         repo.log_result(appointment, message, "failed", str(exc), phone=phone)
-                    self.progress.emit(f"Failed: {patient} {source} -> {exc}")
+                        self.progress.emit(f"Failed: {patient} {source} -> {exc}")
                     self.progress.emit("Batch stopped. Remaining reminders were not attempted.")
                     self.finished.emit(completed, failed)
                     return
@@ -3057,7 +3064,8 @@ class SmsReminderWindow(QMainWindow):
         self.manage_treatment_templates_button.clicked.connect(self.open_treatment_templates_popup)
         self.preview_treatment_button = QPushButton("Preview selected")
         self.preview_treatment_button.clicked.connect(self.preview_treatment_selected)
-        self.send_treatment_selected_button = QPushButton("Send selected")
+        self.send_treatment_selected_button = QPushButton("Fill selected draft")
+        self.send_treatment_selected_button.setToolTip("Fill one treatment SMS draft in Phone Link without pressing Enter.")
         self.send_treatment_selected_button.setObjectName("PrimaryButton")
         self.send_treatment_selected_button.clicked.connect(self.send_selected_treatment_sms)
         action_row = QHBoxLayout()
@@ -3206,7 +3214,7 @@ class SmsReminderWindow(QMainWindow):
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("Holiday promotion and birthday SMS")
         title.setObjectName("HeroTitle")
-        subtitle = QLabel("Build a custom patient list first, then send the selected holiday or birthday template through Phone Link automation.")
+        subtitle = QLabel("Build a custom patient list first, then fill the selected holiday or birthday template in Phone Link for manual review.")
         subtitle.setObjectName("HeroSubtitle")
         hero_layout.addWidget(eyebrow)
         hero_layout.addWidget(title)
@@ -3251,10 +3259,12 @@ class SmsReminderWindow(QMainWindow):
         self.manage_holiday_templates_button.clicked.connect(self.open_holiday_templates_popup)
         self.preview_holiday_button = QPushButton("Preview selected")
         self.preview_holiday_button.clicked.connect(self.preview_holiday_selected)
-        self.send_holiday_selected_button = QPushButton("Send selected")
+        self.send_holiday_selected_button = QPushButton("Fill selected draft")
+        self.send_holiday_selected_button.setToolTip("Fill one Holiday or Birthday SMS draft in Phone Link without pressing Enter.")
+        self.send_holiday_selected_button.setObjectName("PrimaryButton")
         self.send_holiday_selected_button.clicked.connect(self.send_selected_holiday_sms)
-        self.send_holiday_all_button = QPushButton("Send all in list")
-        self.send_holiday_all_button.setObjectName("PrimaryButton")
+        self.send_holiday_all_button = QPushButton("Fill first in list")
+        self.send_holiday_all_button.setToolTip("Fill only the first visible Holiday or Birthday SMS draft.")
         self.send_holiday_all_button.clicked.connect(self.send_all_holiday_sms)
 
         controls.addWidget(QLabel("Campaign"), 0, 0)
@@ -5350,37 +5360,10 @@ class SmsReminderWindow(QMainWindow):
             )
             if confirm != QMessageBox.Yes:
                 return
-        targets = [
-            target for target in patient.get("PhoneTargets", [])
-            if digits_only(target.get("phone", ""))
-        ]
-        if not targets:
-            QMessageBox.warning(self, "Missing phone", "This patient does not have a valid phone number.")
+        if not str(patient.get("_TemplateText") or "").strip():
+            QMessageBox.warning(self, "Missing template", "Please choose a recall template first.")
             return
-        target = targets[0]
-        if len(targets) > 1:
-            options = [f"{item.get('source')}: {item.get('phone')}" for item in targets]
-            chosen, ok = QInputDialog.getItem(self, "Choose phone", "Send to:", options, 0, False)
-            if not ok:
-                return
-            index = options.index(chosen)
-            target = targets[index]
-        message = render_message(self.config, patient, patient.get("_TemplateText") or "")
-        try:
-            PhoneLinkSender(dry_run=False).compose_sms(target.get("phone", ""), message)
-            self.append_activity(f"FILLED RECALL: {patient_name(patient)} {target.get('source')} -> {target.get('phone')}")
-            mark_sent = QMessageBox.question(
-                self,
-                "Template filled",
-                "The recall SMS was filled in Phone Link.\n\n"
-                "After you review and click Send manually in Phone Link, mark this recall as sent?",
-            )
-            if mark_sent == QMessageBox.Yes:
-                self.repo.log_recall_result(patient, message, "sent", phone=target.get("phone", ""))
-                self.append_activity(f"MARKED SENT: {patient_name(patient)} {target.get('source')} -> {target.get('phone')}")
-                self.load_recall_patients()
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Phone Link error", str(exc))
+        self.start_send([patient], fd2_mode=True)
 
     def preview_treatment_selected(self) -> None:
         self.save_settings(silent=True)
@@ -5399,9 +5382,19 @@ class SmsReminderWindow(QMainWindow):
     def send_selected_treatment_sms(self) -> None:
         selected = self.selected_treatment_patients()
         if not selected:
-            QMessageBox.information(self, "No selection", "Please select at least one treatment patient.")
+            QMessageBox.information(self, "No selection", "Please select one treatment patient.")
             return
-        self.start_send(selected)
+        if len(selected) > 1:
+            QMessageBox.information(
+                self,
+                "One patient at a time",
+                "Treatment draft mode fills one SMS at a time. The first selected patient will be filled only.",
+            )
+        patient = selected[0]
+        if not str(patient.get("_TemplateText") or "").strip():
+            QMessageBox.warning(self, "Missing template", "Please choose a treatment template first.")
+            return
+        self.start_send([patient], fd2_mode=True)
 
     def preview_manual_patient_selected(self) -> None:
         self.save_settings(silent=True)
@@ -5521,34 +5514,10 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.information(self, "One patient only", "Please select one patient at a time for manual Google review SMS.")
             return
         patient = selected[0]
-        targets = [
-            target for target in patient.get("PhoneTargets", [])
-            if digits_only(target.get("phone", ""))
-        ]
-        if not targets:
-            QMessageBox.warning(self, "Missing phone", "This patient does not have a valid phone number.")
-            return
-        target = targets[0]
-        if len(targets) > 1:
-            options = [f"{item.get('source')}: {item.get('phone')}" for item in targets]
-            chosen, ok = QInputDialog.getItem(self, "Choose phone", "Fill to:", options, 0, False)
-            if not ok:
-                return
-            target = targets[options.index(chosen)]
-        message = render_message(self.config, patient, patient.get("_TemplateText") or "")
-        if not message.strip():
+        if not str(patient.get("_TemplateText") or "").strip():
             QMessageBox.warning(self, "Missing template", "Please choose a Google review template first.")
             return
-        try:
-            PhoneLinkSender(dry_run=False).compose_sms(target.get("phone", ""), message)
-            self.append_activity(f"FILLED REVIEW: {patient_name(patient)} {target.get('source')} -> {target.get('phone')}")
-            QMessageBox.information(
-                self,
-                "Template filled",
-                "The Google review SMS was filled in Phone Link.\n\nPlease review it and click Send manually.",
-            )
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Phone Link error", str(exc))
+        self.start_send([patient], fd2_mode=True)
 
     def preview_holiday_selected(self) -> None:
         self.save_settings(silent=True)
@@ -5567,30 +5536,31 @@ class SmsReminderWindow(QMainWindow):
     def send_selected_holiday_sms(self) -> None:
         selected = self.selected_holiday_patients()
         if not selected:
-            QMessageBox.information(self, "No selection", "Please select at least one campaign patient.")
+            QMessageBox.information(self, "No selection", "Please select one campaign patient.")
             return
-        self.start_holiday_send(selected)
+        if len(selected) > 1:
+            QMessageBox.information(
+                self,
+                "One patient at a time",
+                "Holiday & Birthday draft mode fills one SMS at a time. The first selected patient will be filled only.",
+            )
+        self.start_holiday_send(selected[:1])
 
     def send_all_holiday_sms(self) -> None:
         filtered = list(self.holiday_table.property("_filtered_patients") or self.holiday_visible_patients())
         if not filtered:
-            QMessageBox.information(self, "Nothing to send", "There are no patients in the Holiday & Birthday list.")
+            QMessageBox.information(self, "Nothing to fill", "There are no patients in the Holiday & Birthday list.")
             return
-        state = self.lazy_table_state.setdefault("holiday_birthday", {"query": "", "limit": LAZY_TABLE_BATCH_SIZE})
-        if int(state.get("limit") or LAZY_TABLE_BATCH_SIZE) < len(filtered):
-            state["limit"] = len(filtered)
+        if self.holiday_table.rowCount() == 0:
             self.render_holiday_patients()
-        rows_to_select = []
         self.holiday_table.clearSelection()
-        for row in range(self.holiday_table.rowCount()):
-            rows_to_select.append(row)
-            self.holiday_table.selectRow(row)
+        self.holiday_table.selectRow(0)
         selected = self.selected_holiday_patients()
         self.holiday_table.clearSelection()
         if not selected:
-            QMessageBox.information(self, "Nothing to send", "There are no valid campaign recipients.")
+            QMessageBox.information(self, "Nothing to fill", "There are no valid campaign recipients.")
             return
-        self.start_holiday_send(selected)
+        self.start_holiday_send(selected[:1])
 
     def render_appointments(self) -> None:
         self.row_template_combos = {}
@@ -6144,6 +6114,8 @@ class SmsReminderWindow(QMainWindow):
             self.active_send_kind = "treatment"
         elif appointments and appointments[0].get("_Recall"):
             self.active_send_kind = "recall"
+        elif appointments and appointments[0].get("_Campaign"):
+            self.active_send_kind = "campaign"
         else:
             self.active_send_kind = "appointments"
         self.active_send_fd2_mode = fd2_mode
@@ -6154,51 +6126,32 @@ class SmsReminderWindow(QMainWindow):
         return True
 
     def start_holiday_send(self, patients: list[dict[str, Any]]) -> bool:
-        if self.worker and self.worker.isRunning():
-            QMessageBox.information(self, "Sending", "A send job is already running.")
+        if not patients:
+            QMessageBox.information(self, "No selection", "Please select one campaign patient.")
             return False
+        patient = patients[0]
         missing_phone_count = sum(
-            1 for patient in patients
-            if not any(digits_only(target.get("phone", "")) for target in patient.get("PhoneTargets", []))
-            and not digits_only(patient.get("Phone", ""))
+            1
+            for item in [patient]
+            if not any(digits_only(target.get("phone", "")) for target in item.get("PhoneTargets", []))
+            and not digits_only(item.get("Phone", ""))
         )
-        sms_count = sum(
-            len([target for target in patient.get("PhoneTargets", []) if digits_only(target.get("phone", ""))])
-            or (1 if digits_only(patient.get("Phone", "")) else 0)
-            for patient in patients
-        )
-        if sms_count == 0:
+        if missing_phone_count:
             detail = (
                 f"\n\nSkipped {missing_phone_count} row(s) with no valid phone number."
                 if missing_phone_count else ""
             )
-            QMessageBox.information(self, "Nothing to send", "There are no valid phone numbers in this campaign selection." + detail)
+            QMessageBox.information(self, "Nothing to fill", "There are no valid phone numbers in this campaign selection." + detail)
             return False
-        missing_templates = [patient_name(patient) for patient in patients if not str(patient.get("_TemplateText") or "").strip()]
-        if missing_templates:
+        if not str(patient.get("_TemplateText") or "").strip():
             QMessageBox.warning(
                 self,
                 "Missing template",
-                "Some selected patients do not have a campaign template. Please choose a Holiday & Birthday template first.",
+                "The selected patient does not have a campaign template. Please choose a Holiday & Birthday template first.",
             )
             return False
-        if not self.config.dry_run:
-            confirm = QMessageBox.question(
-                self,
-                "Send campaign SMS?",
-                f"Send {sms_count} real Holiday & Birthday SMS message(s) through Phone Link?",
-            )
-            if confirm != QMessageBox.Yes:
-                return False
-        self.save_settings(silent=True)
-        self.set_send_enabled(False)
-        self.active_send_kind = "campaign"
-        self.active_campaign_recipient_keys = {self.campaign_recipient_key(patient) for patient in patients}
-        self.worker = CampaignSendWorker(self.config, patients)
-        self.worker.progress.connect(self.append_activity)
-        self.worker.finished.connect(self.send_finished)
-        self.worker.start()
-        return True
+        patient["_Campaign"] = True
+        return self.start_send([patient], fd2_mode=True)
 
     def set_send_enabled(self, enabled: bool) -> None:
         self.send_selected_button.setEnabled(enabled)
