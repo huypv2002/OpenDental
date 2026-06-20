@@ -62,6 +62,7 @@ DEFAULT_TREATMENT_DAYS = 21
 SECOND_APPOINTMENT_REMINDER_DAYS_AHEAD = 8
 SCHEDULE_SEND_GRACE_MINUTES = 30
 LAZY_TABLE_BATCH_SIZE = 50
+MANUAL_PATIENT_FETCH_BATCH_SIZE = 120
 SENT_STATUSES = {"sent", "dry-run"}
 SEND_SKIP_STATUSES = {"sent", "dry-run", "needs-review"}
 REVIEW_STATUSES = {"needs-review"}
@@ -413,11 +414,11 @@ class BridgeClient:
         )
         return data.get("patients") or []
 
-    def fetch_patients(self, query: str = "", limit: int = 500) -> list[dict[str, Any]]:
+    def fetch_patients(self, query: str = "", limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
         data = self.request(
             "GET",
             "/api/admin/patients",
-            params={"q": query.strip(), "limit": limit},
+            params={"q": query.strip(), "limit": limit, "offset": max(0, int(offset or 0))},
         )
         return data.get("patients") or []
 
@@ -1721,19 +1722,22 @@ class LoadPatientsWorker(QThread):
 
 
 class LoadManualPatientsWorker(QThread):
-    loaded = Signal(list, list)
+    loaded = Signal(list, list, str, int, bool)
     failed = Signal(str)
 
-    def __init__(self, config: AppConfig, query: str):
+    def __init__(self, config: AppConfig, query: str, limit: int = MANUAL_PATIENT_FETCH_BATCH_SIZE, offset: int = 0):
         super().__init__()
         self.config = config
         self.query = query
+        self.limit = max(1, int(limit or MANUAL_PATIENT_FETCH_BATCH_SIZE))
+        self.offset = max(0, int(offset or 0))
 
     def run(self) -> None:
         try:
             repo = BridgeClient(self.config)
-            patients = repo.fetch_patients(self.query, limit=500)
-            self.loaded.emit(patients, [])
+            patients = repo.fetch_patients(self.query, limit=self.limit + 1, offset=self.offset)
+            has_more = len(patients) > self.limit
+            self.loaded.emit(patients[: self.limit], [], self.query, self.offset, has_more)
         except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
             self.failed.emit(str(exc))
 
@@ -2052,6 +2056,9 @@ class SmsReminderWindow(QMainWindow):
         self.recall_patients: list[dict[str, Any]] = []
         self.treatment_patients: list[dict[str, Any]] = []
         self.manual_patients: list[dict[str, Any]] = []
+        self.manual_patient_active_query = ""
+        self.manual_patient_next_offset = 0
+        self.manual_patient_has_more = False
         self.review_patients: list[dict[str, Any]] = []
         self.holiday_patients: list[dict[str, Any]] = []
         self.worker: SendWorker | None = None
@@ -2461,19 +2468,32 @@ class SmsReminderWindow(QMainWindow):
         limit = max(LAZY_TABLE_BATCH_SIZE, int(state.get("limit") or LAZY_TABLE_BATCH_SIZE))
         return rows[: min(len(rows), limit)], rows
 
-    def maybe_load_more_lazy_rows(self, table: QTableWidget, key: str, render_callback: Any) -> None:
+    def maybe_load_more_lazy_rows(self, table: QTableWidget, key: str, render_callback: Any) -> bool:
         state = self.lazy_table_state.get(key)
         filtered_rows = list(table.property("_filtered_patients") or [])
         if not state or not filtered_rows:
-            return
+            return False
         current_limit = int(state.get("limit") or LAZY_TABLE_BATCH_SIZE)
         if current_limit >= len(filtered_rows):
-            return
+            return False
         scrollbar = table.verticalScrollBar()
         if scrollbar.value() < max(0, scrollbar.maximum() - 4):
-            return
+            return False
         state["limit"] = min(len(filtered_rows), current_limit + LAZY_TABLE_BATCH_SIZE)
         render_callback()
+        return True
+
+    def maybe_load_more_manual_patient_rows(self) -> None:
+        if self.maybe_load_more_lazy_rows(self.manual_patient_table, "manual_patient", self.render_manual_patients):
+            return
+        if not self.manual_patient_has_more:
+            return
+        if self.manual_patient_load_worker and self.manual_patient_load_worker.isRunning():
+            return
+        scrollbar = self.manual_patient_table.verticalScrollBar()
+        if scrollbar.value() < max(0, scrollbar.maximum() - 4):
+            return
+        self.load_more_manual_patients()
 
     def build_dashboard_tab(self) -> QWidget:
         page = QWidget()
@@ -2689,7 +2709,7 @@ class SmsReminderWindow(QMainWindow):
         self.manual_patient_table.setShowGrid(False)
         self.manual_patient_table.verticalHeader().setDefaultSectionSize(38)
         self.manual_patient_table.verticalScrollBar().valueChanged.connect(
-            lambda _value: self.maybe_load_more_lazy_rows(self.manual_patient_table, "manual_patient", self.render_manual_patients)
+            lambda _value: self.maybe_load_more_manual_patient_rows()
         )
         table_layout.addWidget(self.manual_patient_table)
         layout.addWidget(table_card, 1)
@@ -4510,30 +4530,70 @@ class SmsReminderWindow(QMainWindow):
         self.load_treatment_button.setEnabled(True)
         self.run_pending_auto_load("treatment", self.load_treatment_patients)
 
-    def load_manual_patients(self, show_busy_message: bool = True) -> None:
+    def manual_patient_search_query(self) -> str:
+        return self.manual_patient_search.text().strip() if hasattr(self, "manual_patient_search") else ""
+
+    def load_manual_patients(self, show_busy_message: bool = True, append: bool = False) -> None:
         if self.manual_patient_load_worker and self.manual_patient_load_worker.isRunning():
-            self.queue_pending_auto_load("manual_patient", show_busy_message, "Patient list is already loading.")
+            if not append:
+                self.queue_pending_auto_load("manual_patient", show_busy_message, "Patient list is already loading.")
             return
         self.ensure_templates_loaded()
         self.save_settings(silent=True)
         if hasattr(self, "load_manual_patient_button"):
             self.load_manual_patient_button.setEnabled(False)
-        query = self.manual_patient_search.text().strip() if hasattr(self, "manual_patient_search") else ""
-        self.statusBar().showMessage("Loading manual SMS patients...", 4000)
-        self.manual_patient_load_worker = LoadManualPatientsWorker(self.config, query)
+        query = self.manual_patient_search_query()
+        if append and query != self.manual_patient_active_query:
+            append = False
+        offset = self.manual_patient_next_offset if append else 0
+        if not append:
+            self.manual_patient_active_query = query
+            self.manual_patient_next_offset = 0
+            self.manual_patient_has_more = False
+            self.manual_patients = []
+            self.lazy_table_state.pop("manual_patient", None)
+            self.render_manual_patients()
+        phase = "Loading more patient search results..." if append else "Searching manual SMS patients..."
+        self.statusBar().showMessage(phase, 4000)
+        self.manual_patient_load_worker = LoadManualPatientsWorker(
+            self.config,
+            query,
+            limit=MANUAL_PATIENT_FETCH_BATCH_SIZE,
+            offset=offset,
+        )
         self.manual_patient_load_worker.loaded.connect(self.manual_patients_loaded)
         self.manual_patient_load_worker.failed.connect(self.manual_patients_failed)
         self.manual_patient_load_worker.finished.connect(self.manual_patient_load_finished)
         self.manual_patient_load_worker.start()
 
-    def manual_patients_loaded(self, patients: list[dict[str, Any]], logs: list[dict[str, Any]]) -> None:
-        self.manual_patients = [self.normalize_manual_patient(patient, logs) for patient in patients]
+    def load_more_manual_patients(self) -> None:
+        if not self.manual_patient_has_more:
+            return
+        self.load_manual_patients(show_busy_message=False, append=True)
+
+    def manual_patients_loaded(self, patients: list[dict[str, Any]], logs: list[dict[str, Any]], query: str, offset: int, has_more: bool) -> None:
+        if query != self.manual_patient_search_query():
+            self.manual_patient_has_more = False
+            self.manual_patients_auto_load_started = False
+            self.statusBar().showMessage("Refreshing patient search...", 1500)
+            return
+        normalized = [self.normalize_manual_patient(patient, logs) for patient in patients]
+        if offset <= 0:
+            self.manual_patients = normalized
+        else:
+            self.manual_patients.extend(normalized)
+        self.manual_patient_active_query = query
+        self.manual_patient_next_offset = offset + len(normalized)
+        self.manual_patient_has_more = has_more
         self.manual_patients_loaded_once = True
+        self.manual_patients_auto_load_started = False
         self.render_manual_patients()
-        self.statusBar().showMessage(f"Loaded {len(self.manual_patients)} manual SMS patients.", 4000)
+        more_note = " Scroll for more." if self.manual_patient_has_more else ""
+        self.statusBar().showMessage(f"Loaded {len(self.manual_patients)} patient result(s).{more_note}", 4000)
 
     def manual_patients_failed(self, message: str) -> None:
         self.manual_patients_auto_load_started = False
+        self.manual_patient_has_more = False
         QMessageBox.critical(self, "Patient SMS load error", message)
 
     def manual_patient_load_finished(self) -> None:
@@ -4824,8 +4884,8 @@ class SmsReminderWindow(QMainWindow):
 
     def render_manual_patients(self) -> None:
         self.manual_patient_template_combos = {}
-        query = self.manual_patient_search.text().strip().lower() if hasattr(self, "manual_patient_search") else ""
-        filtered_rows = [row for row in self.manual_patients if self.patient_matches_query(row, query)]
+        query = self.manual_patient_active_query
+        filtered_rows = list(self.manual_patients)
         visible_rows, filtered_rows = self.lazy_rows_for_table("manual_patient", filtered_rows, query)
         self.manual_patient_table.setUpdatesEnabled(False)
         self.manual_patient_table.setRowCount(len(visible_rows))

@@ -154,8 +154,9 @@ export async function listAdminAppointments(query = {}) {
 export async function listAdminPatients(query = {}) {
   const q = text(query.q || query.query);
   const limit = Math.max(1, Math.min(intValue(query.limit, 100), 1000));
+  const offset = Math.max(0, intValue(query.offset, 0));
   const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-  const values = q ? [like, like, like, like, like, like, like, like, like, limit] : [limit];
+  const values = q ? [like, like, like, like, like, like, like, like, like, limit, offset] : [limit, offset];
   const where = q
     ? `WHERE p.FName LIKE ? ESCAPE '\\\\'
         OR p.LName LIKE ? ESCAPE '\\\\'
@@ -172,19 +173,40 @@ export async function listAdminPatients(query = {}) {
       SELECT
         p.PatNum, p.FName, p.LName, p.WirelessPhone, p.HmPhone, p.WkPhone, p.Email, p.Gender,
         DATE_FORMAT(p.Birthdate, '%Y-%m-%d') AS Birthdate, p.Address, p.City, p.State, p.Zip, p.Language, p.PatStatus,
-        MAX(pa.Username) AS PortalUsername,
-        DATE_FORMAT(MAX(a.AptDateTime), '%Y-%m-%d %H:%i:%s') AS LastAppointment
+        MAX(pa.Username) AS PortalUsername
       FROM patient p
       LEFT JOIN luk_patient_accounts pa ON pa.PatNum = p.PatNum
-      LEFT JOIN appointment a ON a.PatNum = p.PatNum
       ${where}
       GROUP BY p.PatNum
       ORDER BY p.PatNum DESC
-      LIMIT ?
+      LIMIT ? OFFSET ?
     `,
     values
   );
-  return { patients: rows.map((row) => ({ ...row, Phone: normalizePhone(row.WirelessPhone || row.HmPhone || row.WkPhone || '') })) };
+  const patNums = rows.map((row) => Number(row.PatNum)).filter((patNum) => Number.isFinite(patNum));
+  const lastAppointmentByPatNum = new Map();
+  if (patNums.length) {
+    const placeholders = patNums.map(() => '?').join(',');
+    const [appointmentRows] = await pool.execute(
+      `
+        SELECT PatNum, DATE_FORMAT(MAX(AptDateTime), '%Y-%m-%d %H:%i:%s') AS LastAppointment
+        FROM appointment
+        WHERE PatNum IN (${placeholders})
+        GROUP BY PatNum
+      `,
+      patNums
+    );
+    for (const row of appointmentRows) {
+      lastAppointmentByPatNum.set(Number(row.PatNum), row.LastAppointment || null);
+    }
+  }
+  return {
+    patients: rows.map((row) => ({
+      ...row,
+      LastAppointment: lastAppointmentByPatNum.get(Number(row.PatNum)) || null,
+      Phone: normalizePhone(row.WirelessPhone || row.HmPhone || row.WkPhone || ''),
+    })),
+  };
 }
 
 export async function saveAdminPatient(body = {}) {
