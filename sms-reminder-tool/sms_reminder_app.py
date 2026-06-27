@@ -98,6 +98,33 @@ def sendable_phone_targets(row: dict[str, Any]) -> list[dict[str, Any]]:
     return [target for target in targets if target.get("status") not in SEND_SKIP_STATUSES]
 
 
+def patient_number_search_term(query: str) -> str:
+    query = str(query or "").strip()
+    if not query.startswith("#"):
+        return ""
+    return digits_only(query[1:])
+
+
+def bridge_patient_search_query(query: str) -> str:
+    pat_num = patient_number_search_term(query)
+    return pat_num if pat_num else str(query or "").strip()
+
+
+def row_pat_num(row: dict[str, Any]) -> str:
+    return digits_only(str(row.get("PatNum") or row.get("PatientNumber") or ""))
+
+
+def row_matches_patient_search(row: dict[str, Any], query: str, values: list[Any]) -> bool:
+    query = str(query or "").strip()
+    if not query:
+        return True
+    pat_num = patient_number_search_term(query)
+    if pat_num:
+        return row_pat_num(row) == pat_num
+    haystack = " ".join(str(value or "") for value in values).lower()
+    return query.lower() in haystack
+
+
 def append_fd2_debug_log(message: str) -> None:
     try:
         timestamp = clinic_now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1718,11 +1745,12 @@ class LoadPatientsWorker(QThread):
         super().__init__()
         self.config = config
         self.query = query
+        self.bridge_query = bridge_patient_search_query(query)
 
     def run(self) -> None:
         try:
             repo = BridgeClient(self.config)
-            self.loaded.emit(repo.fetch_patients(self.query))
+            self.loaded.emit(repo.fetch_patients(self.bridge_query))
         except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
             self.failed.emit(str(exc))
 
@@ -1735,13 +1763,14 @@ class LoadManualPatientsWorker(QThread):
         super().__init__()
         self.config = config
         self.query = query
+        self.bridge_query = bridge_patient_search_query(query)
         self.limit = max(1, int(limit or 500))
         self.offset = max(0, int(offset or 0))
 
     def run(self) -> None:
         try:
             repo = BridgeClient(self.config)
-            patients = repo.fetch_patients(self.query, limit=self.limit + 1, offset=self.offset)
+            patients = repo.fetch_patients(self.bridge_query, limit=self.limit + 1, offset=self.offset)
             has_more = len(patients) > self.limit
             self.loaded.emit(patients[: self.limit], [], self.query, self.offset, has_more)
         except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
@@ -4866,7 +4895,7 @@ class SmsReminderWindow(QMainWindow):
     def render_manual_patients(self) -> None:
         self.manual_patient_template_combos = {}
         query = self.manual_patient_active_query
-        filtered_rows = list(self.manual_patients)
+        filtered_rows = [row for row in self.manual_patients if self.patient_matches_query(row, query)]
         visible_rows, filtered_rows = self.lazy_rows_for_table("manual_patient", filtered_rows, query)
         self.manual_patient_table.setUpdatesEnabled(False)
         self.manual_patient_table.blockSignals(True)
@@ -4950,19 +4979,7 @@ class SmsReminderWindow(QMainWindow):
         query = self.holiday_search.text().strip().lower() if hasattr(self, "holiday_search") else ""
         filtered_rows: list[dict[str, Any]] = []
         for row in self.holiday_patients:
-            haystack = " ".join(
-                str(value or "")
-                for value in (
-                    patient_name(row),
-                    row.get("Phone"),
-                    row.get("Email"),
-                    row.get("Language"),
-                    row.get("Birthdate"),
-                    row.get("PatNum"),
-                    row.get("_CampaignName"),
-                )
-            ).lower()
-            if query and query not in haystack:
+            if not self.patient_matches_query(row, query, ("_CampaignName",)):
                 continue
             filtered_rows.append(row)
 
@@ -5029,8 +5046,6 @@ class SmsReminderWindow(QMainWindow):
         )
 
     def patient_matches_query(self, row: dict[str, Any], query: str, extra_fields: tuple[str, ...] = ()) -> bool:
-        if not query:
-            return True
         values = [
             patient_name(row),
             row.get("Phone"),
@@ -5046,8 +5061,7 @@ class SmsReminderWindow(QMainWindow):
             row.get("_TemplateKey"),
         ]
         values.extend(row.get(field) for field in extra_fields)
-        haystack = " ".join(str(value or "") for value in values).lower()
-        return query in haystack
+        return row_matches_patient_search(row, query, values)
 
     def make_open_dental_view_button(self, row: dict[str, Any]) -> QPushButton:
         button = QPushButton("View")
