@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
 
 
 def app_runtime_dir() -> Path:
-    if getattr(sys, "frozen", False):
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
 
