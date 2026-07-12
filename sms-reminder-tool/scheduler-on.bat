@@ -106,15 +106,38 @@ exit /b 1
 rem Scheduler entrypoint: open Phone Link, then open tool and auto Start Monitoring.
 rem Keep one SMS tool instance only. This avoids duplicate monitoring batches.
 set "RUN_LOG=%~dp0scheduler-run.log"
+set "APP_EXE=%~dp0LUK Dental SMS Reminder Tool.exe"
+set "START_REMINDER_FLAG=%~dp0scheduler-start-reminder.flag"
 echo [%date% %time%] Start Monitoring task started. >> "%RUN_LOG%"
 whoami >> "%RUN_LOG%" 2>&1
 echo Working folder: %CD% >> "%RUN_LOG%"
 
+taskkill /IM "LUK Dental SMS Reminder Tool.exe" /F >nul 2>nul
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*sms_reminder_app.py*' } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }" >nul 2>nul
 
 echo [%date% %time%] Opening Phone Link. >> "%RUN_LOG%"
 start "" explorer.exe shell:AppsFolder\Microsoft.YourPhone_8wekyb3d8bbwe!App
 timeout /t 15 /nobreak >nul
+
+set "MONITORING_ARGS="
+set "AUTO_START_REMINDER=1"
+if exist "%START_REMINDER_FLAG%" (
+  set /p "AUTO_START_REMINDER="<"%START_REMINDER_FLAG%"
+)
+if not "%AUTO_START_REMINDER%"=="0" (
+  set "MONITORING_ARGS=%MONITORING_ARGS% --start-reminder-monitoring"
+)
+echo [%date% %time%] Monitoring args:%MONITORING_ARGS% >> "%RUN_LOG%"
+
+if exist "%APP_EXE%" (
+  if not exist "sms_config.json" (
+    if exist "config.example.json" copy "config.example.json" "sms_config.json" >nul
+  )
+  echo [%date% %time%] Starting SMS reminder EXE. >> "%RUN_LOG%"
+  "%APP_EXE%" %MONITORING_ARGS% >> "%RUN_LOG%" 2>&1
+  echo [%date% %time%] SMS reminder EXE exited with code %errorlevel%. >> "%RUN_LOG%"
+  exit /b %errorlevel%
+)
 
 if not exist ".venv\Scripts\python.exe" (
   echo Creating Python virtual environment...
@@ -129,15 +152,6 @@ if not exist "sms_config.json" (
 )
 
 echo [%date% %time%] Starting SMS reminder app. >> "%RUN_LOG%"
-set "MONITORING_ARGS="
-set "AUTO_START_REMINDER=1"
-if exist "%START_REMINDER_FLAG%" (
-  set /p "AUTO_START_REMINDER="<"%START_REMINDER_FLAG%"
-)
-if not "%AUTO_START_REMINDER%"=="0" (
-  set "MONITORING_ARGS=%MONITORING_ARGS% --start-reminder-monitoring"
-)
-echo [%date% %time%] Monitoring args:%MONITORING_ARGS% >> "%RUN_LOG%"
 python sms_reminder_app.py %MONITORING_ARGS% >> "%RUN_LOG%" 2>&1
 echo [%date% %time%] SMS reminder app exited with code %errorlevel%. >> "%RUN_LOG%"
 exit /b %errorlevel%

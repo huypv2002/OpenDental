@@ -1,0 +1,137 @@
+name: Build SMS Reminder EXE
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build onefile Windows EXE
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: sms-reminder-tool
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-win-sms-py311-${{ hashFiles('sms-reminder-tool/requirements.txt') }}
+          restore-keys: pip-win-sms-py311-
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Verify critical imports
+        shell: pwsh
+        run: |
+          python -c "import sys; print(f'Python {sys.version}')"
+          @'
+          import sys
+
+          errors = []
+          modules = [
+              'PySide6', 'PySide6.QtWidgets', 'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtSvg',
+              'requests', 'dotenv', 'pyperclip',
+              'pywinauto', 'pywinauto.keyboard',
+              'json', 'pathlib', 'datetime', 'subprocess', 'platform',
+          ]
+          for mod in modules:
+              try:
+                  __import__(mod)
+                  print(f'  OK: {mod}')
+              except ImportError as e:
+                  print(f'  FAIL: {mod} -> {e}')
+                  errors.append(f'{mod}: {e}')
+          if errors:
+              print(f'=== {len(errors)} MISSING ===')
+              for e in errors:
+                  print(f'  {e}')
+              sys.exit(1)
+          print(f'All {len(modules)} modules OK!')
+          '@ | python
+
+      - name: Run unit tests
+        run: python -m unittest tests/test_send_worker_sequence.py
+
+      - name: Build onefile EXE
+        run: |
+          python -m PyInstaller sms_reminder_app.spec --clean --noconfirm
+
+      - name: Assemble release folder
+        shell: pwsh
+        run: |
+          $release = "LUK-Dental-SMS-Reminder"
+          New-Item -ItemType Directory -Force -Path $release | Out-Null
+          Copy-Item "dist/LUK Dental SMS Reminder Tool.exe" $release
+          Copy-Item "config.example.json" $release
+          Copy-Item "tooth.ico" $release
+          Copy-Item "run-sms-reminder.bat" $release
+          Copy-Item "scheduler-on.bat" $release
+          Copy-Item "scheduler-off.bat" $release
+          Copy-Item "delete-old-sms-tasks.bat" $release
+          Copy-Item "setup-scheduler-tasks.ps1" $release
+          Copy-Item "snapshot-phone-link-elements.bat" $release
+          Copy-Item "phone_link_snapshot.py" $release
+          Copy-Item "requirements.txt" $release
+          Copy-Item "BUILD_EXE.md" $release
+          New-Item -ItemType Directory -Force -Path "$release/assets" | Out-Null
+          Copy-Item "assets/*" "$release/assets" -Recurse
+          Get-FileHash "$release/LUK Dental SMS Reminder Tool.exe" -Algorithm SHA256 |
+            Format-List | Out-File "$release/SHA256SUMS.txt" -Encoding utf8
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $exe = "LUK-Dental-SMS-Reminder\LUK Dental SMS Reminder Tool.exe"
+          if (Test-Path $exe) {
+            $size = (Get-Item $exe).Length
+            $sizeMB = [math]::Round($size / 1MB, 2)
+            echo "Build OK! EXE size: ${sizeMB} MB"
+            $totalFiles = (Get-ChildItem -Recurse "LUK-Dental-SMS-Reminder" | Measure-Object).Count
+            echo "Total files in release folder: $totalFiles"
+          } else {
+            echo "ERROR: SMS Reminder EXE not found!"
+            Get-ChildItem -Recurse -Filter "*.exe" | ForEach-Object { echo $_.FullName }
+            exit 1
+          }
+
+      - name: Package as ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "LUK-Dental-SMS-Reminder" -DestinationPath "LUK-Dental-SMS-Reminder-windows.zip" -Force
+          $size = (Get-Item "LUK-Dental-SMS-Reminder-windows.zip").Length
+          $sizeMB = [math]::Round($size / 1MB, 2)
+          echo "ZIP size: ${sizeMB} MB"
+
+      - name: Upload Windows release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LUK-Dental-SMS-Reminder-windows
+          path: sms-reminder-tool/LUK-Dental-SMS-Reminder-windows.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: sms-reminder-tool/LUK-Dental-SMS-Reminder-windows.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

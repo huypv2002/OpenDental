@@ -49,12 +49,18 @@ from PySide6.QtWidgets import (
 )
 
 
-APP_DIR = Path(__file__).resolve().parent
+def app_runtime_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+APP_DIR = app_runtime_dir()
 APP_ICON_PATH = APP_DIR / "tooth.ico"
 FLAGS_DIR = APP_DIR / "assets" / "flags"
 CONFIG_PATH = APP_DIR / "sms_config.json"
 SCHEDULER_ON_PATH = APP_DIR / "scheduler-on.bat"
-BRIDGE_ENV_PATH = APP_DIR.parent / ".env"
+BRIDGE_ENV_PATHS = [APP_DIR / ".env", APP_DIR.parent / ".env"]
 FD2_DEBUG_LOG_PATH = APP_DIR / "fd2-debug.log"
 CLINIC_TIME_ZONE_NOTE = "Use this app on the clinic server set to Houston/Central time."
 DEFAULT_RECALL_CODES = "D1110,D1120,D4341,D4342"
@@ -344,8 +350,10 @@ class AppConfig:
             if migrated:
                 cfg.save()
             return cfg
-        if BRIDGE_ENV_PATH.exists():
-            load_dotenv(BRIDGE_ENV_PATH)
+        for env_path in BRIDGE_ENV_PATHS:
+            if env_path.exists():
+                load_dotenv(env_path)
+                break
         defaults = cls()
         cfg = cls(
             bridge_url=os.getenv("BRIDGE_URL", defaults.bridge_url),
