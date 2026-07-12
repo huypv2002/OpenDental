@@ -119,6 +119,7 @@ jobs:
           echo "ZIP size: ${sizeMB} MB"
 
       - name: Upload Windows release artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: LUK-Dental-SMS-Reminder-windows
