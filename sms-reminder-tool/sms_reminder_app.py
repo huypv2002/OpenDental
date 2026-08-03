@@ -452,7 +452,12 @@ class BridgeClient:
         data = self.request(
             "GET",
             "/api/admin/patients",
-            params={"q": query.strip(), "limit": limit, "offset": max(0, int(offset or 0))},
+            params={
+                "q": query.strip(),
+                "limit": limit,
+                "offset": max(0, int(offset or 0)),
+                "appointmentDate": clinic_today().isoformat(),
+            },
         )
         return data.get("patients") or []
 
@@ -2007,6 +2012,10 @@ def template_icon(key_or_country: str) -> QIcon:
 
 
 CUSTOM_DEFAULT_PLACEHOLDER_PREFIXES = {"password", "default", "custom"}
+APPOINTMENT_DATETIME_PLACEHOLDERS = {
+    "date", "date_full", "date_short", "weekday", "weekday_vi",
+    "relative_day", "relative_day_es", "relative_day_vi", "time", "time_lower",
+}
 
 
 class SafeTemplateValues(dict):
@@ -2043,6 +2052,11 @@ def render_custom_default_placeholders(message: str) -> str:
         return match.group(0)
 
     return re.sub(r"\{([A-Za-z][A-Za-z0-9]*)_([^{}\n]+)\}", replace_default, message)
+
+
+def template_uses_appointment_datetime(template: str) -> bool:
+    placeholders = set(re.findall(r"\{([A-Za-z][A-Za-z0-9_]*)\}", str(template or "")))
+    return bool(placeholders & APPOINTMENT_DATETIME_PLACEHOLDERS)
 
 
 def render_message(config: AppConfig, row: dict[str, Any], template: str) -> str:
@@ -2241,7 +2255,8 @@ class SmsReminderWindow(QMainWindow):
             data = self.repo.fetch_templates()
             tmpl = data.get("templates") or data or {}
             countries = data.get("countries") or {}
-            if not (tmpl.get("appointment") and tmpl.get("recall") and tmpl.get("treatment") and tmpl.get("review_google") and tmpl.get("holiday_birthday")):
+            missing_required_templates = "US_TODAY" not in (tmpl.get("appointment") or {})
+            if missing_required_templates or not (tmpl.get("appointment") and tmpl.get("recall") and tmpl.get("treatment") and tmpl.get("review_google") and tmpl.get("holiday_birthday")):
                 self.repo.init_default_templates()
                 data = self.repo.fetch_templates()
                 tmpl = data.get("templates") or data or {}
@@ -3421,7 +3436,7 @@ class SmsReminderWindow(QMainWindow):
         template_layout.addWidget(self.template_country_select, 1, 3)
         template_layout.addWidget(QLabel("Message"), 2, 0, Qt.AlignTop)
         template_layout.addWidget(self.template_text, 2, 1, 1, 3)
-        helper = QLabel("Placeholders: {formal_first_name}, {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {user_name}, {email}, {password_LUK2026#1}, {age}, {date}, {time}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
+        helper = QLabel("Placeholders: {formal_first_name}, {salutation}, {vi_title}, {vi_salutation}, {first_name}, {last_name}, {patient_name}, {user_name}, {email}, {password_LUK2026#1}, {age}, {relative_day}, {relative_day_es}, {relative_day_vi}, {weekday}, {weekday_vi}, {date}, {date_full}, {date_short}, {time}, {time_lower}, {clinic_name}, {clinic_phone}, {phone}, {apt_num}, {pat_num}")
         helper.setObjectName("Muted")
         helper.setWordWrap(True)
         template_layout.addWidget(helper, 3, 1, 1, 3)
@@ -6176,6 +6191,21 @@ class SmsReminderWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             if not silent:
                 QMessageBox.information(self, "Sending", "A send job is already running.")
+            return False
+        missing_appointment_context = [
+            appointment for appointment in appointments
+            if template_uses_appointment_datetime(appointment.get("_TemplateText") or "")
+            and not str(appointment.get("AptDateTime") or "").strip()
+        ]
+        if missing_appointment_context:
+            message = (
+                f"{len(missing_appointment_context)} selected patient(s) do not have an active appointment today. "
+                "The selected template needs appointment date/time fields, so no SMS draft was created."
+            )
+            if silent:
+                self.append_activity(message)
+            else:
+                QMessageBox.warning(self, "Today's appointment not found", message)
             return False
         missing_phone_count = sum(
             1 for appointment in appointments

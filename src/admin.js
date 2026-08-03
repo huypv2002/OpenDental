@@ -153,6 +153,7 @@ export async function listAdminAppointments(query = {}) {
 
 export async function listAdminPatients(query = {}) {
   const q = text(query.q || query.query);
+  const appointmentDate = query.appointmentDate ? dateValue(query.appointmentDate, 'appointmentDate') : '';
   const limit = Math.max(1, Math.min(intValue(query.limit, 100), 1000));
   const offset = Math.max(0, intValue(query.offset, 0));
   const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
@@ -185,27 +186,58 @@ export async function listAdminPatients(query = {}) {
   );
   const patNums = rows.map((row) => Number(row.PatNum)).filter((patNum) => Number.isFinite(patNum));
   const lastAppointmentByPatNum = new Map();
+  const todayAppointmentByPatNum = new Map();
   if (patNums.length) {
     const placeholders = patNums.map(() => '?').join(',');
-    const [appointmentRows] = await pool.execute(
-      `
+    const statusValues = config.booking.busyAptStatuses
+      .map((status) => intValue(status, NaN))
+      .filter(Number.isInteger);
+    const statusPlaceholders = statusValues.map(() => '?').join(',');
+    const [appointmentResult, todayAppointmentResult] = await Promise.all([
+      pool.execute(`
         SELECT PatNum, DATE_FORMAT(MAX(AptDateTime), '%Y-%m-%d %H:%i:%s') AS LastAppointment
         FROM appointment
         WHERE PatNum IN (${placeholders})
         GROUP BY PatNum
-      `,
-      patNums
-    );
+      `, patNums),
+      pool.execute(`
+        SELECT PatNum, AptNum, DATE_FORMAT(AptDateTime, '%Y-%m-%d %H:%i:%s') AS AptDateTime
+        FROM appointment
+        WHERE PatNum IN (${placeholders})
+          AND AptDateTime >= ${appointmentDate ? '?' : 'CURDATE()'}
+          AND AptDateTime < DATE_ADD(${appointmentDate ? '?' : 'CURDATE()'}, INTERVAL 1 DAY)
+          ${statusValues.length ? `AND AptStatus IN (${statusPlaceholders})` : ''}
+        ORDER BY AptDateTime, AptNum
+      `, [
+        ...patNums,
+        ...(appointmentDate ? [`${appointmentDate} 00:00:00`, `${appointmentDate} 00:00:00`] : []),
+        ...statusValues,
+      ]),
+    ]);
+    const [appointmentRows] = appointmentResult;
+    const [todayAppointmentRows] = todayAppointmentResult;
     for (const row of appointmentRows) {
       lastAppointmentByPatNum.set(Number(row.PatNum), row.LastAppointment || null);
     }
+    for (const row of todayAppointmentRows) {
+      const patNum = Number(row.PatNum);
+      if (!todayAppointmentByPatNum.has(patNum)) {
+        todayAppointmentByPatNum.set(patNum, row);
+      }
+    }
   }
   return {
-    patients: rows.map((row) => ({
-      ...row,
-      LastAppointment: lastAppointmentByPatNum.get(Number(row.PatNum)) || null,
-      Phone: normalizePhone(row.WirelessPhone || row.HmPhone || row.WkPhone || ''),
-    })),
+    patients: rows.map((row) => {
+      const patNum = Number(row.PatNum);
+      const todayAppointment = todayAppointmentByPatNum.get(patNum);
+      return {
+        ...row,
+        LastAppointment: lastAppointmentByPatNum.get(patNum) || null,
+        AptNum: todayAppointment?.AptNum || null,
+        AptDateTime: todayAppointment?.AptDateTime || null,
+        Phone: normalizePhone(row.WirelessPhone || row.HmPhone || row.WkPhone || ''),
+      };
+    }),
   };
 }
 

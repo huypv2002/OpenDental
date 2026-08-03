@@ -806,6 +806,7 @@ const SUPPORTED_SMS_SETTINGS = new Set(Object.keys(DEFAULT_SMS_SETTINGS));
 
 const DEFAULT_SMS_TEMPLATE_ROWS = [
   { key: 'US', category: 'appointment', country: 'US', text: "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment {relative_day}, {weekday}, {date_full} at {time_lower}. Thank you and have a great day." },
+  { key: 'US_TODAY', category: 'appointment', country: 'US', text: "Good morning {formal_first_name}, I'm Nhan Nguyen from Luk Dental. I would like to remind you of your appointment today, {weekday}, {date_full} at {time_lower}. Thank you and have a great day." },
   { key: 'ES', category: 'appointment', country: 'ES', text: "Buenos días {formal_first_name}, soy Nhan Nguyen de Luk Dental. Le recuerdo su cita {relative_day_es}, {weekday}, {date_full} a las {time_lower}. Gracias y que tenga un excelente día." },
   { key: 'VI', category: 'appointment', country: 'VI', text: "Good morning {vi_salutation}, nha khoa Luk Dental xin nhắc lịch hẹn cho {vi_title} vào {relative_day_vi}. {weekday_vi}, {date_short} lúc {time_lower}. Thank you and have a great day." },
   { key: 'US', category: 'recall', country: 'US', text: "Good morning {salutation}, this is Luk Dental. Your 6-month cleaning recall is due. Please call {clinic_phone} or book online at https://lukdental.us/dental-appointment/ to schedule your appointment. Thank you and have a great day." },
