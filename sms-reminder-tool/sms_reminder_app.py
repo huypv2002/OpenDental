@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -88,6 +89,15 @@ HOLIDAY_EVENTS = [
     "Christmas",
     "New Year Promotion",
 ]
+
+
+def workstation_name() -> str:
+    return str(os.getenv("COMPUTERNAME") or platform.node() or "unknown").strip()
+
+
+def is_fd2_workstation() -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "", workstation_name().lower())
+    return normalized == "fd2" or normalized.startswith("fd2")
 
 
 def is_manual_send_row(row: dict[str, Any]) -> bool:
@@ -854,6 +864,21 @@ class PhoneLinkSender:
         return f"{name} [{control_type}] {rect_text}"
 
     @staticmethod
+    def safe_control_name(control: Any) -> str:
+        name = PhoneLinkSender.control_name(control) or "<unnamed>"
+        name = re.sub(
+            r"(?i)(new conversation with\s+)[^.]+",
+            r"\1<redacted-recipient>",
+            name,
+        )
+        name = re.sub(
+            r"(?<!\w)\+?\d[\d\s().-]{6,}\d",
+            "<redacted-phone>",
+            name,
+        )
+        return name
+
+    @staticmethod
     def describe_control_detailed(control: Any, window_rect: Any | None = None) -> str:
         try:
             rect = control.rectangle()
@@ -897,7 +922,7 @@ class PhoneLinkSender:
         runtime_id = identity_value("runtime_id") or "?"
         value_chars = len(PhoneLinkSender.read_edit_value(control))
         return (
-            f"name={PhoneLinkSender.control_name(control) or '<unnamed>'!r} "
+            f"name={PhoneLinkSender.safe_control_name(control)!r} "
             f"type={PhoneLinkSender.control_type(control) or '<unknown>'!r} "
             f"auto_id={PhoneLinkSender.control_automation_id(control) or '<none>'!r} "
             f"class={PhoneLinkSender.control_class_name(control) or '<none>'!r} "
@@ -917,6 +942,7 @@ class PhoneLinkSender:
         except Exception:
             return []
         height = max(1, window_rect.bottom - window_rect.top)
+        width = max(1, window_rect.right - window_rect.left)
         relevant: list[tuple[int, int, Any]] = []
         for control in descendants:
             try:
@@ -926,6 +952,13 @@ class PhoneLinkSender:
             control_type = PhoneLinkSender.control_type(control)
             auto_id = PhoneLinkSender.control_automation_id(control).lower()
             name = PhoneLinkSender.normalized_control_text(control)
+            center_x = (rect.left + rect.right) / 2
+            right_conversation_pane = (
+                center_x >= window_rect.left + (width * 0.42)
+                and rect.right >= window_rect.left + (width * 0.50)
+            )
+            if not right_conversation_pane:
+                continue
             lower_pane = rect.bottom >= window_rect.top + (height * 0.55)
             input_like = PhoneLinkSender.control_is_message_input(control)
             message_hint = "message" in name or "tin nhắn" in name or "input" in auto_id
@@ -1750,6 +1783,8 @@ class ComposeReminderWorker(QThread):
 
     def run(self) -> None:
         appointment = self.appointment
+        run_id = uuid.uuid4().hex[:8]
+        mode_label = "FD2" if self.fd2_mode else "STANDARD"
         message = render_message(
             self.config,
             appointment,
@@ -1766,7 +1801,8 @@ class ComposeReminderWorker(QThread):
             if self.fd2_mode:
                 reset_fd2_debug_log()
                 append_fd2_debug_log(
-                    f"FD2 debug: draft worker rendered template chars={len(message)}, preview={' '.join(message.split())[:90]}"
+                    f"FD2 debug: run_id={run_id} workstation={workstation_name()!r} mode={mode_label} "
+                    f"draft worker rendered template chars={len(message)}, preview={' '.join(message.split())[:90]}"
                 )
             try:
                 sender = PhoneLinkSender(dry_run=False, fd2_mode=self.fd2_mode)
@@ -1775,8 +1811,16 @@ class ComposeReminderWorker(QThread):
                 sender.fd2_mode = self.fd2_mode
             sender.compose_sms(phone, message)
         except Exception as exc:  # noqa: BLE001 - surface Phone Link automation errors in UI
-            self.failed.emit(str(exc))
+            if self.fd2_mode:
+                append_fd2_debug_log(
+                    f"FD2 debug: run_id={run_id} FAILED mode={mode_label} error={exc}"
+                )
+            self.failed.emit(f"[{mode_label} run {run_id} on {workstation_name()}] {exc}")
             return
+        if self.fd2_mode:
+            append_fd2_debug_log(
+                f"FD2 debug: run_id={run_id} SUCCEEDED mode={mode_label} compose draft ready"
+            )
         self.succeeded.emit(phone, patient_name(appointment))
 
 
@@ -6071,9 +6115,13 @@ class SmsReminderWindow(QMainWindow):
 
         self.save_settings(silent=True)
         appointment = selected[0]
+        fd2_mode = is_fd2_workstation()
         self.set_send_enabled(False)
-        self.append_activity(f"Testing SMS draft without sending: {patient_name(appointment)}")
-        worker = ComposeReminderWorker(self.config, appointment)
+        self.append_activity(
+            f"Testing SMS draft without sending: {patient_name(appointment)} "
+            f"(workstation={workstation_name()}, mode={'FD2' if fd2_mode else 'standard'})"
+        )
+        worker = ComposeReminderWorker(self.config, appointment, fd2_mode=fd2_mode)
         self.compose_worker = worker
 
         def on_success(phone: str, patient: str) -> None:
