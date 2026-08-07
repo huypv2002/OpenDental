@@ -779,6 +779,24 @@ class PhoneLinkSender:
         return ""
 
     @staticmethod
+    def control_is_message_input(control: Any) -> bool:
+        automation_id = PhoneLinkSender.control_automation_id(control).lower()
+        control_type = PhoneLinkSender.control_type(control)
+        class_name = PhoneLinkSender.control_class_name(control).lower()
+        return (
+            automation_id == "inputtextbox"
+            or control_type in {"Edit", "Document"}
+            or class_name == "textbox"
+        )
+
+    @staticmethod
+    def control_has_keyboard_focus(control: Any) -> bool:
+        try:
+            return bool(control.has_keyboard_focus())
+        except Exception:
+            return False
+
+    @staticmethod
     def click_control(control: Any) -> None:
         try:
             control.set_focus()
@@ -836,6 +854,128 @@ class PhoneLinkSender:
         return f"{name} [{control_type}] {rect_text}"
 
     @staticmethod
+    def describe_control_detailed(control: Any, window_rect: Any | None = None) -> str:
+        try:
+            rect = control.rectangle()
+            rect_text = f"({rect.left},{rect.top},{rect.right},{rect.bottom})"
+            if window_rect is not None:
+                width = max(1, window_rect.right - window_rect.left)
+                height = max(1, window_rect.bottom - window_rect.top)
+                center_x = ((rect.left + rect.right) / 2 - window_rect.left) / width
+                center_y = ((rect.top + rect.bottom) / 2 - window_rect.top) / height
+                relative_text = f" rel=({center_x:.3f},{center_y:.3f})"
+            else:
+                relative_text = ""
+        except Exception:
+            rect_text = "?"
+            relative_text = ""
+        try:
+            visible = control.is_visible() if hasattr(control, "is_visible") else "?"
+        except Exception:
+            visible = "?"
+        try:
+            enabled = control.is_enabled() if hasattr(control, "is_enabled") else "?"
+        except Exception:
+            enabled = "?"
+        element_info = getattr(control, "element_info", None)
+
+        def identity_value(name: str) -> str:
+            try:
+                value = getattr(element_info, name, "")
+                if callable(value):
+                    value = value()
+                if isinstance(value, (list, tuple)):
+                    return ".".join(str(item) for item in value)
+                return str(value or "")
+            except Exception:
+                return ""
+
+        process_id = identity_value("process_id") or "?"
+        framework_id = identity_value("framework_id") or "?"
+        control_id = identity_value("control_id") or "?"
+        handle = identity_value("handle") or "?"
+        runtime_id = identity_value("runtime_id") or "?"
+        value_chars = len(PhoneLinkSender.read_edit_value(control))
+        return (
+            f"name={PhoneLinkSender.control_name(control) or '<unnamed>'!r} "
+            f"type={PhoneLinkSender.control_type(control) or '<unknown>'!r} "
+            f"auto_id={PhoneLinkSender.control_automation_id(control) or '<none>'!r} "
+            f"class={PhoneLinkSender.control_class_name(control) or '<none>'!r} "
+            f"rect={rect_text}{relative_text} visible={visible} enabled={enabled} "
+            f"focused={PhoneLinkSender.control_has_keyboard_focus(control)} "
+            f"message_input={PhoneLinkSender.control_is_message_input(control)} value_chars={value_chars} "
+            f"pid={process_id} framework={framework_id!r} control_id={control_id!r} "
+            f"handle={handle!r} runtime_id={runtime_id!r}"
+        )
+
+    @staticmethod
+    def relevant_fd2_elements(window: Any, limit: int = 40) -> list[Any]:
+        try:
+            wrapper = window.wrapper_object()
+            window_rect = wrapper.rectangle()
+            descendants = wrapper.descendants()
+        except Exception:
+            return []
+        height = max(1, window_rect.bottom - window_rect.top)
+        relevant: list[tuple[int, int, Any]] = []
+        for control in descendants:
+            try:
+                rect = control.rectangle()
+            except Exception:
+                continue
+            control_type = PhoneLinkSender.control_type(control)
+            auto_id = PhoneLinkSender.control_automation_id(control).lower()
+            name = PhoneLinkSender.normalized_control_text(control)
+            lower_pane = rect.bottom >= window_rect.top + (height * 0.55)
+            input_like = PhoneLinkSender.control_is_message_input(control)
+            message_hint = "message" in name or "tin nhắn" in name or "input" in auto_id
+            useful_type = control_type in {"Edit", "Document", "Pane", "Button"}
+            if not input_like and not message_hint and not (lower_pane and useful_type):
+                continue
+            try:
+                if hasattr(control, "is_visible") and not control.is_visible():
+                    continue
+            except Exception:
+                pass
+            relevant.append((rect.top, rect.left, control))
+        relevant.sort(key=lambda item: (item[0], item[1]))
+        return [item[2] for item in relevant[:max(1, limit)]]
+
+    @staticmethod
+    def focused_control_fd2(window: Any) -> Any | None:
+        try:
+            descendants = window.wrapper_object().descendants()
+        except Exception:
+            return None
+        for control in descendants:
+            if PhoneLinkSender.control_has_keyboard_focus(control):
+                return control
+        return None
+
+    @staticmethod
+    def keyboard_focus_message_box_fd2(window: Any, trace: Callable[[str], None] | None = None) -> Any | None:
+        try:
+            window.set_focus()
+        except Exception:
+            pass
+
+        # Do not press Enter or Space here: Tab navigation is deliberately
+        # non-destructive and stops as soon as the real message input is focused.
+        for index, keys in enumerate(("{TAB}", "{TAB}", "{TAB}", "+{TAB}", "+{TAB}"), start=1):
+            PhoneLinkSender.slow_keys(keys, 0.18)
+            focused = PhoneLinkSender.focused_control_fd2(window)
+            if trace is not None:
+                detail = (
+                    PhoneLinkSender.describe_control_detailed(focused)
+                    if focused is not None
+                    else "<UIA did not expose a focused control>"
+                )
+                trace(f"keyboard focus fallback step {index} keys={keys}: {detail}")
+            if focused is not None and PhoneLinkSender.control_is_message_input(focused):
+                return focused
+        return None
+
+    @staticmethod
     def clipboard_preview(limit: int = 80) -> str:
         try:
             value = PhoneLinkSender.normalize_clipboard_text(pyperclip.paste())
@@ -850,17 +990,48 @@ class PhoneLinkSender:
     def click_fd2_compose_coords(window: Any) -> tuple[int, int]:
         from pywinauto import mouse
 
-        for control in PhoneLinkSender.message_box_candidates_fd2(window)[:6]:
+        candidates = PhoneLinkSender.message_box_candidates_fd2(window)
+        input_candidates = [
+            control for control in candidates
+            if PhoneLinkSender.control_is_message_input(control)
+        ]
+        other_candidates = [
+            control for control in candidates
+            if not PhoneLinkSender.control_is_message_input(control)
+        ]
+        for control in (input_candidates + other_candidates)[:8]:
             try:
-                return PhoneLinkSender.click_control_center(control)
+                coords = PhoneLinkSender.click_control_center(control)
+                time.sleep(0.12)
+                if PhoneLinkSender.control_has_keyboard_focus(control):
+                    return coords
+                if PhoneLinkSender.control_is_message_input(control):
+                    # Some Phone Link builds do not expose HasKeyboardFocus even
+                    # though the real InputTextBox accepted the click.
+                    return coords
             except Exception:
                 continue
+
+        # Reuse the simpler R5 title-based lookup before coordinate fallback.
+        # This keeps FD2 isolated while allowing a Phone Link build that exposes
+        # the classic "Send a message" control to use the known-good target.
+        try:
+            result = PhoneLinkSender.find_message_box(window)
+            if result is not None:
+                control = result[0]
+                if PhoneLinkSender.control_is_message_input(control):
+                    return PhoneLinkSender.click_control_center(control)
+        except Exception:
+            pass
 
         rect = window.wrapper_object().rectangle()
         width = rect.right - rect.left
         height = rect.bottom - rect.top
-        last_coords = (int(rect.left + (width * 0.72)), int(rect.top + (height * 0.93)))
-        for y_ratio in (0.94, 0.97, 0.99):
+        last_coords = (int(rect.left + (width * 0.72)), int(rect.top + (height * 0.89)))
+        # Phone Link's compose field is normally in the lower conversation pane,
+        # but 0.97-0.99 lands on/outside the bottom chrome on FD2 at some DPI
+        # settings. Sweep the same safer band used by the working R5 path.
+        for y_ratio in (0.84, 0.87, 0.89, 0.92):
             for x_ratio in (0.72, 0.62, 0.84):
                 last_coords = (
                     int(rect.left + (width * x_ratio)),
@@ -1210,12 +1381,52 @@ class PhoneLinkSender:
             )
         self.fd2_trace(f"template copied to clipboard: chars={len(message)}, preview={PhoneLinkSender.clipboard_preview()}")
 
+        window_rect = None
+        try:
+            window_rect = window.wrapper_object().rectangle()
+            self.fd2_trace(
+                f"Phone Link window rect=({window_rect.left},{window_rect.top},{window_rect.right},{window_rect.bottom})"
+            )
+        except Exception as exc:
+            self.fd2_trace(f"Phone Link window rectangle unavailable: {exc}")
+        try:
+            candidates = PhoneLinkSender.message_box_candidates_fd2(window)[:8]
+            if not candidates:
+                self.fd2_trace("compose candidates: <none>")
+            for index, control in enumerate(candidates, start=1):
+                self.fd2_trace(
+                    f"compose candidate #{index}: "
+                    f"{PhoneLinkSender.describe_control_detailed(control, window_rect)}"
+                )
+        except Exception as exc:
+            self.fd2_trace(f"compose candidate scan failed: {exc}")
+        try:
+            elements = PhoneLinkSender.relevant_fd2_elements(window)
+            if not elements:
+                self.fd2_trace("relevant UIA element inventory: <none>")
+            for index, control in enumerate(elements, start=1):
+                self.fd2_trace(
+                    f"relevant UIA element #{index}: "
+                    f"{PhoneLinkSender.describe_control_detailed(control, window_rect)}"
+                )
+        except Exception as exc:
+            self.fd2_trace(f"relevant UIA element inventory failed: {exc}")
+
         last_error = ""
         for attempt in range(1, 3):
             try:
                 coords = PhoneLinkSender.click_fd2_compose_coords(window)
                 self.fd2_trace(f"clicked FD2 compose box attempt {attempt}: {coords}")
                 time.sleep(0.35)
+                focused = PhoneLinkSender.focused_control_fd2(window)
+                self.fd2_trace(
+                    "focused element after compose click: "
+                    + (
+                        PhoneLinkSender.describe_control_detailed(focused, window_rect)
+                        if focused is not None
+                        else "<UIA did not expose a focused control>"
+                    )
+                )
                 if attempt > 1:
                     PhoneLinkSender.slow_keys("^a", 0.08)
                     PhoneLinkSender.slow_keys("{BACKSPACE}", 0.08)
@@ -1224,6 +1435,15 @@ class PhoneLinkSender:
                     PhoneLinkSender.copy_template_to_clipboard(message, timeout=3.0)
                 PhoneLinkSender.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
                 self.fd2_trace(f"Ctrl+V sent to compose box attempt {attempt}.")
+                focused_after_paste = PhoneLinkSender.focused_control_fd2(window)
+                self.fd2_trace(
+                    "focused element after paste: "
+                    + (
+                        PhoneLinkSender.describe_control_detailed(focused_after_paste, window_rect)
+                        if focused_after_paste is not None
+                        else "<UIA did not expose a focused control>"
+                    )
+                )
 
                 candidates = PhoneLinkSender.message_box_candidates_fd2(window, message)
                 if candidates and PhoneLinkSender.wait_for_message_box_value_fd2(window, candidates[0], message, 1.2):
@@ -1236,6 +1456,22 @@ class PhoneLinkSender:
             except Exception as exc:
                 last_error = str(exc)
                 self.fd2_trace(f"compose paste attempt {attempt} failed: {exc}")
+
+        self.fd2_trace("coordinate/UIA focus was not verified; starting keyboard focus fallback.")
+        try:
+            keyboard_field = PhoneLinkSender.keyboard_focus_message_box_fd2(window, self.fd2_trace)
+            if keyboard_field is not None:
+                PhoneLinkSender.copy_template_to_clipboard(message, timeout=3.0)
+                PhoneLinkSender.slow_keys("^a", 0.08)
+                PhoneLinkSender.slow_keys("{BACKSPACE}", 0.08)
+                PhoneLinkSender.slow_keys("^v", self.MESSAGE_SETTLE_SECONDS)
+                if PhoneLinkSender.wait_for_message_box_value_fd2(window, keyboard_field, message, 2.0):
+                    self.fd2_trace("template paste verified after keyboard focus fallback.")
+                    return
+                self.fd2_trace("keyboard focus reached a message input, but paste verification was inconclusive.")
+        except Exception as exc:
+            last_error = str(exc)
+            self.fd2_trace(f"keyboard focus fallback failed: {exc}")
 
         if last_error:
             raise RuntimeError(f"FD2 mode could not focus the Phone Link compose box: {last_error}") from None

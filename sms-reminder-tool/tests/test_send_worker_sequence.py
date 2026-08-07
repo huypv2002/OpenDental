@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -37,6 +38,19 @@ class FakeRepo:
 
     def log_treatment_result(self, patient, message, status, error="", phone=None):
         EVENTS.append(("treatment-log", patient["PatNum"], phone, status, error, message))
+
+    def log_patient_result(self, patient, message, status, error="", phone=None):
+        EVENTS.append(("patient-log", patient["PatNum"], phone, status, error, message))
+
+    def log_campaign_result(self, patient, message, status, error="", phone=None):
+        EVENTS.append(("campaign-log", patient["PatNum"], phone, status, error, message))
+
+    def fetch_patients(self, query="", limit=500, offset=0):
+        EVENTS.append(("fetch-patients", query, limit, offset))
+        return [
+            {"PatNum": offset + index, "FName": f"Patient{index}", "LName": "Search", "Phone": "(281) 111-1111"}
+            for index in range(limit)
+        ]
 
 
 class FakePhoneLinkSender:
@@ -177,6 +191,109 @@ class SendWorkerSequenceTest(unittest.TestCase):
             ],
         )
 
+    def test_same_day_template_renders_appointment_date_and_time(self):
+        row = appointment(1001, 501, "First", "Patient", "(281) 111-1111")
+        row["AptDateTime"] = f"{app.clinic_today().isoformat()} 16:30:00"
+        row["_ReminderOffsetDays"] = 0
+
+        message = app.render_message(
+            self.config,
+            row,
+            "Appointment {relative_day}, {weekday}, {date_full} at {time_lower}.",
+        )
+
+        self.assertIn("Appointment today,", message)
+        self.assertIn("4:30 pm.", message)
+        self.assertNotIn("{date_full}", message)
+        self.assertNotIn("{time_lower}", message)
+
+    def test_template_datetime_placeholder_detection(self):
+        self.assertTrue(app.template_uses_appointment_datetime("Today at {time_lower} on {date_full}."))
+        self.assertFalse(app.template_uses_appointment_datetime("Hello {first_name}."))
+
+    def test_manual_patient_rows_ignore_old_status_and_log_sent(self):
+        row = appointment(1001, 501, "Manual", "Patient", "(281) 111-1111", status="needs-review")
+        row["_PatientManual"] = True
+
+        worker = app.SendWorker(self.config, [row])
+        worker.run()
+
+        self.assertEqual(
+            EVENTS,
+            [
+                ("send", "(281) 111-1111", "Reminder for Manual at 9:00 am."),
+                ("patient-log", 501, "(281) 111-1111", "sent", "", "Reminder for Manual at 9:00 am."),
+            ],
+        )
+
+    def test_manual_patient_fd2_mode_fills_one_draft_without_logging(self):
+        first = appointment(1001, 501, "Manual", "Patient", "(281) 111-1111", status="needs-review")
+        second = appointment(1002, 502, "Second", "Patient", "(281) 222-2222")
+        first["_PatientManual"] = True
+        second["_PatientManual"] = True
+
+        old_fd2_log_path = app.FD2_DEBUG_LOG_PATH
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app.FD2_DEBUG_LOG_PATH = Path(temp_dir) / "fd2-debug.log"
+            try:
+                worker = app.SendWorker(self.config, [first, second], fd2_mode=True)
+                worker.run()
+            finally:
+                app.FD2_DEBUG_LOG_PATH = old_fd2_log_path
+
+        self.assertEqual(
+            EVENTS,
+            [("send", "(281) 111-1111", "Reminder for Manual at 9:00 am.")],
+        )
+
+    def test_manual_patient_fd2_failure_does_not_write_failed_log(self):
+        FakePhoneLinkSender.fail_on_phone = "(281) 111-1111"
+        row = appointment(1001, 501, "Manual", "Patient", "(281) 111-1111", status="needs-review")
+        row["_PatientManual"] = True
+
+        old_fd2_log_path = app.FD2_DEBUG_LOG_PATH
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app.FD2_DEBUG_LOG_PATH = Path(temp_dir) / "fd2-debug.log"
+            try:
+                worker = app.SendWorker(self.config, [row], fd2_mode=True)
+                worker.run()
+            finally:
+                app.FD2_DEBUG_LOG_PATH = old_fd2_log_path
+
+        self.assertEqual(
+            EVENTS,
+            [("send", "(281) 111-1111", "Reminder for Manual at 9:00 am.")],
+        )
+
+    def test_manual_patient_worker_searches_one_page_with_has_more_marker(self):
+        captured = []
+        worker = app.LoadManualPatientsWorker(self.config, "smith", limit=2, offset=4)
+        worker.loaded.connect(lambda patients, logs, query, offset, has_more: captured.append((patients, logs, query, offset, has_more)))
+
+        worker.run()
+
+        self.assertEqual(EVENTS, [("fetch-patients", "smith", 3, 4)])
+        self.assertEqual(captured[0][2:], ("smith", 4, True))
+        self.assertEqual([patient["PatNum"] for patient in captured[0][0]], [4, 5])
+
+    def test_hash_patient_search_matches_only_patient_number(self):
+        row = {"PatNum": 501, "FName": "Manual", "LName": "Patient", "Phone": "(281) 111-1111"}
+        values = [app.patient_name(row), row.get("Phone"), row.get("PatNum")]
+
+        self.assertTrue(app.row_matches_patient_search(row, "281", values))
+        self.assertFalse(app.row_matches_patient_search(row, "#281", values))
+        self.assertTrue(app.row_matches_patient_search(row, "#501", values))
+
+    def test_manual_patient_worker_strips_hash_for_bridge_but_keeps_ui_query(self):
+        captured = []
+        worker = app.LoadManualPatientsWorker(self.config, "#281", limit=2, offset=0)
+        worker.loaded.connect(lambda patients, logs, query, offset, has_more: captured.append((patients, logs, query, offset, has_more)))
+
+        worker.run()
+
+        self.assertEqual(EVENTS, [("fetch-patients", "281", 3, 0)])
+        self.assertEqual(captured[0][2], "#281")
+
     def test_compose_worker_fills_template_without_sending_or_logging(self):
         row = appointment(1001, 501, "First", "Patient", "(281) 111-1111")
         row["_TemplateText"] = "Custom reminder for {first_name}."
@@ -191,6 +308,123 @@ class SendWorkerSequenceTest(unittest.TestCase):
 
 
 class PhoneLinkSenderSequenceTest(unittest.TestCase):
+    def test_fd2_detailed_element_log_identifies_exact_input_without_value_text(self):
+        class FakeControl:
+            element_info = types.SimpleNamespace(
+                name="Send a message",
+                control_type="Edit",
+                automation_id="InputTextBox",
+                class_name="TextBox",
+            )
+
+            def rectangle(self):
+                return types.SimpleNamespace(left=500, top=700, right=900, bottom=760)
+
+            def is_visible(self):
+                return True
+
+            def is_enabled(self):
+                return True
+
+            def has_keyboard_focus(self):
+                return True
+
+            def get_value(self):
+                return "Private patient message"
+
+        detail = app.PhoneLinkSender.describe_control_detailed(
+            FakeControl(),
+            types.SimpleNamespace(left=100, top=100, right=1000, bottom=800),
+        )
+
+        self.assertIn("auto_id='InputTextBox'", detail)
+        self.assertIn("type='Edit'", detail)
+        self.assertIn("focused=True", detail)
+        self.assertIn("message_input=True", detail)
+        self.assertIn("value_chars=23", detail)
+        self.assertIn("pid=?", detail)
+        self.assertIn("runtime_id='?'", detail)
+        self.assertNotIn("Private patient message", detail)
+
+    def test_fd2_keyboard_fallback_stops_on_real_message_input(self):
+        events = []
+        old_slow_keys = app.PhoneLinkSender.slow_keys
+        old_focused = app.PhoneLinkSender.focused_control_fd2
+
+        class FakeWindow:
+            def set_focus(self):
+                events.append("window-focus")
+
+        class FakeControl:
+            def __init__(self, control_type, automation_id):
+                self.element_info = types.SimpleNamespace(
+                    name="",
+                    control_type=control_type,
+                    automation_id=automation_id,
+                    class_name="TextBox" if control_type == "Edit" else "Button",
+                )
+
+        focused_controls = iter([
+            FakeControl("Button", "AttachButton"),
+            FakeControl("Edit", "InputTextBox"),
+        ])
+
+        try:
+            app.PhoneLinkSender.slow_keys = staticmethod(lambda keys, delay=None: events.append(keys))
+            app.PhoneLinkSender.focused_control_fd2 = staticmethod(lambda _window: next(focused_controls))
+
+            result = app.PhoneLinkSender.keyboard_focus_message_box_fd2(FakeWindow())
+
+            self.assertEqual(result.element_info.automation_id, "InputTextBox")
+            self.assertEqual(events, ["window-focus", "{TAB}", "{TAB}"])
+        finally:
+            app.PhoneLinkSender.slow_keys = staticmethod(old_slow_keys)
+            app.PhoneLinkSender.focused_control_fd2 = staticmethod(old_focused)
+
+    def test_fd2_compose_click_prefers_real_input_over_lower_text_label(self):
+        events = []
+        old_candidates = app.PhoneLinkSender.message_box_candidates_fd2
+        old_click_center = app.PhoneLinkSender.click_control_center
+        old_sleep = app.time.sleep
+        old_pywinauto = sys.modules.get("pywinauto")
+
+        class FakeControl:
+            def __init__(self, name, control_type, automation_id, top):
+                self.element_info = types.SimpleNamespace(
+                    name=name,
+                    control_type=control_type,
+                    automation_id=automation_id,
+                    class_name="TextBox" if control_type == "Edit" else "TextBlock",
+                )
+                self.top = top
+
+            def has_keyboard_focus(self):
+                return self.element_info.control_type == "Edit"
+
+        label = FakeControl("Send a message", "Text", "MessagePlaceholder", 760)
+        input_box = FakeControl("", "Edit", "InputTextBox", 720)
+
+        try:
+            app.PhoneLinkSender.message_box_candidates_fd2 = staticmethod(lambda _window: [label, input_box])
+            app.PhoneLinkSender.click_control_center = staticmethod(
+                lambda control: events.append(control.element_info.automation_id) or (500, control.top)
+            )
+            app.time.sleep = lambda _seconds: None
+            sys.modules["pywinauto"] = types.SimpleNamespace(mouse=types.SimpleNamespace(click=lambda **_kwargs: None))
+
+            coords = app.PhoneLinkSender.click_fd2_compose_coords(object())
+
+            self.assertEqual(events, ["InputTextBox"])
+            self.assertEqual(coords, (500, 720))
+        finally:
+            app.PhoneLinkSender.message_box_candidates_fd2 = staticmethod(old_candidates)
+            app.PhoneLinkSender.click_control_center = staticmethod(old_click_center)
+            app.time.sleep = old_sleep
+            if old_pywinauto is None:
+                sys.modules.pop("pywinauto", None)
+            else:
+                sys.modules["pywinauto"] = old_pywinauto
+
     def test_coordinate_fallback_runs_only_after_initial_paste_verification_fails(self):
         events = []
         original_copy = app.pyperclip.copy
