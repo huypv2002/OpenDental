@@ -1,0 +1,12 @@
+{
+  "bridge_url": "http://127.0.0.1:3008",
+  "api_token": "CHANGE_ME",
+  "clinic_name": "LUK Dental",
+  "clinic_phone": "281-760-1357",
+  "reminder_days_ahead": 1,
+  "scheduled_send_time": "11:00",
+  "appointment_statuses": [1],
+  "fallback_duration_minutes": 30,
+  "dry_run": false,
+  "scheduler_enabled": true
+}

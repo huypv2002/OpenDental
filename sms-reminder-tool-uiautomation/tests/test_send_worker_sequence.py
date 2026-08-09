@@ -10,6 +10,9 @@ from unittest.mock import patch
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "sms_reminder_app.py"
+APP_DIR = str(APP_PATH.parent)
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
 
 
 def load_app_module():
@@ -486,7 +489,6 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
         old_candidates = app.PhoneLinkSender.message_box_candidates_fd2
         old_click_center = app.PhoneLinkSender.click_control_center
         old_sleep = app.time.sleep
-        old_pywinauto = sys.modules.get("pywinauto")
 
         class FakeControl:
             def __init__(self, name, control_type, automation_id, top):
@@ -510,7 +512,6 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
                 lambda control: events.append(control.element_info.automation_id) or (500, control.top)
             )
             app.time.sleep = lambda _seconds: None
-            sys.modules["pywinauto"] = types.SimpleNamespace(mouse=types.SimpleNamespace(click=lambda **_kwargs: None))
 
             coords = app.PhoneLinkSender.click_fd2_compose_coords(object())
 
@@ -520,10 +521,6 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             app.PhoneLinkSender.message_box_candidates_fd2 = staticmethod(old_candidates)
             app.PhoneLinkSender.click_control_center = staticmethod(old_click_center)
             app.time.sleep = old_sleep
-            if old_pywinauto is None:
-                sys.modules.pop("pywinauto", None)
-            else:
-                sys.modules["pywinauto"] = old_pywinauto
 
     def test_coordinate_fallback_runs_only_after_initial_paste_verification_fails(self):
         events = []
@@ -615,8 +612,8 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
         old_open = app.PhoneLinkSender.open_phone_link
         old_close = app.PhoneLinkSender.close_phone_link
         old_wait_window = app.PhoneLinkSender.wait_for_phone_link_window
-        old_pywinauto = sys.modules.get("pywinauto")
-        old_keyboard = sys.modules.get("pywinauto.keyboard")
+        old_load_uiautomation = app.load_uiautomation
+        old_uia_send_keys = app.uia_send_keys
         clipboard = {"value": ""}
         focused = {"control": None}
 
@@ -665,33 +662,11 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
 
         window = FakeWindow()
 
-        class FakeDesktop:
-            def __init__(self, backend=None):
-                self.backend = backend
-
-            def window(self, title_re=None):
-                events.append(("window", title_re))
-                return window
-
-        class FakeApplication:
-            def __init__(self, backend=None):
-                self.backend = backend
-
         def fake_send_keys(keys):
             events.append(("key", keys))
             control = focused["control"]
             if keys == "^v" and control is not None:
                 control.value = clipboard["value"]
-
-        fake_mouse = types.SimpleNamespace(
-            click=lambda button, coords: events.append(("mouse-click", button, coords))
-        )
-        fake_pywinauto = types.SimpleNamespace(
-            Desktop=FakeDesktop,
-            Application=FakeApplication,
-            mouse=fake_mouse,
-        )
-        fake_keyboard = types.SimpleNamespace(send_keys=fake_send_keys)
 
         try:
             app.platform.system = lambda: "Windows"
@@ -710,10 +685,11 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             app.PhoneLinkSender.wait_for_phone_link_window = staticmethod(
                 lambda timeout=0, **_kwargs: events.append(("wait-window", timeout)) or window
             )
-            sys.modules["pywinauto"] = fake_pywinauto
-            sys.modules["pywinauto.keyboard"] = fake_keyboard
+            app.load_uiautomation = lambda: object()
+            app.uia_send_keys = fake_send_keys
 
-            app.PhoneLinkSender(dry_run=False).send_sms("(281) 111-1111", "Test message")
+            sender = app.PhoneLinkSender(dry_run=False)
+            app.PhoneLinkSender.send_sms.__wrapped__(sender, "(281) 111-1111", "Test message")
 
             self.assertEqual(
                 events,
@@ -745,14 +721,8 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             app.PhoneLinkSender.open_phone_link = old_open
             app.PhoneLinkSender.close_phone_link = old_close
             app.PhoneLinkSender.wait_for_phone_link_window = staticmethod(old_wait_window)
-            if old_pywinauto is None:
-                sys.modules.pop("pywinauto", None)
-            else:
-                sys.modules["pywinauto"] = old_pywinauto
-            if old_keyboard is None:
-                sys.modules.pop("pywinauto.keyboard", None)
-            else:
-                sys.modules["pywinauto.keyboard"] = old_keyboard
+            app.load_uiautomation = old_load_uiautomation
+            app.uia_send_keys = old_uia_send_keys
 
 
 if __name__ == "__main__":

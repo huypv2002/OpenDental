@@ -48,6 +48,14 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from uia_backend import (
+    UIADesktop,
+    focused_control,
+    load_uiautomation,
+    uia_click,
+    uia_send_keys,
+    uia_threaded,
+)
 
 
 def app_runtime_dir() -> Path:
@@ -803,9 +811,7 @@ class PhoneLinkSender:
         trace: Callable[[str], None] | None = None,
     ) -> Any:
         if desktop is None:
-            from pywinauto import Desktop
-
-            desktop = Desktop(backend="uia")
+            desktop = UIADesktop()
         deadline = time.monotonic() + max(0.1, timeout)
         while time.monotonic() < deadline:
             candidates = PhoneLinkSender.phone_link_window_candidates(desktop)
@@ -857,9 +863,7 @@ class PhoneLinkSender:
 
     @staticmethod
     def slow_keys(keys: str, delay: float | None = None) -> None:
-        from pywinauto.keyboard import send_keys
-
-        send_keys(keys)
+        uia_send_keys(keys)
         time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS if delay is None else delay)
 
     def focus_new_message(self, window: Any) -> None:
@@ -962,15 +966,10 @@ class PhoneLinkSender:
         except Exception:
             pass
         try:
-            from pywinauto import mouse
-
             rect = control.rectangle()
-            mouse.click(
-                button="left",
-                coords=(
-                    int((rect.left + rect.right) / 2),
-                    int((rect.top + rect.bottom) / 2),
-                ),
+            uia_click(
+                int((rect.left + rect.right) / 2),
+                int((rect.top + rect.bottom) / 2),
             )
         except Exception:
             pass
@@ -991,9 +990,7 @@ class PhoneLinkSender:
             return coords
         except Exception:
             pass
-        from pywinauto import mouse
-
-        mouse.click(button="left", coords=coords)
+        uia_click(*coords)
         return coords
 
     @staticmethod
@@ -1121,6 +1118,12 @@ class PhoneLinkSender:
     @staticmethod
     def focused_control_fd2(window: Any) -> Any | None:
         try:
+            focused = focused_control()
+            if focused is not None and focused.process_id() == window.process_id():
+                return focused
+        except Exception:
+            pass
+        try:
             descendants = window.wrapper_object().descendants()
         except Exception:
             return None
@@ -1165,8 +1168,6 @@ class PhoneLinkSender:
 
     @staticmethod
     def click_fd2_compose_coords(window: Any) -> tuple[int, int]:
-        from pywinauto import mouse
-
         candidates = PhoneLinkSender.message_box_candidates_fd2(window)
         input_candidates = [
             control for control in candidates
@@ -1214,7 +1215,7 @@ class PhoneLinkSender:
                     int(rect.left + (width * x_ratio)),
                     int(rect.top + (height * y_ratio)),
                 )
-                mouse.click(button="left", coords=last_coords)
+                uia_click(*last_coords)
                 time.sleep(0.12)
                 refreshed = PhoneLinkSender.message_box_candidates_fd2(window)
                 if refreshed:
@@ -1400,18 +1401,13 @@ class PhoneLinkSender:
 
     @staticmethod
     def click_message_box_coords(window: Any) -> None:
-        from pywinauto import mouse
-
         window_rect = window.wrapper_object().rectangle()
         width = window_rect.right - window_rect.left
         height = window_rect.bottom - window_rect.top
         for y_ratio in (0.86, 0.89):
-            mouse.click(
-                button="left",
-                coords=(
-                    int(window_rect.left + (width * 0.75)),
-                    int(window_rect.top + (height * y_ratio)),
-                ),
+            uia_click(
+                int(window_rect.left + (width * 0.75)),
+                int(window_rect.top + (height * y_ratio)),
             )
             time.sleep(PhoneLinkSender.STEP_DELAY_SECONDS)
 
@@ -1469,19 +1465,14 @@ class PhoneLinkSender:
         # Last-resort FD2 path: sweep the lower compose band inside the Phone Link
         # window. This is still window-relative, not monitor-size-relative.
         try:
-            from pywinauto import mouse
-
             rect = window.wrapper_object().rectangle()
             width = rect.right - rect.left
             height = rect.bottom - rect.top
             for y_ratio in (0.88, 0.92, 0.95):
                 for x_ratio in (0.55, 0.70, 0.86):
-                    mouse.click(
-                        button="left",
-                        coords=(
-                            int(rect.left + (width * x_ratio)),
-                            int(rect.top + (height * y_ratio)),
-                        ),
+                    uia_click(
+                        int(rect.left + (width * x_ratio)),
+                        int(rect.top + (height * y_ratio)),
                     )
                     time.sleep(settle_delay)
                     refreshed = PhoneLinkSender.message_box_candidates_fd2(window)
@@ -1705,10 +1696,7 @@ class PhoneLinkSender:
         if platform.system() != "Windows":
             return True
         try:
-            from pywinauto import Desktop
-            from pywinauto.keyboard import send_keys
-
-            targets = [window] if window is not None else PhoneLinkSender.phone_link_window_candidates(Desktop(backend="uia"))
+            targets = [window] if window is not None else PhoneLinkSender.phone_link_window_candidates(UIADesktop())
             if not targets:
                 return True
             all_closed = True
@@ -1720,7 +1708,7 @@ class PhoneLinkSender:
                 try:
                     target.close()
                 except Exception:
-                    send_keys("%{F4}")
+                    uia_send_keys("%{F4}")
                 time.sleep(PhoneLinkSender.CLOSE_SETTLE_SECONDS)
                 try:
                     if target.exists(timeout=1):
@@ -1731,6 +1719,7 @@ class PhoneLinkSender:
         except Exception:
             return False
 
+    @uia_threaded
     def send_sms(self, phone: str, message: str) -> None:
         if self.dry_run:
             time.sleep(0.25)
@@ -1740,10 +1729,7 @@ class PhoneLinkSender:
         if not digits_only(phone):
             raise RuntimeError("Missing valid phone number.")
 
-        try:
-            import pywinauto  # noqa: F401 - verify the Windows automation dependency is installed
-        except ImportError as exc:
-            raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
+        load_uiautomation()
 
         window = None
         try:
@@ -1775,16 +1761,14 @@ class PhoneLinkSender:
             if not self.fd2_mode:
                 self.close_phone_link(window)
 
+    @uia_threaded
     def compose_sms(self, phone: str, message: str) -> None:
         if platform.system() != "Windows":
             raise RuntimeError("Phone Link automation only runs on Windows.")
         if not digits_only(phone):
             raise RuntimeError("Missing valid phone number.")
 
-        try:
-            import pywinauto  # noqa: F401 - verify the Windows automation dependency is installed
-        except ImportError as exc:
-            raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
+        load_uiautomation()
 
         window = self.open_ready_phone_link_window()
         window = self.focus_new_message_resilient(window)
@@ -1813,16 +1797,12 @@ class OpenDentalPatientViewer:
 
     @staticmethod
     def slow_keys(keys: str, delay: float | None = None) -> None:
-        from pywinauto.keyboard import send_keys
-
-        send_keys(keys)
+        uia_send_keys(keys)
         time.sleep(OpenDentalPatientViewer.STEP_DELAY_SECONDS if delay is None else delay)
 
     @staticmethod
     def type_text(text: str, delay: float | None = None) -> None:
-        from pywinauto.keyboard import send_keys
-
-        send_keys(str(text), with_spaces=True)
+        uia_send_keys(str(text), text_mode=True)
         time.sleep(OpenDentalPatientViewer.STEP_DELAY_SECONDS if delay is None else delay)
 
     @staticmethod
@@ -1859,6 +1839,7 @@ class OpenDentalPatientViewer:
         )
 
     @staticmethod
+    @uia_threaded
     def open_patient(first_name: str, last_name: str, birthdate: str, pat_num: str = "") -> None:
         if platform.system() != "Windows":
             raise RuntimeError("Open Dental automation only runs on the Windows clinic workstation.")
@@ -1869,19 +1850,15 @@ class OpenDentalPatientViewer:
         if not first_name or not last_name or not birthdate:
             raise RuntimeError("Missing first name, last name, or date of birth for Open Dental lookup.")
 
-        try:
-            from pywinauto import Desktop, Application, mouse
-        except ImportError as exc:
-            raise RuntimeError("pywinauto is not installed. Run: pip install -r requirements.txt") from exc
+        load_uiautomation()
 
-        desktop = Desktop(backend="uia")
+        desktop = UIADesktop()
         window = desktop.window(title_re=r".*Open Dental.*")
         if not window.exists(timeout=2):
             OpenDentalPatientViewer.open_open_dental()
             window = desktop.window(title_re=r".*Open Dental.*")
         if not window.exists(timeout=20):
-            app = Application(backend="uia").connect(title_re=r".*Open Dental.*", timeout=20)
-            window = app.top_window()
+            raise RuntimeError("Open Dental opened but its main window was not available to UIAutomation.")
 
         window.set_focus()
         time.sleep(0.5)
@@ -1903,7 +1880,7 @@ class OpenDentalPatientViewer:
         if main.exists(timeout=5):
             main.set_focus()
             main_rect = main.rectangle()
-            mouse.click(button="left", coords=(main_rect.left + 48, main_rect.top + 134))
+            uia_click(main_rect.left + 48, main_rect.top + 134)
 
 
 class OpenDentalViewWorker(QThread):

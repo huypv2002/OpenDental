@@ -1,0 +1,79 @@
+name: Build SMS Reminder UIAutomation EXE
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build UIAutomation onefile Windows EXE
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sms-reminder-tool-uiautomation
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-win-sms-uia-py311-${{ hashFiles('sms-reminder-tool-uiautomation/requirements.txt') }}
+          restore-keys: pip-win-sms-uia-py311-
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Verify critical imports
+        run: |
+          python -c "import PySide6, requests, dotenv, pyperclip, uiautomation; print('UIAutomation imports OK')"
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Build onefile EXE
+        run: python -m PyInstaller sms_reminder_app.spec --clean --noconfirm
+
+      - name: Assemble release folder
+        shell: pwsh
+        run: |
+          $release = "LUK-Dental-SMS-Reminder-UIAutomation"
+          New-Item -ItemType Directory -Force -Path $release | Out-Null
+          Copy-Item "dist/LUK Dental SMS Reminder Tool UIAutomation.exe" $release
+          Copy-Item "config.example.json" $release
+          Copy-Item "tooth.ico" $release
+          Copy-Item "run-sms-reminder.bat" $release
+          Copy-Item "scheduler-on.bat" $release
+          Copy-Item "scheduler-off.bat" $release
+          Copy-Item "delete-old-sms-tasks.bat" $release
+          Copy-Item "setup-scheduler-tasks.ps1" $release
+          Copy-Item "snapshot-phone-link-elements.bat" $release
+          Copy-Item "phone_link_snapshot.py" $release
+          Copy-Item "uia_backend.py" $release
+          Copy-Item "requirements.txt" $release
+          Copy-Item "BUILD_EXE.md" $release
+          New-Item -ItemType Directory -Force -Path "$release/assets" | Out-Null
+          Copy-Item "assets/*" "$release/assets" -Recurse
+          Get-FileHash "$release/LUK Dental SMS Reminder Tool UIAutomation.exe" -Algorithm SHA256 |
+            Format-List | Out-File "$release/SHA256SUMS.txt" -Encoding utf8
+
+      - name: Package as ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "LUK-Dental-SMS-Reminder-UIAutomation" -DestinationPath "LUK-Dental-SMS-Reminder-UIAutomation-windows.zip" -Force
+
+      - name: Upload Windows release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LUK-Dental-SMS-Reminder-UIAutomation-windows
+          path: sms-reminder-tool-uiautomation/LUK-Dental-SMS-Reminder-UIAutomation-windows.zip
+          if-no-files-found: error
+          retention-days: 30
