@@ -11,7 +11,7 @@ rem Edit these times as needed. Use 24-hour HH:MM format.
 set "ENABLE_LOGIN_TIME=08:59"
 set "RESTART_TIME=09:00"
 set "START_TOOL_TIME=10:55"
-set "LOCK_TIME=11:05"
+set "LOCK_TIME=12:05"
 
 set "TASK_PREFIX=LUK Dental SMS"
 set "THIS_FILE=%~f0"

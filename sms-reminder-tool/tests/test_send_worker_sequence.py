@@ -362,9 +362,6 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
         class FakeWindow:
             element_info = types.SimpleNamespace(handle=123)
 
-            def wrapper_object(self):
-                return self
-
             def rectangle(self):
                 return types.SimpleNamespace(left=100, top=100, right=1100, bottom=800)
 
@@ -387,6 +384,30 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
         self.assertIs(result, window)
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0]["title_re"], app.PHONE_LINK_TITLE_RE)
+
+    def test_standard_message_box_lookup_accepts_real_uia_wrapper(self):
+        class FakeControl:
+            element_info = types.SimpleNamespace(name="Send a message", control_type="Edit")
+
+            def rectangle(self):
+                return types.SimpleNamespace(left=500, top=700, right=900, bottom=750)
+
+            def window_text(self):
+                return "Send a message"
+
+        message_box = FakeControl()
+
+        class FakeWrapper:
+            def rectangle(self):
+                return types.SimpleNamespace(left=100, top=100, right=1000, bottom=800)
+
+            def descendants(self):
+                return [message_box]
+
+        result = app.PhoneLinkSender.find_message_box(FakeWrapper())
+
+        self.assertIsNotNone(result)
+        self.assertIs(result[0], message_box)
 
     def test_fd2_detailed_element_log_identifies_exact_input_without_value_text(self):
         class FakeControl:

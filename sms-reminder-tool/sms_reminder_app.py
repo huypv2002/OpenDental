@@ -762,6 +762,11 @@ class PhoneLinkSender:
         )
 
     @staticmethod
+    def window_wrapper(window: Any) -> Any:
+        wrapper_object = getattr(window, "wrapper_object", None)
+        return wrapper_object() if callable(wrapper_object) else window
+
+    @staticmethod
     def phone_link_window_candidates(desktop: Any) -> list[Any]:
         try:
             candidates = desktop.windows(
@@ -778,7 +783,7 @@ class PhoneLinkSender:
         seen: set[Any] = set()
         for candidate in candidates:
             try:
-                wrapper = candidate.wrapper_object() if hasattr(candidate, "wrapper_object") else candidate
+                wrapper = PhoneLinkSender.window_wrapper(candidate)
                 rect = wrapper.rectangle()
                 title = str(wrapper.window_text() or "").strip().lower()
                 handle = getattr(getattr(wrapper, "element_info", None), "handle", None)
@@ -1279,7 +1284,7 @@ class PhoneLinkSender:
     def message_box_controls(window: Any, field: Any | None = None) -> list[Any]:
         controls = [field] if field is not None else []
         try:
-            controls.extend(window.wrapper_object().descendants())
+            controls.extend(PhoneLinkSender.window_wrapper(window).descendants())
         except Exception:
             pass
         return [control for control in controls if control is not None]
@@ -1306,7 +1311,7 @@ class PhoneLinkSender:
 
     @staticmethod
     def message_box_candidates_fd2(window: Any, expected: str = "") -> list[Any]:
-        wrapper = window.wrapper_object()
+        wrapper = PhoneLinkSender.window_wrapper(window)
         window_rect = wrapper.rectangle()
         window_width = max(1, window_rect.right - window_rect.left)
         window_height = max(1, window_rect.bottom - window_rect.top)
@@ -1375,7 +1380,7 @@ class PhoneLinkSender:
 
     @staticmethod
     def find_message_box(window: Any) -> tuple[Any, Any] | None:
-        wrapper = window.wrapper_object()
+        wrapper = PhoneLinkSender.window_wrapper(window)
         window_rect = wrapper.rectangle()
         candidates = []
         for control in wrapper.descendants():
@@ -1402,7 +1407,7 @@ class PhoneLinkSender:
     def click_message_box_coords(window: Any) -> None:
         from pywinauto import mouse
 
-        window_rect = window.wrapper_object().rectangle()
+        window_rect = PhoneLinkSender.window_wrapper(window).rectangle()
         width = window_rect.right - window_rect.left
         height = window_rect.bottom - window_rect.top
         for y_ratio in (0.86, 0.89):
@@ -1420,7 +1425,7 @@ class PhoneLinkSender:
         result = PhoneLinkSender.find_message_box(window)
         if result is None:
             try:
-                wrapper = window.wrapper_object()
+                wrapper = PhoneLinkSender.window_wrapper(window)
                 PhoneLinkSender.click_message_box_coords(window)
                 return wrapper
             except Exception as exc:
