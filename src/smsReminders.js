@@ -61,6 +61,12 @@ function formatUsPhone(value) {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
+export function isRecallOperatory(row = {}) {
+  return [row.OpName, row.OperatoryAbbrev]
+    .map((value) => String(value ?? '').trim().toUpperCase())
+    .some((value) => value === 'RECALL');
+}
+
 function parseProcedureCodes(value) {
   const defaults = ['D1110', 'D1120', 'D4341', 'D4342'];
   const codes = String(value ?? '')
@@ -229,6 +235,9 @@ export async function getSmsReminderAppointments(query) {
         a.Pattern,
         a.AptStatus,
         a.ProcDescript,
+        a.Op AS OperatoryNum,
+        o.OpName,
+        o.Abbrev AS OperatoryAbbrev,
         p.FName,
         p.LName,
         p.WirelessPhone,
@@ -240,9 +249,12 @@ export async function getSmsReminderAppointments(query) {
         DATE_FORMAT(p.Birthdate, '%Y-%m-%d') AS Birthdate
       FROM appointment a
       INNER JOIN patient p ON p.PatNum = a.PatNum
+      LEFT JOIN operatory o ON o.OperatoryNum = a.Op
       WHERE a.AptDateTime >= ?
         AND a.AptDateTime < DATE_ADD(?, INTERVAL 1 DAY)
         AND a.AptStatus IN (${placeholders})
+        AND UPPER(TRIM(COALESCE(o.OpName, ''))) <> 'RECALL'
+        AND UPPER(TRIM(COALESCE(o.Abbrev, ''))) <> 'RECALL'
       ORDER BY a.AptDateTime, p.LName, p.FName
     `,
     [`${targetDate} 00:00:00`, `${targetDate} 00:00:00`, ...statuses]
@@ -250,8 +262,8 @@ export async function getSmsReminderAppointments(query) {
 
   return {
     date: targetDate,
-    appointments: rows.map((row) => {
-      const phone = formatUsPhone(row.WirelessPhone || row.HmPhone || row.WkPhone || '');
+    appointments: rows.filter((row) => !isRecallOperatory(row)).map((row) => {
+      const phone = formatUsPhone(row.WirelessPhone || '');
       return {
         ...row,
         WirelessPhoneFormatted: formatUsPhone(row.WirelessPhone || ''),
@@ -766,6 +778,146 @@ export async function getSmsPatientLogs(query = {}) {
     [...params, limit]
   );
   return { logs: rows };
+}
+
+export async function getSmsPatientHistory(query = {}) {
+  const patNum = Number.parseInt(String(query.patNum ?? ''), 10);
+  const limit = parseLimit(query.limit, 200);
+  if (!Number.isInteger(patNum) || patNum <= 0) {
+    const error = new Error('patNum is required.');
+    error.status = 400;
+    throw error;
+  }
+
+  await ensureSmsReminderLogTable();
+  await ensureSmsRecallLogTable();
+  await ensureSmsTreatmentLogTable();
+  await ensureSmsPatientLogTable();
+  await ensureSmsCampaignLogTable();
+
+  const [appointmentRows] = await pool.execute(
+    `
+      SELECT
+        ReminderLogNum AS LogNum,
+        'appointment' AS MessageType,
+        PatNum,
+        Phone,
+        Message,
+        Status,
+        DATE_FORMAT(SentAt, '%Y-%m-%d %H:%i:%s') AS SentAt,
+        DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt,
+        ErrorMessage,
+        CONCAT(
+          'Appointment ', DATE_FORMAT(ReminderForDate, '%m/%d/%Y'),
+          ' - ', ReminderOffsetDays, ' day reminder - Apt #', AptNum
+        ) AS Context
+      FROM ${LOG_TABLE}
+      WHERE PatNum = ?
+      ORDER BY ReminderLogNum DESC
+      LIMIT ?
+    `,
+    [patNum, limit]
+  );
+  const [recallRows] = await pool.execute(
+    `
+      SELECT
+        RecallLogNum AS LogNum,
+        'recall' AS MessageType,
+        PatNum,
+        Phone,
+        Message,
+        Status,
+        DATE_FORMAT(SentAt, '%Y-%m-%d %H:%i:%s') AS SentAt,
+        DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt,
+        ErrorMessage,
+        CONCAT(
+          'Recall',
+          IF(ProcedureCodes = '', '', CONCAT(' - ', ProcedureCodes)),
+          IF(LastProcDate IS NULL, '', CONCAT(' - last visit ', DATE_FORMAT(LastProcDate, '%m/%d/%Y')))
+        ) AS Context
+      FROM ${RECALL_LOG_TABLE}
+      WHERE PatNum = ?
+      ORDER BY RecallLogNum DESC
+      LIMIT ?
+    `,
+    [patNum, limit]
+  );
+  const [treatmentRows] = await pool.execute(
+    `
+      SELECT
+        TreatmentLogNum AS LogNum,
+        'treatment' AS MessageType,
+        PatNum,
+        Phone,
+        Message,
+        Status,
+        DATE_FORMAT(SentAt, '%Y-%m-%d %H:%i:%s') AS SentAt,
+        DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt,
+        ErrorMessage,
+        CONCAT(
+          'Treatment',
+          IF(ProcedureCodes = '', '', CONCAT(' - ', ProcedureCodes)),
+          IF(LastPendingProcDate IS NULL, '', CONCAT(' - since ', DATE_FORMAT(LastPendingProcDate, '%m/%d/%Y')))
+        ) AS Context
+      FROM ${TREATMENT_LOG_TABLE}
+      WHERE PatNum = ?
+      ORDER BY TreatmentLogNum DESC
+      LIMIT ?
+    `,
+    [patNum, limit]
+  );
+  const [patientRows] = await pool.execute(
+    `
+      SELECT
+        PatientLogNum AS LogNum,
+        'patient' AS MessageType,
+        PatNum,
+        Phone,
+        Message,
+        Status,
+        DATE_FORMAT(SentAt, '%Y-%m-%d %H:%i:%s') AS SentAt,
+        DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt,
+        ErrorMessage,
+        CONCAT('Patient SMS', IF(TemplateKey = '', '', CONCAT(' - ', TemplateKey))) AS Context
+      FROM ${PATIENT_LOG_TABLE}
+      WHERE PatNum = ?
+      ORDER BY PatientLogNum DESC
+      LIMIT ?
+    `,
+    [patNum, limit]
+  );
+  const [campaignRows] = await pool.execute(
+    `
+      SELECT
+        CampaignLogNum AS LogNum,
+        'campaign' AS MessageType,
+        PatNum,
+        Phone,
+        Message,
+        Status,
+        DATE_FORMAT(SentAt, '%Y-%m-%d %H:%i:%s') AS SentAt,
+        DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt,
+        ErrorMessage,
+        CONCAT(
+          'Campaign',
+          IF(CampaignName = '', '', CONCAT(' - ', CampaignName)),
+          IF(TemplateKey = '', '', CONCAT(' - ', TemplateKey))
+        ) AS Context
+      FROM ${CAMPAIGN_LOG_TABLE}
+      WHERE PatNum = ?
+      ORDER BY CampaignLogNum DESC
+      LIMIT ?
+    `,
+    [patNum, limit]
+  );
+
+  const history = [appointmentRows, recallRows, treatmentRows, patientRows, campaignRows]
+    .flat()
+    .map((row) => ({ ...row, ActivityAt: row.SentAt || row.CreatedAt || '' }))
+    .sort((left, right) => String(right.ActivityAt).localeCompare(String(left.ActivityAt)))
+    .slice(0, limit);
+
+  return { patNum, history };
 }
 
 export async function resetSmsPatientLog(body) {

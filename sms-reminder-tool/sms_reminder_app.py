@@ -105,6 +105,19 @@ def is_manual_send_row(row: dict[str, Any]) -> bool:
     return bool(row.get("_PatientManual") or row.get("_Treatment") or row.get("_Recall") or row.get("_Campaign"))
 
 
+def log_confirmed_manual_draft(repo: Any, patient: dict[str, Any], message: str, phone: str) -> None:
+    if patient.get("_PatientManual"):
+        repo.log_patient_result(patient, message, "sent", phone=phone)
+    elif patient.get("_Treatment"):
+        repo.log_treatment_result(patient, message, "sent", phone=phone)
+    elif patient.get("_Recall"):
+        repo.log_recall_result(patient, message, "sent", phone=phone)
+    elif patient.get("_Campaign"):
+        repo.log_campaign_result(patient, message, "sent", phone=phone)
+    else:
+        raise ValueError("Manual draft type is missing.")
+
+
 def sendable_phone_targets(row: dict[str, Any]) -> list[dict[str, Any]]:
     targets = [
         target for target in row.get("PhoneTargets", [])
@@ -612,6 +625,14 @@ class BridgeClient:
             params["patNums"] = ",".join(str(item) for item in pat_nums if str(item or "").strip())
         data = self.request("GET", "/api/sms-reminders/patient-logs", params=params)
         return data.get("logs") or []
+
+    def fetch_patient_history(self, pat_num: Any, limit: int = 200) -> list[dict[str, Any]]:
+        data = self.request(
+            "GET",
+            "/api/sms-reminders/patient-history",
+            params={"patNum": str(pat_num), "limit": limit},
+        )
+        return data.get("history") or []
 
     def reset_patient_log(self, patient: dict[str, Any], phone: str) -> dict[str, Any]:
         return self.request(
@@ -2242,6 +2263,24 @@ class LoadBirthdayPatientsWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class LoadSmsHistoryWorker(QThread):
+    loaded = Signal(object, list)
+    failed = Signal(str)
+
+    def __init__(self, config: AppConfig, patient: dict[str, Any]):
+        super().__init__()
+        self.config = config
+        self.patient = dict(patient)
+
+    def run(self) -> None:
+        try:
+            repo = BridgeClient(self.config)
+            history = repo.fetch_patient_history(self.patient.get("PatNum"), limit=200)
+            self.loaded.emit(self.patient, history)
+        except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
+            self.failed.emit(str(exc))
+
+
 def reminder_log_key(row: dict[str, Any], phone: str | None = None) -> tuple[str, str, str, str]:
     try:
         reminder_date = parse_datetime(row.get("AptDateTime")).date().isoformat()
@@ -2558,6 +2597,7 @@ class SmsReminderWindow(QMainWindow):
         self.manual_draft_batch_label = ""
         self.manual_draft_batch_total = 0
         self.manual_draft_batch_completed = 0
+        self.manual_draft_current_patient: dict[str, Any] | None = None
         self.load_worker: LoadAppointmentsWorker | None = None
         self.recall_load_worker: LoadRecallWorker | None = None
         self.treatment_load_worker: LoadTreatmentWorker | None = None
@@ -2594,8 +2634,10 @@ class SmsReminderWindow(QMainWindow):
         self._restoring_column_widths: set[str] = set()
         self.lazy_table_state: dict[str, dict[str, Any]] = {}
         self.view_worker: OpenDentalViewWorker | None = None
+        self.sms_history_worker: LoadSmsHistoryWorker | None = None
         self.compose_worker: ComposeReminderWorker | None = None
         self.active_view_button: QPushButton | None = None
+        self.active_sms_history_button: QPushButton | None = None
         self.active_campaign_recipient_keys: set[tuple[str, str, str, str, str, str]] = set()
         if self.config.bridge_url and self.config.api_token:
             self.load_templates_from_bridge()
@@ -3161,9 +3203,9 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.manual_patient_table = QTableWidget(0, 6)
+        self.manual_patient_table = QTableWidget(0, 7)
         self.manual_patient_table.setHorizontalHeaderLabels(
-            ["Patient", "Phone", "Email", "Pat #", "Template", "View"]
+            ["Patient", "Phone", "Email", "Pat #", "Template", "Logs", "View"]
         )
         self.configure_resizable_columns(
             self.manual_patient_table,
@@ -3175,6 +3217,7 @@ class SmsReminderWindow(QMainWindow):
                 3: 90,
                 4: 210,
                 5: 90,
+                6: 90,
             },
         )
         self.manual_patient_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -3465,9 +3508,9 @@ class SmsReminderWindow(QMainWindow):
         table_card = self.card()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        self.recall_table = QTableWidget(0, 11)
+        self.recall_table = QTableWidget(0, 12)
         self.recall_table.setHorizontalHeaderLabels(
-            ["Last code visit", "Patient", "Phone", "Email", "Language", "Codes", "Sent", "Last sent", "Pat #", "Template", "View"]
+            ["Last code visit", "Patient", "Phone", "Email", "Language", "Codes", "Sent", "Last sent", "Pat #", "Template", "Logs", "View"]
         )
         self.configure_resizable_columns(
             self.recall_table,
@@ -3484,6 +3527,7 @@ class SmsReminderWindow(QMainWindow):
                 8: 90,
                 9: 190,
                 10: 90,
+                11: 90,
             },
         )
         self.recall_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -5271,6 +5315,7 @@ class SmsReminderWindow(QMainWindow):
                 row.get("PatNum", ""),
                 "",
                 "",
+                "",
             ]
             for col, value in enumerate(values):
                 if col == 9:
@@ -5280,6 +5325,9 @@ class SmsReminderWindow(QMainWindow):
                     self.recall_template_combos[row_index] = combo
                     continue
                 if col == 10:
+                    self.recall_table.setCellWidget(row_index, col, self.make_sms_history_button(row))
+                    continue
+                if col == 11:
                     self.recall_table.setCellWidget(row_index, col, self.make_open_dental_view_button(row))
                     continue
                 item = QTableWidgetItem(str(value or ""))
@@ -5352,6 +5400,7 @@ class SmsReminderWindow(QMainWindow):
                 row.get("PatNum", ""),
                 "",
                 "",
+                "",
             ]
             for col, value in enumerate(values):
                 if col == 4:
@@ -5367,6 +5416,9 @@ class SmsReminderWindow(QMainWindow):
                     self.manual_patient_template_combos[row_index] = combo
                     continue
                 if col == 5:
+                    self.manual_patient_table.setCellWidget(row_index, col, self.make_sms_history_button(row))
+                    continue
+                if col == 6:
                     self.manual_patient_table.setCellWidget(row_index, col, self.make_open_dental_view_button(row))
                     continue
                 item = QTableWidgetItem(str(value or ""))
@@ -5510,6 +5562,121 @@ class SmsReminderWindow(QMainWindow):
         button.setObjectName("SmallActionButton")
         button.clicked.connect(lambda _checked=False, patient=dict(row), view_button=button: self.view_patient_in_open_dental(patient, view_button))
         return button
+
+    def make_sms_history_button(self, row: dict[str, Any]) -> QPushButton:
+        button = QPushButton("Logs")
+        button.setObjectName("SmallActionButton")
+        button.setToolTip("View the SMS history logged for this patient.")
+        button.clicked.connect(
+            lambda _checked=False, patient=dict(row), history_button=button: self.load_sms_history(
+                patient,
+                history_button,
+            )
+        )
+        return button
+
+    def load_sms_history(self, patient: dict[str, Any], button: QPushButton | None = None) -> None:
+        try:
+            pat_num = int(patient.get("PatNum") or 0)
+        except (TypeError, ValueError):
+            pat_num = 0
+        if pat_num <= 0:
+            QMessageBox.warning(self, "Missing patient number", "This row does not have a valid Pat #.")
+            return
+        if self.sms_history_worker and self.sms_history_worker.isRunning():
+            QMessageBox.information(self, "SMS logs are loading", "Please wait for the current history lookup to finish.")
+            return
+        if button:
+            button.setEnabled(False)
+            button.setText("Loading...")
+            self.active_sms_history_button = button
+        worker = LoadSmsHistoryWorker(self.config, patient)
+        self.sms_history_worker = worker
+        self.statusBar().showMessage(f"Loading SMS logs for patient #{pat_num}...", 4000)
+
+        def on_loaded(loaded_patient: dict[str, Any], history: list[dict[str, Any]]) -> None:
+            self.open_sms_history_dialog(loaded_patient, history)
+
+        def on_failed(message: str) -> None:
+            QMessageBox.warning(self, "SMS history error", message)
+
+        def on_finished() -> None:
+            if self.active_sms_history_button:
+                self.active_sms_history_button.setText("Logs")
+                self.active_sms_history_button.setEnabled(True)
+            self.active_sms_history_button = None
+            self.sms_history_worker = None
+
+        worker.loaded.connect(on_loaded)
+        worker.failed.connect(on_failed)
+        worker.finished.connect(on_finished)
+        worker.start()
+
+    def open_sms_history_dialog(self, patient: dict[str, Any], history: list[dict[str, Any]]) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"SMS logs - {patient_name(patient)}")
+        dialog.resize(1180, 650)
+        layout = QVBoxLayout(dialog)
+        heading = QLabel(
+            f"{patient_name(patient)}  |  Pat #{patient.get('PatNum', '')}  |  {len(history)} logged message(s)"
+        )
+        heading.setObjectName("SectionTitle")
+        layout.addWidget(heading)
+
+        table = QTableWidget(0, 6)
+        table.setHorizontalHeaderLabels(["Date/time", "Type", "Phone", "Status", "Message", "Details"])
+        table.setRowCount(len(history))
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setShowGrid(False)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        for column, width in enumerate((155, 145, 135, 105, 430, 260)):
+            table.setColumnWidth(column, width)
+
+        type_labels = {
+            "appointment": "Appointment",
+            "recall": "Recall",
+            "treatment": "Treatment",
+            "patient": "Patient",
+            "campaign": "Campaign",
+        }
+        for row_index, row in enumerate(history):
+            message_type = str(row.get("MessageType") or "").strip().lower()
+            details = " | ".join(
+                part for part in (str(row.get("Context") or "").strip(), str(row.get("ErrorMessage") or "").strip())
+                if part
+            )
+            values = [
+                row.get("ActivityAt") or row.get("SentAt") or row.get("CreatedAt") or "",
+                type_labels.get(message_type, message_type.title()),
+                row.get("Phone") or "",
+                row.get("Status") or "",
+                row.get("Message") or "",
+                details,
+            ]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                if column == 3:
+                    status = str(value).strip().lower()
+                    if status == "sent":
+                        item.setForeground(QColor("#067647"))
+                    elif status in {"failed", "error"}:
+                        item.setForeground(QColor("#b42318"))
+                    elif status == "needs-review":
+                        item.setForeground(QColor("#b54708"))
+                table.setItem(row_index, column, item)
+        table.resizeRowsToContents()
+        layout.addWidget(table, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+        dialog.exec()
 
     def update_manual_patient_template_from_combo(self, row: dict[str, Any], combo: QComboBox) -> None:
         key = str(combo.currentData() or row.get("_TemplateKey") or self.config.default_template_key)
@@ -6542,29 +6709,80 @@ class SmsReminderWindow(QMainWindow):
             QMessageBox.information(self, "No selection", no_selection_message)
             return False
         self.clear_manual_draft_batch()
+        self.manual_draft_batch_queue = patients[1:]
+        self.manual_draft_batch_label = tab_label
+        self.manual_draft_batch_total = len(patients)
+        self.manual_draft_batch_completed = 0
+        self.manual_draft_current_patient = patients[0]
         if len(patients) > 1:
-            self.manual_draft_batch_queue = patients[1:]
-            self.manual_draft_batch_label = tab_label
-            self.manual_draft_batch_total = len(patients)
-            self.manual_draft_batch_completed = 0
             self.append_activity(f"{tab_label} draft batch started: {len(patients)} row(s).")
-            started = self.start_send([patients[0]], confirm_real=False, fd2_mode=True)
-            if not started:
-                self.clear_manual_draft_batch()
-            return started
-        return self.start_send([patients[0]], fd2_mode=True)
+        started = self.start_send(
+            [patients[0]],
+            confirm_real=len(patients) == 1,
+            fd2_mode=True,
+        )
+        if not started:
+            self.clear_manual_draft_batch()
+        return started
 
     def clear_manual_draft_batch(self) -> None:
         self.manual_draft_batch_queue = []
         self.manual_draft_batch_label = ""
         self.manual_draft_batch_total = 0
         self.manual_draft_batch_completed = 0
+        self.manual_draft_current_patient = None
+
+    def confirm_and_log_manual_draft(self, patient: dict[str, Any]) -> bool:
+        targets = sendable_phone_targets(patient)
+        if not targets:
+            QMessageBox.warning(
+                self,
+                "Wireless phone missing",
+                "The draft cannot be logged because this patient has no valid Wireless phone number.",
+            )
+            return False
+        phone = str(targets[0].get("phone") or "")
+        message_text = render_message(
+            self.config,
+            patient,
+            patient.get("_TemplateText") or default_template(self.config),
+        )
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Question)
+        message.setWindowTitle("Confirm SMS sent")
+        message.setText(f"Was this SMS sent to {patient_name(patient)} at {phone}?")
+        message.setInformativeText(
+            "Click 'Sent - save log' only after you press Send in Phone Link. "
+            "Choose 'Not sent' to stop without changing Last sent or SMS logs."
+        )
+        sent_button = message.addButton("Sent - save log", QMessageBox.AcceptRole)
+        not_sent_button = message.addButton("Not sent", QMessageBox.RejectRole)
+        message.setDefaultButton(not_sent_button)
+        message.setDetailedText(message_text)
+        message.exec()
+        if message.clickedButton() is not sent_button:
+            return False
+        try:
+            log_confirmed_manual_draft(self.repo, patient, message_text, phone)
+        except Exception as exc:  # noqa: BLE001 - keep an unconfirmed send out of the log
+            QMessageBox.warning(self, "SMS log error", f"The SMS was not saved to history.\n\n{exc}")
+            return False
+        self.append_activity(f"Confirmed and logged sent SMS: {patient_name(patient)} -> {phone}.")
+        return True
+
+    def refresh_manual_log_source(self, label: str) -> None:
+        if label == "Recall":
+            self.load_recall_patients(show_busy_message=False)
+        elif label == "Treatment":
+            self.load_treatment_patients(show_busy_message=False)
+        elif label == "Patient" and self.manual_patient_search_query():
+            self.load_manual_patients(show_busy_message=False)
 
     def continue_manual_draft_batch(self, sent: int, failed: int) -> None:
-        if not self.manual_draft_batch_total:
+        if not self.manual_draft_batch_total or not self.manual_draft_current_patient:
             return
         label = self.manual_draft_batch_label or "Manual"
-        if failed:
+        if failed or sent <= 0:
             remaining = len(self.manual_draft_batch_queue)
             self.append_activity(f"{label} draft batch stopped after a failed draft. Remaining: {remaining}.")
             QMessageBox.warning(
@@ -6574,37 +6792,27 @@ class SmsReminderWindow(QMainWindow):
             )
             self.clear_manual_draft_batch()
             return
-        self.manual_draft_batch_completed += sent
+        if not self.confirm_and_log_manual_draft(self.manual_draft_current_patient):
+            remaining = len(self.manual_draft_batch_queue)
+            self.append_activity(f"{label} draft stopped without a sent log. Remaining: {remaining}.")
+            self.clear_manual_draft_batch()
+            return
+        self.manual_draft_batch_completed += 1
         if not self.manual_draft_batch_queue:
             total = self.manual_draft_batch_total
-            self.append_activity(f"{label} draft batch complete: {self.manual_draft_batch_completed}/{total} draft(s) filled.")
+            completed = self.manual_draft_batch_completed
+            self.append_activity(f"{label} draft batch complete: {completed}/{total} sent SMS logged.")
             QMessageBox.information(
                 self,
                 "Batch complete",
-                f"Finished filling {self.manual_draft_batch_completed} {label} draft(s).",
+                f"Confirmed and logged {completed} {label} SMS message(s).",
             )
             self.clear_manual_draft_batch()
+            self.refresh_manual_log_source(label)
             return
 
-        remaining = len(self.manual_draft_batch_queue)
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Information)
-        message.setWindowTitle("Draft ready")
-        message.setText("Tin nhan da duoc dan vao Phone Link.")
-        message.setInformativeText(
-            "Vui long kiem tra noi dung SMS trong Phone Link. Neu dung, an Enter trong Phone Link de gui.\n\n"
-            "Sau khi da gui xong, bam Next de fill dong ke tiep. Bam Cancel de dung."
-        )
-        next_button = message.addButton("Next", QMessageBox.AcceptRole)
-        message.addButton("Cancel", QMessageBox.RejectRole)
-        message.setDefaultButton(next_button)
-        message.setDetailedText(f"Completed: {self.manual_draft_batch_completed}/{self.manual_draft_batch_total}\nRemaining: {remaining}")
-        message.exec()
-        if message.clickedButton() is not next_button:
-            self.append_activity(f"{label} draft batch canceled. Remaining: {remaining}.")
-            self.clear_manual_draft_batch()
-            return
         next_patient = self.manual_draft_batch_queue.pop(0)
+        self.manual_draft_current_patient = next_patient
         self.append_activity(
             f"{label} draft batch next: {self.manual_draft_batch_completed + 1}/{self.manual_draft_batch_total} - {patient_name(next_patient)}"
         )

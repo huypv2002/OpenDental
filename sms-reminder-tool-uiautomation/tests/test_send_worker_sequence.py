@@ -297,6 +297,19 @@ class SendWorkerSequenceTest(unittest.TestCase):
             [("send", "(281) 111-1111", "Reminder for Manual at 9:00 am.")],
         )
 
+    def test_confirmed_recall_draft_writes_sent_log(self):
+        row = appointment(1001, 795, "Recall", "Patient", "(281) 111-1111")
+        row["_Recall"] = True
+        row["ProcedureCodes"] = "D1110"
+        repo = FakeRepo(self.config)
+
+        app.log_confirmed_manual_draft(repo, row, "Recall message", "(281) 111-1111")
+
+        self.assertEqual(
+            EVENTS,
+            [("recall-log", 795, "(281) 111-1111", "sent", "", "Recall message")],
+        )
+
     def test_manual_patient_fd2_failure_does_not_write_failed_log(self):
         FakePhoneLinkSender.fail_on_phone = "(281) 111-1111"
         row = appointment(1001, 501, "Manual", "Patient", "(281) 111-1111", status="needs-review")
