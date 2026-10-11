@@ -271,7 +271,7 @@ app.use(cors({
 }));
 
 app.get('/api/booking-capabilities', requireApiToken, (_req, res) => {
-  res.json({ dateHours: true });
+  res.json({ ok: true, data: { dateHours: true } });
 });
 
 app.get('/health', async (_req, res) => {
