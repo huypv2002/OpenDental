@@ -1,3 +1,4 @@
+import { parseDateHours } from './bookingHours.js';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { appointmentPattern, assertSlotStillAvailable } from './bookings.js';
@@ -82,6 +83,7 @@ function parsePatient(body = {}) {
 
 function parseAppointment(body = {}) {
   return {
+    dateHours: parseDateHours(body.dateHours),
     aptNum: intValue(body.aptNum),
     patNum: intValue(body.patNum),
     date: dateValue(body.date),

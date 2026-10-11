@@ -1,3 +1,4 @@
+import { bookingHoursForDate, parseDateHours } from './bookingHours.js';
 import { pool } from './db.js';
 import { config } from './config.js';
 
@@ -101,22 +102,13 @@ function parseCsvIntsParam(raw, fallback) {
     .filter((value) => Number.isInteger(value));
 }
 
-function bookingHoursForDate(date) {
-  const weekday = new Date(`${date}T12:00:00`).getDay();
-  if (weekday === 1) {
-    return { openTime: '14:00', closeTime: '17:30' };
-  }
-  if ([0, 2, 4, 5].includes(weekday)) {
-    return { openTime: '09:00', closeTime: '17:30' };
-  }
-  return null;
-}
 
 export function parseSlotQuery(query) {
   const date = parseDateInput(String(query.date ?? ''));
   const durationOverrideMinutes = Number.parseInt(query.durationOverride ?? query.durationMinutes ?? '', 10);
   return {
     date,
+    dateHours: parseDateHours(query.dateHours),
     providerNum: Number.parseInt(query.providerNum ?? config.booking.providerNum, 10),
     operatoryNum: Number.parseInt(query.operatoryNum ?? config.booking.operatoryNum, 10),
     appointmentTypeNum: Number.parseInt(query.appointmentTypeNum ?? config.booking.appointmentTypeNum, 10),
@@ -136,6 +128,7 @@ export function parseSlotRangeQuery(query) {
   const durationOverrideMinutes = Number.parseInt(query.durationOverride ?? query.durationMinutes ?? '', 10);
   return {
     startDate,
+    dateHours: parseDateHours(query.dateHours),
     days: Number.isInteger(days) ? Math.max(1, Math.min(35, days)) : 7,
     providerNum: Number.parseInt(query.providerNum ?? config.booking.providerNum, 10),
     operatoryNum: Number.parseInt(query.operatoryNum ?? config.booking.operatoryNum, 10),
@@ -318,6 +311,7 @@ async function blockoutRangesByDate(params, dates) {
 function normalizeSlotParams(input) {
   return {
     ...input,
+    dateHours: parseDateHours(input.dateHours),
     providerNum: Number.isInteger(input.providerNum) ? input.providerNum : config.booking.providerNum,
     operatoryNum: Number.isInteger(input.operatoryNum) ? input.operatoryNum : config.booking.operatoryNum,
     appointmentTypeNum: Number.isInteger(input.appointmentTypeNum) ? input.appointmentTypeNum : config.booking.appointmentTypeNum,
@@ -331,7 +325,7 @@ function normalizeSlotParams(input) {
 
 function slotsForDate(params, date, duration, blocked) {
   const weekday = new Date(`${date}T12:00:00`).getDay();
-  if (!config.booking.activeWeekdays.includes(weekday)) {
+  if (!Object.hasOwn(params.dateHours, date) && !config.booking.activeWeekdays.includes(weekday)) {
     return {
       date,
       providerNum: params.providerNum,
@@ -343,7 +337,7 @@ function slotsForDate(params, date, duration, blocked) {
     };
   }
 
-  const businessHours = bookingHoursForDate(date);
+  const businessHours = bookingHoursForDate(date, params.dateHours);
   if (!businessHours) {
     return {
       date,

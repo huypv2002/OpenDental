@@ -270,6 +270,10 @@ app.use(cors({
   }
 }));
 
+app.get('/api/booking-capabilities', requireApiToken, (_req, res) => {
+  res.json({ dateHours: true });
+});
+
 app.get('/health', async (_req, res) => {
   try {
     const [rows] = await pool.execute('SELECT 1 AS ok');

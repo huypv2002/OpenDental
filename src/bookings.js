@@ -1,3 +1,4 @@
+import { bookingHoursForDate, parseDateHours } from './bookingHours.js';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { getAvailableSlots } from './slots.js';
@@ -146,19 +147,9 @@ export async function appointmentPattern(connection, appointmentTypeNum, fallbac
   return 'X'.repeat(blocks);
 }
 
-function bookingHoursForDate(date) {
-  const weekday = new Date(`${date}T12:00:00`).getDay();
-  if (weekday === 1) {
-    return { openTime: '14:00', closeTime: '17:30' };
-  }
-  if ([0, 2, 4, 5].includes(weekday)) {
-    return { openTime: '09:00', closeTime: '17:30' };
-  }
-  return null;
-}
 
 export async function assertSlotStillAvailable(input) {
-  const hours = bookingHoursForDate(input.date);
+  const hours = bookingHoursForDate(input.date, parseDateHours(input.dateHours));
   if (!hours) {
     const error = new Error('Selected appointment date is outside online booking hours.');
     error.status = 409;
@@ -167,6 +158,7 @@ export async function assertSlotStillAvailable(input) {
 
   const availability = await getAvailableSlots({
     date: input.date,
+    dateHours: parseDateHours(input.dateHours),
     providerNum: input.providerNum,
     operatoryNum: input.operatoryNum,
     appointmentTypeNum: input.appointmentTypeNum,
@@ -326,6 +318,7 @@ export function parseBookingBody(body) {
 
   return {
     date,
+    dateHours: parseDateHours(body.dateHours),
     time,
     endsAt: optionalString(body, 'endsAt'),
     firstName: plainLatinName(body, 'firstName'),

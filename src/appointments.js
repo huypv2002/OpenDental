@@ -1,3 +1,4 @@
+import { parseDateHours } from './bookingHours.js';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { appointmentPattern, assertSlotStillAvailable } from './bookings.js';
@@ -156,6 +157,7 @@ export function parseVerifyChangeAppointmentBody(body) {
 export function parseChangeAppointmentBody(body) {
   return {
     ...parseChangeIdentity(body),
+    dateHours: parseDateHours(body.dateHours),
     aptNum: Number.parseInt(body.aptNum ?? '', 10) || 0,
     date: normalizeDate(requiredString(body, 'date'), 'date'),
     time: normalizeTime(requiredString(body, 'time'), 'time'),
