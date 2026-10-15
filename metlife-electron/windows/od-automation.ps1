@@ -19,7 +19,8 @@ try{InitializeOdUia}catch{
 }
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-. (Join-Path $PSScriptRoot 'native-api.ps1')try{[void][OdNative]::SetThreadDpiAwarenessContext([IntPtr](-4))}catch{}
+. (Join-Path $PSScriptRoot 'native-api.ps1')
+try{[void][OdNative]::SetThreadDpiAwarenessContext([IntPtr](-4))}catch{}
 $AE=[System.Windows.Automation.AutomationElement]
 $TS=[System.Windows.Automation.TreeScope]
 $TC=[System.Windows.Automation.Condition]::TrueCondition
