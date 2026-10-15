@@ -128,6 +128,15 @@ try{
  $ambiguous=($raw -join "`n")|ConvertFrom-Json
  if($ambiguous.ok -or $ambiguous.error -notlike '*2*' -or -not (Test-Path (Join-Path $ambiguous.diagnosticFolder 'window-discovery.json'))){throw ('Bad ambiguity/diagnostics response: '+($raw -join "`n"))}
  Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production OCR selection of offscreen painted list items in both directions, missing-item refusal, exact Account Ctrl-selection of nonadjacent procedures, modal click and full Node-to-PowerShell OD adapter inspect, two-window refusal and saved diagnostics."
+}catch{
+ if($fixture -and -not $fixture.HasExited){
+  try{
+   $frame=[System.Windows.Automation.AutomationElement]::FromHandle($handle).Current.BoundingRectangle
+   $image=[Drawing.Bitmap]::new([int]$frame.Width,[int]$frame.Height);$graphics=[Drawing.Graphics]::FromImage($image)
+   try{$graphics.CopyFromScreen([int]$frame.Left,[int]$frame.Top,0,0,$image.Size);$image.Save((Join-Path $root 'fixture-failure.png'),[Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$image.Dispose()}
+  }catch{}
+ }
+ throw
 }finally{
  if($second -and -not $second.HasExited){Stop-Process -Id $second.Id -Force}
  if($fixture -and -not $fixture.HasExited){Stop-Process -Id $fixture.Id -Force}

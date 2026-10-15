@@ -59,7 +59,7 @@ public static class OdNative {
    Marshal.Copy(data.Scan0,bytes,0,bytes.Length);
    for(int y=0;y<data.Height;y++)for(int x=0;x<bitmap.Width;x++){
     int i=y*Math.Abs(data.Stride)+x*4;
-    byte value=(byte)(bytes[i+2]*0.299+bytes[i+1]*0.587+bytes[i]*0.114<120?0:255);
+    byte value=(byte)(bytes[i+2]*0.299+bytes[i+1]*0.587+bytes[i]*0.114<175?0:255);
     bytes[i]=value;bytes[i+1]=value;bytes[i+2]=value;bytes[i+3]=255;
    }
    Marshal.Copy(bytes,0,data.Scan0,bytes.Length);

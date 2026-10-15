@@ -32,3 +32,10 @@ jobs:
         run: |
           & powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File metlife-electron/tests/windows/runtime.ps1 -FixtureArchitecture ${{ matrix.fixture }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload synthetic fixture screenshot on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metlife-fixture-${{ matrix.fixture }}
+          path: metlife-electron/fixture-failure.png
+          if-no-files-found: ignore
