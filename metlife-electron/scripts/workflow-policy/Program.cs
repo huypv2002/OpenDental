@@ -87,6 +87,8 @@ $chargeHeader=@{text='Date Patient Prov Code Type';y=10;height=12;words=@(
 $chargeLines=@($chargeHeader,(AccountLine 40 'RYAN' '02392' '13'),(AccountLine 80 'RYAN' 'D2392' '14'))
 $chargeRows=@(ChargeRowsFromLines $chargeLines @(0,100,200,260,330,380,600))
 if($chargeRows.Count -ne 2 -or $chargeRows[0].tooth -cne '13' -or $chargeRows[1].tooth -cne '14' -or $chargeRows[0].code -cne 'D2392'){throw 'Outstanding physical tooth mapping failed without caption'}
+$framedRows=@(ChargeRowsFromLines $chargeLines @(0,3,100,200,260,330,380,600))
+if($framedRows.Count -ne 2 -or $framedRows[0].tooth -cne '13' -or $framedRows[1].tooth -cne '14'){throw 'Outer UIA frame shifted the tooth mapping'}
 $caught=$false;try{ChargeRowsFromLines $chargeLines @(0,100,200,260,380,600)}catch{$caught=$true}
 if(-not $caught){throw 'Missing physical tooth column accepted'}
 # Invalid OD-generated allocations must stop without opening/editing a split.

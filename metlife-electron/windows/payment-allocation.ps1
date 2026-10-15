@@ -78,8 +78,11 @@ function ChargeRowsFromLines($lines,$edges){
  }
  # The OD layout has exactly one tooth cell between Code and Type. Use its
  # physical borders, even when OCR omits the tiny Th/Tth caption entirely.
- if($cells.Date -ne 0 -or $cells.Patient -ne 1 -or $cells.Prov -ne 2 -or $cells.Code -ne 3 -or $cells.Type -ne 5){throw 'Unsupported Outstanding column geometry'}
- $cells.Tooth=4;$rows=@()
+ $script:odChargeGeometry=@{header=$header;edges=@($edges);cells=$cells.Clone()}
+ if($cells.Patient -ne $cells.Date+1 -or $cells.Prov -ne $cells.Patient+1 -or $cells.Code -ne $cells.Prov+1 -or $cells.Type -ne $cells.Code+2){
+  throw ('Unsupported Outstanding column geometry: '+($script:odChargeGeometry|ConvertTo-Json -Depth 6 -Compress))
+ }
+ $cells.Tooth=$cells.Code+1;$rows=@()
  foreach($line in $lines){
   if($line.y -le $header.y){continue}
   $values=@{}
@@ -91,7 +94,7 @@ function ChargeRowsFromLines($lines,$edges){
   }
   if($values.Date -notmatch '^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$'){continue}
   $code=$values.Code.ToUpperInvariant();if($code -cmatch '^0[0-9]{4}$'){$code='D'+$code.Substring(1)}
-  $rows+=@{date=$values.Date;patient=$values.Patient;provider=$values.Prov;code=$code;rawCode=$values.Code;tooth=$values.Tooth;x=($edges[3]+$edges[4])/2;y=$line.y;height=$line.height}
+  $rows+=@{date=$values.Date;patient=$values.Patient;provider=$values.Prov;code=$code;rawCode=$values.Code;tooth=$values.Tooth;x=($edges[$cells.Code]+$edges[$cells.Code+1])/2;y=$line.y;height=$line.height}
  }
  return @($rows|Sort-Object { [double]$_.y })
 }

@@ -178,6 +178,7 @@ try{
   if($request.diagnosticDir){
    $diagnosticFolder=Join-Path ([string]$request.diagnosticDir) ([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N'))
    [void][IO.Directory]::CreateDirectory($diagnosticFolder)
+   if($script:odChargeGeometry){$script:odChargeGeometry|ConvertTo-Json -Depth 7|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'outstanding-columns.json') -Encoding UTF8}
    @{error=$message;provider=$script:odProvider;discovery=$script:odDiscovery}|ConvertTo-Json -Depth 7|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'window-discovery.json') -Encoding UTF8
   }
   if($diagnosticFolder -and $main){
