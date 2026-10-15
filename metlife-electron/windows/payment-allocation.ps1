@@ -24,7 +24,7 @@ function SetComboExact($payment,[string]$id,[string]$wanted,$main){
  # The picker paints the current caption above the actual options. Exclude that band.
  $r=$combo.Current.BoundingRectangle
  $choices=@($lines|Where-Object{$_.y -ge $r.Bottom -and (ListKey $_.text) -ceq (ListKey $wanted)})
- if($choices.Count -ne 1){throw ('Combo option missing or ambiguous: '+$id+' / '+$wanted)}
+ if($choices.Count -ne 1){throw ('Combo option missing or ambiguous: '+$id+' / '+$wanted+' / '+(@{combo=$r.ToString();picker=$picker.Current.BoundingRectangle.ToString();rows=$lines}|ConvertTo-Json -Depth 6 -Compress))}
  PointClick ($choices[0].x+$choices[0].width/2) ($choices[0].y+$choices[0].height/2) $main
  Start-Sleep -Milliseconds 200
  if(ProcessPopup $main 'FormComboPicker'){throw ('OD combo picker did not close: '+$id)}
