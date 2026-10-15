@@ -53,7 +53,7 @@ function renderDetail(){
  <h3 class="section-title">Note dự kiến</h3><div class="note-preview">${esc(noteOf(p))}</div>
  <div class="actions"><button class="primary" data-action="fill-preview" data-blocked="${blocked||state.status.platform!=='win32'||!!state.preview||!!state.pendingSave}">Auto fill · bản nháp OD</button><button class="primary" data-action="save-payment" data-blocked="${blocked||state.status.platform!=='win32'||!!state.preview||!!state.pendingSave||!item.remote}">Auto fill & Save vào OD</button><button data-action="export-plan">Xuất đối chiếu</button>${state.preview?'<button data-action="close-preview">Đóng bản nháp OD</button>':''}<button class="small danger" data-action="remove">Bỏ khỏi hàng đợi</button></div>
  ${state.preview?.id===item.id&&!state.preview.paymentTypeApplied?'<div class="notice">Payment Type chưa chọn được tự động. Chọn đúng Insurance Paid trên OD trước khi tiếp tục.</div>':''}
- <p class="action-note">Bản nháp dừng trước Save. Auto fill & Save sẽ chọn bệnh nhân, Insurance Paid, gắn Splits, lưu bằng OD và xác minh lại Payment/Splits từ SERVER. Gặp control hoặc dữ liệu không khớp sẽ dừng; tool không gọi nút thanh toán thẻ.${state.status.platform!=='win32'?' Điều khiển OD cần bản Windows trên R5.':''}</p>`;
+ <p class="action-note">Bản nháp dừng trước Save. Auto fill & Save sẽ chọn bệnh nhân và các dịch vụ trong Account trước Payment, chọn Insurance Paid, kiểm tra Splits OD tự tạo, lưu bằng OD và xác minh lại Payment/Splits từ SERVER. Gặp control hoặc dữ liệu không khớp sẽ dừng; tool không gọi nút thanh toán thẻ.${state.status.platform!=='win32'?' Điều khiển OD cần bản Windows trên R5.':''}</p>`;
  updateButtons();
 }
 async function renderPdf(id,container){

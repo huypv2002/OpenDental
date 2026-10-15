@@ -89,3 +89,5 @@ Chỉ chọn khi mọi procedure mục tiêu đang hiện trong Account và kh�
 OD có thể tự phân bổ khác số tiền từng dòng trên EOB, hoặc tạo Prepayment nếu Amount lớn hơn phần còn lại. Tool dừng khi kết quả đó không khớp kế hoạch PDF, không sửa để ép khớp. Việc mở bản nháp có thể tác động DB theo phiên bản OD; khóa/recheck/readback hiện có vẫn áp dụng. Chưa nghiệm thu luồng mới trên R5 thật.
 
 Kiểm thử Windows bổ sung Account grid tự vẽ, có dòng cùng code khác răng và bệnh nhân khác, cùng lựa chọn thừa từ trước. Kiểm tra OCR + Ctrl-click thực giữ đúng hai dòng không liền nhau và bỏ lựa chọn cũ.
+
+Kiểm chứng bản 0.3.7: Windows CI run 38755961349 đã pass cả fixture WinForms x86/x64, gồm OCR và Ctrl-click thật trên grid tự vẽ để chọn các dòng liền/không liền nhau và bỏ lựa chọn cũ. 20 test app và policy .NET bổ sung các ca thiếu/trùng dòng, khác răng/bệnh nhân, Prepayment và phân bổ sai đã pass. Đây chưa phải nghiệm thu trên OD thật. Nhận diện tiền tố OCR 0xxxx → Dxxxx chỉ áp dụng ở cột CDT Code đã xác định; giữ rawCode để chẩn đoán và vẫn yêu cầu khớp duy nhất các trường còn lại.
