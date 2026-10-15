@@ -94,8 +94,10 @@ public class AllocationPayment : Form {
   Controls.Add(new PaintedCombo(new[]{"All","RYAN"},"RYAN"){Name="comboPatientPaySplitsFilter",Location=new Point(10,20),Size=new Size(160,25)});
   Controls.Add(new PaintedCombo(new[]{"All","DOC"},"DOC"){Name="comboProviderPaySplitsFilter",Location=new Point(180,20),Size=new Size(160,25)});
   Controls.Add(new PaintedCombo(new[]{"None","Patient"},"Patient"){Name="comboGroupBy",Location=new Point(740,20),Size=new Size(180,25)});
-  var all=new PaintedCheck{Name="checkShowAll",Location=new Point(550,60),Size=new Size(200,24)};Controls.Add(all);
-  var grid=new AccountGrid(true){ShowAll=false,Name="gridCharges",Location=new Point(5,120),Size=new Size(970,180)};Controls.Add(grid);all.Changed+=()=>{grid.ShowAll=all.Checked;grid.Invalidate();};
+  var all=new PaintedCheck{Checked=warn,Name="checkShowAll",Location=new Point(550,60),Size=new Size(200,24)};Controls.Add(all);
+  var grid=new AccountGrid(true){ShowAll=warn,Name="gridCharges",Location=new Point(5,120),Size=new Size(970,180)};Controls.Add(grid);
+  var clicks=new TextBox{Name="textShowAllClicks",Text="0",Location=new Point(650,440)};Controls.Add(clicks);
+  all.Changed+=()=>{clicks.Text=(int.Parse(clicks.Text)+1).ToString();grid.ShowAll=all.Checked;grid.Invalidate();};
   var splits=new SplitGrid{Name="gridSplits",Location=new Point(10,330),Size=new Size(600,180)};Controls.Add(splits);
   var total=new TextBox{Name="textSplitTotal",Text="236.40",Location=new Point(650,350)};Controls.Add(total);
   var state=new TextBox{Name="textAllocationState",Text="0|0|0",Location=new Point(650,400),Width=320};Controls.Add(state);

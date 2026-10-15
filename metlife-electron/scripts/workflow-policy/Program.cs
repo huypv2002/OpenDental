@@ -91,6 +91,20 @@ $framedRows=@(ChargeRowsFromLines $chargeLines @(0,3,100,200,260,330,380,600))
 if($framedRows.Count -ne 2 -or $framedRows[0].tooth -cne '13' -or $framedRows[1].tooth -cne '14'){throw 'Outer UIA frame shifted the tooth mapping'}
 $caught=$false;try{ChargeRowsFromLines $chargeLines @(0,100,200,260,380,600)}catch{$caught=$true}
 if(-not $caught){throw 'Missing physical tooth column accepted'}
+# Reproduce the real diagnostic: no internal dividers, but all OCR anchors exist.
+$liveHeader=@{text='Date Patient Prov Code I Tth Type AmtOrig AmtEnd';y=569.6667;height=11.6667;words=@(
+ @{text='Date';x=925.6667;width=26.3333},@{text='Patient';x=1011.6667;width=40.6667},@{text='Prov';x=1110.6667;width=26},
+ @{text='Code';x=1169.3333;width=29.6667},@{text='I';x=1213.6667;width=1.6667},@{text='Tth';x=1218;width=18.6667},@{text='Type';x=1286;width=29}
+)}
+function LiveChargeLine($y,$tooth){
+ @{text='09/20/2026 TEST, RYAN DOC D2392 '+$tooth;y=$y;height=10;words=@(
+ @{text='09/20/2026';x=910;width=56},@{text='TEST,';x=974;width=30},@{text='RYAN';x=1007;width=30},@{text='DOC';x=1096;width=26},@{text='D2392';x=1164;width=36},@{text=$tooth;x=1218;width=14})}
+}
+$liveRows=@(ChargeRowsFromLines @($liveHeader,(LiveChargeLine 600 '13'),(LiveChargeLine 620 '14')) @(905,1503))
+if($liveRows.Count -ne 2 -or $liveRows[0].tooth -cne '13' -or $liveRows[1].tooth -cne '14' -or $script:odChargeGeometry.method -cne 'verified-ocr-headers'){throw 'Real diagnostic sparse-edge fallback failed'}
+$liveDraft=@{splitPatientName='TEST, RYAN';splits=@(@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC'})}
+$liveTargets=@(MatchChargeRows $liveRows $liveDraft)
+if($liveTargets.Count -ne 1 -or $liveTargets[0].row.y -ne 620){throw 'Header fallback selected the wrong tooth'}
 # Invalid OD-generated allocations must stop without opening/editing a split.
 function OcrRows($element,$main){return $script:generatedRows}
 $draft=[pscustomobject]@{splits=@([pscustomobject]@{code='D0120';providerAbbr='DOC';amountCents=8640})}

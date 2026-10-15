@@ -81,6 +81,12 @@ try{
    if([Math]::Abs($edges[4]-480) -gt 2 -or [Math]::Abs($edges[5]-518) -gt 2){throw 'R5 tooth cell borders incorrect'}
   }finally{$headerCrop.Dispose()}
  }finally{$headerBitmap.Dispose()}
+ foreach($checkCase in @(@{file='show-all-checked-r5.png';state=1},@{file='show-all-unchecked-r5.png';state=0})){
+  $checkImage=[Drawing.Bitmap]::new((Join-Path $PSScriptRoot ('fixtures/'+$checkCase.file)))
+  try{if([OdNative]::PaintedCheckState($checkImage) -ne $checkCase.state){throw ('Real R5 checkbox state failed: '+$checkCase.file)}}finally{$checkImage.Dispose()}
+ }
+ $unknownCheck=[Drawing.Bitmap]::new(200,24)
+ try{if([OdNative]::PaintedCheckState($unknownCheck) -ne -1){throw 'Unknown checkbox image was accepted'}}finally{$unknownCheck.Dispose()}
  $captured=[Drawing.Bitmap]::new((Join-Path $PSScriptRoot 'fixtures/payment-type-r5.png'))
  try{
   $bands=@([OdNative]::SelectionBands($captured))
@@ -149,6 +155,10 @@ try{
   $button=if($warningCase){'butAllocationWarning'}else{'butAllocation'}
   Click (FindControl $button) $main
   $payment=WaitOnly $main 'FormPayment'
+  EnsureShowAllCharges $payment $main
+  EnsureShowAllCharges $payment $main
+  $wantedClicks=if($warningCase){'0'}else{'1'}
+  if((ReadValue (ById $payment 'textShowAllClicks')) -cne $wantedClicks){throw 'Show All Charges was toggled off or clicked twice'}
   $stopped=$false
   try{AllocatePayment $payment $allocationDraft $main}catch{
    if(-not $warningCase -or $_.Exception.Message -notlike '*Unexpected dialog*Overpaid Charge Warning*'){throw}

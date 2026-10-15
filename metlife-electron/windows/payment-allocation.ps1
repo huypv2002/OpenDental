@@ -66,7 +66,7 @@ function ChargeHeader($lines){
  if($header.Count -ne 1){throw ('Cannot identify Outstanding headers: '+($lines|ConvertTo-Json -Depth 5 -Compress))}
  return $header[0]
 }
-function ChargeRowsFromLines($lines,$edges){
+function ChargeRowsFromBorders($lines,$edges){
  $header=ChargeHeader $lines;$cells=@{}
  foreach($name in @('Date','Patient','Prov','Code','Type')){
   $words=@($header.words|Where-Object{$_.text -ieq $name})
@@ -97,6 +97,45 @@ function ChargeRowsFromLines($lines,$edges){
   $rows+=@{date=$values.Date;patient=$values.Patient;provider=$values.Prov;code=$code;rawCode=$values.Code;tooth=$values.Tooth;x=($edges[$cells.Code]+$edges[$cells.Code+1])/2;y=$line.y;height=$line.height}
  }
  return @($rows|Sort-Object { [double]$_.y })
+}
+function ChargeRowsFromHeader($lines){
+ $header=ChargeHeader $lines
+ $tooth=@($header.words|Where-Object{$_.text -match '^(Tth|Th|Tooth)$'})
+ $type=@($header.words|Where-Object{$_.text -ieq 'Type'})
+ $code=@($header.words|Where-Object{$_.text -ieq 'Code'})
+ if($tooth.Count -ne 1 -or $type.Count -ne 1 -or $code.Count -ne 1){throw 'Missing unique Code/Tooth/Type OCR anchors'}
+ $tc=$tooth[0].x+$tooth[0].width/2;$cc=$code[0].x+$code[0].width/2
+ if($cc -ge $tc -or $type[0].x -le $tc+($tc-$cc)/2){throw 'Overlapping Code/Tooth/Type OCR anchors'}
+ $rows=@(AccountRows $lines)
+ $script:odChargeGeometry.method='verified-ocr-headers'
+ return $rows
+}
+function ChargeRowsFromLines($lines,$edges){
+ try{return @(ChargeRowsFromBorders $lines $edges)}catch{
+  if($_.Exception.Message -notlike 'Unsupported Outstanding column geometry:*' -and $_.Exception.Message -notlike 'Outstanding column boundaries not unique:*'){throw}
+  try{return @(ChargeRowsFromHeader $lines)}catch{
+   $script:odChargeGeometry.headerFallbackError=$_.Exception.Message
+   throw ('Cannot verify Outstanding columns: '+($script:odChargeGeometry|ConvertTo-Json -Depth 6 -Compress))
+  }
+ }
+}
+function ShowAllState($control,$main){
+ AssertFocus $main;$pattern=$null
+ if($control.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$pattern)){
+  if($pattern.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On){return 1}
+  if($pattern.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::Off){return 0}
+  return -1
+ }
+ $r=$control.Current.BoundingRectangle
+ $bitmap=[Drawing.Bitmap]::new([int]$r.Width,[int]$r.Height);$g=[Drawing.Graphics]::FromImage($bitmap)
+ try{$g.CopyFromScreen([int]$r.Left,[int]$r.Top,0,0,$bitmap.Size);return [OdNative]::PaintedCheckState($bitmap)}finally{$g.Dispose();$bitmap.Dispose()}
+}
+function EnsureShowAllCharges($payment,$main){
+ $script:odStage='Tích Show All Charges'
+ $control=ById $payment 'checkShowAll';$state=ShowAllState $control $main
+ if($state -lt 0){throw 'Cannot verify Show All Charges checkbox state; no toggle was made'}
+ if($state -eq 0){Click $control $main;Start-Sleep -Milliseconds 250}
+ if((ShowAllState (ById $payment 'checkShowAll') $main) -ne 1){throw 'Show All Charges did not remain checked'}
 }
 function ReadChargeRows($grid,$main){
  $lines=@(OcrRows $grid $main);$header=ChargeHeader $lines
@@ -172,17 +211,9 @@ function AllocatePayment($payment,$draft,$main){
  if([decimal](ReadValue (ById $payment 'textSplitTotal')) -ne 0){throw 'Delete All did not clear current draft splits'}
  $remaining=@(OcrRows (ById $payment 'gridSplits') $main)
  if(@($remaining|Where-Object{$_.text -match '\b(D\d{4}|Prepayment|Unearned)\b'}).Count){throw 'Current Payment Splits is not empty after Delete All'}
-$script:odStage='Đọc cột Outstanding Charges'
+ EnsureShowAllCharges $payment $main
+ $script:odStage='Đọc cột Outstanding Charges'
  $grid=ById $payment 'gridCharges'
- $rows=@(ReadChargeRows $grid $main)
- try{[void](MatchChargeRows $rows $draft)}catch{
-  if($_.Exception.Message -notlike 'Outstanding procedure missing or ambiguous:*'){throw}
-  # OD's Show All Charges is custom-painted and may expose no TogglePattern.
-  # Toggle once only when required procedures are absent, then require an exact row match.
-  # This reveals zero-balance procedures without guessing the checkbox's state.
-  Click (ById $payment 'checkShowAll') $main
-  Start-Sleep -Milliseconds 300
- }
  $script:odStage='Chọn dịch vụ Outstanding Charges'
  $targets=@(SelectChargeRows $grid $draft $main)
  $script:odStage='Add Partials'

@@ -65,6 +65,29 @@ public static class OdNative {
   if(start>=0)edges.Add((start+last)/2);
   edges.Add(bitmap.Width);return edges.ToArray();
  }
+ static bool CheckInk(Bitmap b,int x,int y) {
+  var c=b.GetPixel(x,y);return Math.Max(c.R,Math.Max(c.G,c.B))<200&&Math.Abs(c.R-c.G)<40&&Math.Abs(c.G-c.B)<40;
+ }
+ // Returns -1 for unknown/indeterminate; detects the actual square, not its caption.
+ public static int PaintedCheckState(Bitmap b) {
+  double best=0;int result=-1;
+  for(int size=8;size<=Math.Min(40,b.Height-2);size++){
+   for(int x=0;x<b.Width-size;x++){
+    if(x>10&&x<b.Width-size-11)continue;
+    for(int y=0;y<b.Height-size;y++){
+     int t=0,d=0,l=0,r=0;
+     for(int i=0;i<=size;i++){if(CheckInk(b,x+i,y))t++;if(CheckInk(b,x+i,y+size))d++;if(CheckInk(b,x,y+i))l++;if(CheckInk(b,x+size,y+i))r++;}
+     double score=(double)Math.Min(Math.Min(t,d),Math.Min(l,r))/(size+1);
+     if(score<0.75||score<=best)continue;
+     int inset=Math.Max(2,(int)Math.Round(size*0.22)),count=0,ink=0;
+     for(int xx=x+inset;xx<=x+size-inset;xx++)for(int yy=y+inset;yy<=y+size-inset;yy++){count++;if(CheckInk(b,xx,yy))ink++;}
+     double fill=(double)ink/count;
+     result=fill<=0.03?0:(fill>=0.08&&fill<=0.65?1:-1);best=score;
+    }
+   }
+  }
+  return result;
+ }
  public static string VisualHash(int left,int top,int width,int height) {
   using(var bitmap=new Bitmap(width,height))using(var graphics=Graphics.FromImage(bitmap)){
    graphics.CopyFromScreen(left,top,0,0,bitmap.Size);
