@@ -20,7 +20,26 @@ function OcrControl($element,$main){
  if($r.Width -le 2 -or $r.Height -le 2 -or $element.Current.IsOffscreen){throw 'OCR target not visible'}
  $file=Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString()+'.png')
  $bitmap=[System.Drawing.Bitmap]::new([int]$r.Width,[int]$r.Height);$g=[System.Drawing.Graphics]::FromImage($bitmap)
- try{$g.CopyFromScreen([int]$r.Left,[int]$r.Top,0,0,$bitmap.Size);$bitmap.Save($file,[System.Drawing.Imaging.ImageFormat]::Png)}finally{$g.Dispose();$bitmap.Dispose()}
+ $scale=[Math]::Max(1,[Math]::Min(3,[Math]::Floor(4000/[Math]::Max($r.Width,$r.Height))))
+ $prepared=$null;$pg=$null
+ try{
+  $g.CopyFromScreen([int]$r.Left,[int]$r.Top,0,0,$bitmap.Size)
+  # OD's grey/blue selection can make Windows OCR omit the selected label entirely.
+  # Normalize light backgrounds while preserving dark glyphs, then enlarge small text.
+  for($y=0;$y -lt $bitmap.Height;$y++){
+   for($x=0;$x -lt $bitmap.Width;$x++){
+    $c=$bitmap.GetPixel($x,$y)
+    $ink=($c.R*0.299+$c.G*0.587+$c.B*0.114) -lt 120
+    $bitmap.SetPixel($x,$y,$(if($ink){[Drawing.Color]::Black}else{[Drawing.Color]::White}))
+   }
+  }
+  $prepared=[Drawing.Bitmap]::new([int]($bitmap.Width*$scale),[int]($bitmap.Height*$scale))
+  $pg=[Drawing.Graphics]::FromImage($prepared)
+  $pg.InterpolationMode=[Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+  $pg.PixelOffsetMode=[Drawing.Drawing2D.PixelOffsetMode]::Half
+  $pg.DrawImage($bitmap,0,0,$prepared.Width,$prepared.Height)
+  $prepared.Save($file,[Drawing.Imaging.ImageFormat]::Png)
+ }finally{if($pg){$pg.Dispose()};if($prepared){$prepared.Dispose()};$g.Dispose();$bitmap.Dispose()}
  $stream=$null;$software=$null
  try{
   $storage=AwaitWinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync($file)) ([Windows.Storage.StorageFile])
@@ -38,8 +57,8 @@ function OcrControl($element,$main){
    $top=($words|ForEach-Object{$_.BoundingRect.Y}|Measure-Object -Minimum).Minimum
    $right=($words|ForEach-Object{$_.BoundingRect.X+$_.BoundingRect.Width}|Measure-Object -Maximum).Maximum
    $bottom=($words|ForEach-Object{$_.BoundingRect.Y+$_.BoundingRect.Height}|Measure-Object -Maximum).Maximum
-   $wordBoxes=@($words|ForEach-Object{@{text=$_.Text;x=$r.Left+$_.BoundingRect.X;y=$r.Top+$_.BoundingRect.Y;width=$_.BoundingRect.Width;height=$_.BoundingRect.Height}})
-   $lines+=@{text=$line.Text;x=$r.Left+$left;y=$r.Top+$top;width=$right-$left;height=$bottom-$top;words=$wordBoxes}
+   $wordBoxes=@($words|ForEach-Object{@{text=$_.Text;x=$r.Left+$_.BoundingRect.X/$scale;y=$r.Top+$_.BoundingRect.Y/$scale;width=$_.BoundingRect.Width/$scale;height=$_.BoundingRect.Height/$scale}})
+   $lines+=@{text=$line.Text;x=$r.Left+$left/$scale;y=$r.Top+$top/$scale;width=($right-$left)/$scale;height=($bottom-$top)/$scale;words=$wordBoxes}
   }
   return $lines
  }finally{if($software){$software.Dispose()};if($stream){$stream.Dispose()};Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue}
