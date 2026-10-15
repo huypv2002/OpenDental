@@ -103,6 +103,39 @@ try{
  Start-Sleep -Milliseconds 100
  $selection=(FindControl 'textAccountSelection').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
  if($selection -cne '0,1'){throw ('Wrong adjacent Account selection: '+$selection)}
+ # Execute the actual Outstanding/Add Partials workflow on real painted controls and modals.
+ . (Join-Path $windows 'payment-allocation.ps1')
+ function Modals($scope){@(Elements $scope|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and -not $_.Current.IsOffscreen})}
+ function ReadValue($element){return [string]$element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}
+ function SetValue($scope,$id,$text,$owner){$field=ById $scope $id;$field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($text);if((ReadValue $field) -cne $text){throw 'Amount readback failed'}}
+ $allocationDraft=[pscustomobject]@{patNum='99';patientName='TEST, RYAN';splitPatientName='TEST, RYAN';amount='236.40';splits=@(
+  [pscustomobject]@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC';amountCents=15000},
+  [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC';amountCents=8640}
+ )}
+ foreach($warningCase in @($false,$true)){
+  $button=if($warningCase){'butAllocationWarning'}else{'butAllocation'}
+  Click (FindControl $button) $main
+  $payment=WaitOnly $main 'FormPayment'
+  $stopped=$false
+  try{AllocatePayment $payment $allocationDraft $main}catch{
+   if(-not $warningCase -or $_.Exception.Message -notlike '*Unexpected dialog*Overpaid Charge Warning*'){throw}
+   $stopped=$true
+  }
+  if($warningCase){
+   if(-not $stopped){throw 'Overpaid Charge Warning was accepted automatically'}
+   $warnings=@(Modals $main|Where-Object{$_.Current.Name -ceq 'Overpaid Charge Warning'})
+   if($warnings.Count -ne 1){throw 'Warning was not preserved on screen'}
+   if((ReadValue (ById $payment 'textAllocationState')) -cne '1|1|0'){throw 'Workflow continued or saved after warning'}
+   # Test teardown only. Production leaves the warning and Payment untouched.
+   $warnings[0].GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+   Start-Sleep -Milliseconds 200
+  }else{
+   if((ReadValue (ById $payment 'textSplitTotal')) -cne '236.40'){throw 'Wrong allocation total'}
+   if((ReadValue (ById $payment 'textAllocationState')) -cne '1|2|0'){throw 'Wrong clear/prompt/save counts'}
+  }
+  $payment.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+  Start-Sleep -Milliseconds 200
+ }
  # Exercise the production click helper: a modal-opening Invoke can block the caller.
  Click (FindControl 'butPopup') $main
  $popup=$null

@@ -8,10 +8,11 @@ foreach(var file in Directory.GetFiles(Path.GetDirectoryName(Path.GetFullPath(ar
 }
 var discovery=File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,"window-discovery.ps1"));
 var account=File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,"account-selection.ps1"));
+var allocation=File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,"payment-allocation.ps1"));
 var ocr=File.ReadAllText(args[0]);var workflow=File.ReadAllText(args[1]);
 // Load only the pure OCR row aggregation; WinRT hardware calls remain untested here.
 ocr=ocr[ocr.IndexOf("function OcrRows(")..];
-ps.AddScript("$ErrorActionPreference='Stop'\n"+workflow+"\n"+discovery+"\n"+account+"\n"+ocr+"\n"+"""
+ps.AddScript("$ErrorActionPreference='Stop'\n"+workflow+"\n"+discovery+"\n"+account+"\n"+allocation+"\n"+ocr+"\n"+"""
 $same=@{handle=100;processId=20;id='FormOpenDental';element='correct'}
 if((SelectOdMain @($same,$same)) -cne 'correct'){throw 'Duplicate native/UIA handle was not deduplicated'}
 $cases=@(
@@ -63,6 +64,21 @@ foreach($badRows in @(
 )){
  $caught=$false;try{MatchAccountRows $badRows.rows $draft}catch{$caught=$true}
  if(-not $caught){throw 'Missing/ambiguous Account procedure was accepted'}
+}
+# Outstanding uses full patient names, not first names, with the same verified columns.
+$chargeRows=@($accountRows|ForEach-Object{$copy=$_.Clone();$copy.patient=if($_.patient -ceq 'RYAN'){'PHAM, RYAN'}else{'PHAM, OTHER'};$copy})
+$draft=[pscustomobject]@{patientName='PHAM, RYAN';splitPatientName='PHAM, RYAN';splits=$draft.splits}
+$targets=@(MatchChargeRows $chargeRows $draft)
+if($targets.Count -ne 2 -or $targets[0].row.y -ne 40 -or $targets[1].row.y -ne 120){throw 'Wrong Outstanding identity/order'}
+$draft.splitPatientName='PHAM, OTHER'
+$caught=$false;try{MatchChargeRows $chargeRows $draft}catch{$caught=$true}
+if(-not $caught){throw 'Different family member was accepted'}
+$plan=[pscustomobject]@{amount='35.00';splits=@([pscustomobject]@{amountCents=3500})}
+AssertAllocationPlan $plan
+foreach($badAmount in @(-1,0,3501)){
+ $plan.splits[0].amountCents=$badAmount
+ $caught=$false;try{AssertAllocationPlan $plan}catch{$caught=$true}
+ if(-not $caught){throw 'Incorrect PDF allocation amount accepted'}
 }
 # Invalid OD-generated allocations must stop without opening/editing a split.
 function OcrRows($element,$main){return $script:generatedRows}

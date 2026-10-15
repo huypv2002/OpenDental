@@ -22,16 +22,18 @@ public class PaintedChoices : Control {
  }
 }
 public class AccountGrid : Control {
- readonly string[][] rows={
+ string[][] rows={
   new[]{"09/20/2026","RYAN","DOC","D0120","","Periodic exam","86.40"},
   new[]{"09/20/2026","RYAN","DOC","D2392","13","Restoration","150.00"},
   new[]{"09/20/2026","RYAN","DOC","D2392","14","Restoration","150.00"},
   new[]{"09/20/2026","OTHER","DOC","D1110","","Cleaning","108.00"}
  };
- readonly int[] x={4,120,225,290,355,410,720};
+ int[] x={4,120,225,290,355,410,720};
  readonly System.Collections.Generic.SortedSet<int> selected=new System.Collections.Generic.SortedSet<int>{3};
  public string Selection {get{return string.Join(",",selected);}}
- public AccountGrid(){SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);TabStop=true;Font=new Font("Segoe UI",10);}
+ public int[] SelectedRows {get{var result=new int[selected.Count];selected.CopyTo(result);return result;}}
+ public string CodeAt(int row){return rows[row][3];}
+ public AccountGrid(bool charges=false){if(charges){x=new[]{4,130,315,385,465,515,780};foreach(var row in rows)row[1]=row[1]=="RYAN"?"TEST, RYAN":"TEST, OTHER";}SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);TabStop=true;Font=new Font("Segoe UI",10);}
  protected override void OnMouseDown(MouseEventArgs e){
   Focus();int row=(e.Y-30)/32;if(e.Y<30||row<0||row>=rows.Length)return;
   if((ModifierKeys&Keys.Control)==0){selected.Clear();selected.Add(row);}
@@ -48,6 +50,58 @@ public class AccountGrid : Control {
    for(int c=0;c<rows[r].Length;c++)e.Graphics.DrawString(rows[r][c],Font,Brushes.Black,new PointF(x[c],y+7));
    e.Graphics.DrawLine(Pens.LightGray,0,y+31,Width,y+31);
   }
+ }
+}
+// OD-style combo: opens an independent FormComboPicker and paints current caption above options.
+public class PaintedCombo : Control {
+ readonly string[] options; string current;
+ public string Selected {get{return current;}}
+ public PaintedCombo(string[] values,string initial){options=values;current=initial;Font=new Font("Segoe UI",10);}
+ protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(Color.White);e.Graphics.DrawString(current,Font,Brushes.Black,3,2);e.Graphics.DrawRectangle(Pens.Gray,0,0,Width-1,Height-1);}
+ protected override void OnMouseDown(MouseEventArgs e){
+  base.OnMouseDown(e);var picker=new Form {Name="FormComboPicker",FormBorderStyle=FormBorderStyle.None,StartPosition=FormStartPosition.Manual,Location=PointToScreen(Point.Empty),Size=new Size(Width,Height+options.Length*28+4),ShowInTaskbar=false,Font=Font};
+  picker.Paint+=(sender,args)=>{args.Graphics.Clear(Color.White);args.Graphics.DrawString(current,Font,Brushes.Black,3,2);for(int i=0;i<options.Length;i++)args.Graphics.DrawString(options[i],Font,Brushes.Black,3,Height+4+i*28);};
+  picker.MouseDown+=(sender,args)=>{int index=(args.Y-Height-3)/28;if(args.Y>=Height+3&&index>=0&&index<options.Length){current=options[index];picker.Close();Invalidate();}};
+  picker.Show();
+ }
+}
+public class SplitGrid : Control {
+ public readonly System.Collections.Generic.List<string> Rows=new System.Collections.Generic.List<string>{"DOC TEST, RYAN Prepayment 236.40"};
+ public SplitGrid(){Font=new Font("Segoe UI",10);}
+ protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(Color.White);e.Graphics.DrawString("Prov Patient Code Type Amount",Font,Brushes.Black,3,3);for(int i=0;i<Rows.Count;i++)e.Graphics.DrawString(Rows[i],Font,Brushes.Black,3,30+i*25);}
+}
+public class AllocationPayment : Form {
+ public AllocationPayment(bool warn){
+  Name="FormPayment";Text="Fixture Payment Allocation";ClientSize=new Size(1000,620);StartPosition=FormStartPosition.CenterScreen;
+  var patient=new PaintedCombo(new[]{"All","OTHER","RYAN"},"All"){Name="comboPatientOutstandingFilter",Location=new Point(550,20),Size=new Size(180,25)};Controls.Add(patient);
+  Controls.Add(new PaintedCombo(new[]{"All","RYAN"},"RYAN"){Name="comboPatientPaySplitsFilter",Location=new Point(10,20),Size=new Size(160,25)});
+  Controls.Add(new PaintedCombo(new[]{"All","DOC"},"DOC"){Name="comboProviderPaySplitsFilter",Location=new Point(180,20),Size=new Size(160,25)});
+  Controls.Add(new PaintedCombo(new[]{"None","Patient"},"Patient"){Name="comboGroupBy",Location=new Point(740,20),Size=new Size(180,25)});
+  var all=new CheckBox{Name="checkShowAll",Text="Show All Charges",Location=new Point(550,60),Width=200};Controls.Add(all);
+  var grid=new AccountGrid(true){Name="gridCharges",Location=new Point(5,120),Size=new Size(970,180)};Controls.Add(grid);
+  var splits=new SplitGrid{Name="gridSplits",Location=new Point(10,330),Size=new Size(600,180)};Controls.Add(splits);
+  var total=new TextBox{Name="textSplitTotal",Text="236.40",Location=new Point(650,350)};Controls.Add(total);
+  var state=new TextBox{Name="textAllocationState",Text="0|0|0",Location=new Point(650,400),Width=320};Controls.Add(state);
+  int cleared=0,prompts=0,saves=0;decimal sum=0;
+  var clear=new Button{Name="butClear",Text="Delete All",Location=new Point(10,550),Width=120};Controls.Add(clear);
+  clear.Click+=(sender,e)=>{if(patient.Selected!="RYAN"||!all.Checked)throw new Exception("Wrong patient/show-all state before clearing");cleared++;splits.Rows.Clear();splits.Invalidate();sum=0;total.Text="0.00";state.Text=cleared+"|"+prompts+"|"+saves;};
+  var partial=new Button{Name="butCreatePartial",Text="Add Partials",Location=new Point(550,550),Width=120};Controls.Add(partial);
+  partial.Click+=(sender,e)=>{
+   foreach(int row in grid.SelectedRows){
+    using(var prompt=new Form{Name="FormAmountEdit",Text="Enter Amount",ClientSize=new Size(320,140),StartPosition=FormStartPosition.CenterParent}){
+     var label=new Label{Name="labelText",Text=grid.CodeAt(row),Location=new Point(20,25),Width=80};prompt.Controls.Add(label);
+     var amount=new TextBox{Name="textAmount",Text="0.00",Location=new Point(120,25)};prompt.Controls.Add(amount);
+     var ok=new Button{Name="butOK",Text="OK",Location=new Point(200,85)};prompt.Controls.Add(ok);
+     ok.Click+=(a,b)=>{prompt.DialogResult=DialogResult.OK;};
+     if(prompt.ShowDialog(this)!=DialogResult.OK)return;
+     prompts++;state.Text=cleared+"|"+prompts+"|"+saves;
+     if(warn){if(MessageBox.Show(this,"One or more Outstanding Charges will be negative.  Continue?","Overpaid Charge Warning",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;}
+     decimal value=decimal.Parse(amount.Text,System.Globalization.CultureInfo.InvariantCulture);sum+=value;
+     splits.Rows.Add("DOC TEST, RYAN "+grid.CodeAt(row)+" "+value.ToString("F2",System.Globalization.CultureInfo.InvariantCulture));splits.Invalidate();total.Text=sum.ToString("F2",System.Globalization.CultureInfo.InvariantCulture);
+    }
+   }
+  };
+  var save=new Button{Name="butSave",Text="Save",Location=new Point(850,550)};Controls.Add(save);save.Click+=(sender,e)=>{saves++;state.Text=cleared+"|"+prompts+"|"+saves;};
  }
 }
 public class Fixture : Form {
@@ -67,6 +121,10 @@ public class Fixture : Form {
   timer.Tick+=(sender,e)=>{gridSelection.Text=accountGrid.Selection;};
   var action=new Button {Name="butAction",Text="Action",Location=new Point(250,290)};
   action.Click+=(sender,e)=>{amount.Text="77.00";};account.Controls.Add(action);
+  var allocation=new Button{Name="butAllocation",Text="Allocation fixture",Location=new Point(20,550),Width=160};account.Controls.Add(allocation);
+  allocation.Click+=(sender,e)=>{using(var payment=new AllocationPayment(false))payment.ShowDialog(this);};
+  var warning=new Button{Name="butAllocationWarning",Text="Warning fixture",Location=new Point(200,550),Width=160};account.Controls.Add(warning);
+  warning.Click+=(sender,e)=>{using(var payment=new AllocationPayment(true))payment.ShowDialog(this);};
   var popup=new Button {Name="butPopup",Text="Open fixture popup",Location=new Point(20,290),Size=new Size(200,35)};
   popup.Click+=(sender,e)=>{using(var child=new Form {Name="FormPayment",Text="Fixture Payment",Size=new Size(400,250)}){
    child.Controls.Add(new TextBox {Name="textCheckNum",Text="FIXTURE",Location=new Point(20,30)});
