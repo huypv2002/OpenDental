@@ -12,6 +12,18 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
 public static class OdNative {
+ public delegate bool EnumWindowCallback(IntPtr h, IntPtr p);
+ [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowCallback callback, IntPtr p);
+ [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
+ public static IntPtr[] TopWindows() {
+   var handles=new List<IntPtr>();
+   EnumWindowCallback callback=(h,p)=>{handles.Add(h);return true;};
+   EnumWindows(callback,IntPtr.Zero);
+   return handles.ToArray();
+ }
+
  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr h,uint m,IntPtr w,string text,uint flags,uint timeout,out UIntPtr result);
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -100,14 +112,18 @@ function WaitModal($main,[string]$id){
 function CloseWindow($w){$w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()}
 . (Join-Path $PSScriptRoot 'ocr.ps1')
 . (Join-Path $PSScriptRoot 'workflow.ps1')
+. (Join-Path $PSScriptRoot 'window-discovery.ps1')
 $opened=$null
 $saveInvoked=$false
 $paymentHandle=$null
 $automationStarted=$false
 try{
  $request=[Console]::In.ReadToEnd()|ConvertFrom-Json
- $mains=@($AE::RootElement.FindAll($TS::Children,$TC)|Where-Object{$_.Current.AutomationId -ceq 'FormOpenDental'})
- if($mains.Count -ne 1){throw 'Open exactly one Open Dental window.'};$main=$mains[0]
+ $main=FindOdMain
+ if([OdNative]::IsIconic([IntPtr]$main.Current.NativeWindowHandle)){
+  [void][OdNative]::ShowWindow([IntPtr]$main.Current.NativeWindowHandle,9)
+  Start-Sleep -Milliseconds 250
+ }
  $pat=[regex]::Match($main.Current.Name,'-\s*(\d+)\s*$').Groups[1].Value
  if($request.action -eq 'inspect'){
   @{ok=$true;patNum=$pat;title=$main.Current.Name;modals=@(Modals $main|ForEach-Object{$_.Current.Name});accountVisible=(@(Elements $main|Where-Object{$_.Current.AutomationId -ceq 'ControlAccount' -and -not $_.Current.IsOffscreen}).Count -eq 1)}|ConvertTo-Json -Depth 5 -Compress
@@ -205,9 +221,12 @@ try{
  $message=$_.Exception.Message
  $diagnosticFolder=$null
  try{
-  if($request.diagnosticDir -and $main){
+  if($request.diagnosticDir){
    $diagnosticFolder=Join-Path ([string]$request.diagnosticDir) ([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N'))
    [void][IO.Directory]::CreateDirectory($diagnosticFolder)
+   @{error=$message;discovery=$script:odDiscovery}|ConvertTo-Json -Depth 7|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'window-discovery.json') -Encoding UTF8
+  }
+  if($diagnosticFolder -and $main){
    $nodes=@(Elements $main|ForEach-Object{@{id=$_.Current.AutomationId;name=$_.Current.Name;type=$_.Current.ControlType.ProgrammaticName;enabled=$_.Current.IsEnabled;offscreen=$_.Current.IsOffscreen;rect=$_.Current.BoundingRectangle.ToString()}})
    @{error=$message;saveInvoked=$saveInvoked;title=$main.Current.Name;nodes=$nodes}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'ui.json') -Encoding UTF8
    $rect=$main.Current.BoundingRectangle

@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.2
+# LUK MetLife Assistant 0.3.3
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -49,3 +49,7 @@ PDF.js hỗ trợ mẫu MetLife Claim Summary có text layer đã kiểm tra. PD
 Node 22.13+ (khuyến nghị 24) cho app dev. `npm ci`, `npm start`, `npm test`. Đặt METLIFE_SAMPLE_PDF tới PDF local để chạy integration; không commit PHI làm fixture. `npm run test:patients`, `npm run test:ui`, `npm run test:save`; có thể đặt METLIFE_ELECTRON_PATH để dùng runtime Electron đã cài cho test. `npm run pack:win` đóng gói Windows x64. Source API nằm tại `../src/metlife`.
 
 UI integration fixtures are supplied locally through `METLIFE_SAMPLE_PDF`; configure `METLIFE_TEST_FIRST`, `METLIFE_TEST_LAST`, `METLIFE_TEST_GROUP`, and `METLIFE_TEST_CLAIM` to match the fixture. No patient PDF is included in Git.
+
+## Bản 0.3.3 — nhận diện cửa sổ OD
+
+Tìm tiến trình OpenDental trong cùng phiên Windows, lấy cửa sổ bằng native handle và xác minh FormOpenDental qua UIA, kể cả form nằm dưới một root khác. Loại trùng handle và không tự chọn nếu có nhiều cửa sổ OD. Khôi phục cửa sổ chính đang thu nhỏ sau khi xác định duy nhất. Phân biệt không có tiến trình với tiến trình đang chạy nhưng UIA chưa đọc được. Lỗi discovery cũng lưu window-discovery.json trong thư mục od-diagnostics dưới userData. Đã kiểm tra cú pháp và policy bằng .NET; chưa xác minh native/UIA trên R5 thật. Cần thay toàn bộ app R5 để nhận bản vá này; cập nhật Bridge trên SERVER không thay adapter của app R5.
