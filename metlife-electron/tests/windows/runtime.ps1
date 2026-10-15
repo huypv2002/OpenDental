@@ -75,7 +75,7 @@ try{
   $bands=@([OdNative]::SelectionBands($captured))
   if($bands.Count -ne 1 -or $bands[0].Top -ne 112 -or $bands[0].Bottom -ne 134){throw ('Real R5 highlight segmentation failed: '+($bands|ConvertTo-Json -Compress))}
  }finally{$captured.Dispose()}
- $r5Selected=SelectedText (FindControl 'listCapturedPayType') $main
+ $r5Selected=SelectedText (FindControl 'listCapturedPayType') $main 'Insurance Paid'
  Write-Output ('R5 captured highlighted label: '+$r5Selected)
  if((ListKey $r5Selected) -cne 'INSURANCE PAID'){throw ('Real R5 highlighted Payment Type OCR failed: '+$r5Selected)}
  $multiple=[Drawing.Bitmap]::new(200,100);$paint=[Drawing.Graphics]::FromImage($multiple)

@@ -65,7 +65,7 @@ function PointClick([double]$x,[double]$y,$main,[int]$count=1){
  [void][OdNative]::SetCursorPos([int]$x,[int]$y)
  for($k=0;$k -lt $count;$k++){[OdNative]::mouse_event(2,0,0,0,[UIntPtr]::Zero);[OdNative]::mouse_event(4,0,0,0,[UIntPtr]::Zero);if($count -gt 1){Start-Sleep -Milliseconds 80}}
 }
-function SelectedText($control,$main){
+function SelectedText($control,$main,[string]$expected=''){
  $selection=$null
  if($control.TryGetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern,[ref]$selection)){
   $selectedItems=@($selection.Current.GetSelection())
@@ -85,20 +85,27 @@ function SelectedText($control,$main){
   $selectedBand=$bands[0]
   $margin=[Math]::Max(2,[Math]::Round($selectedBand.Height*0.12))
   $top=[Math]::Max(0,$selectedBand.Top-$margin);$bottom=[Math]::Min($r.Height,$selectedBand.Bottom+$margin)
-  $band=[pscustomobject]@{Left=$r.Left;Top=$r.Top+$top;Width=$r.Width-18;Height=$bottom-$top}
+  $band=[pscustomobject]@{Left=$r.Left+2;Top=$r.Top+$top;Width=$r.Width-20;Height=$bottom-$top}
   # Remote-display antialiasing can lose glyphs when thresholded. Prefer raw
   # colour OCR; normalize only if necessary, then try the full-list row at the
   # independently verified highlight position. Every path must identify one row.
-  $selected=@(OcrRows $control $main $band $false)
-  if($selected.Count -ne 1){$selected=@(OcrRows $control $main $band)}
-  if($selected.Count -ne 1){
-   $selected=@(OcrRows $control $main|Where-Object{
-    $cy=$_.y+$_.height/2
-    $cy -ge $r.Top+$selectedBand.Top -and $cy -le $r.Top+$selectedBand.Bottom
-   })
+  $candidates=@()
+  foreach($mode in @('raw-band','normalized-band','raw-list')){
+   if($mode -ceq 'raw-band'){$selected=@(OcrRows $control $main $band $false)}
+   elseif($mode -ceq 'normalized-band'){$selected=@(OcrRows $control $main $band)}
+   else{
+    $selected=@(OcrRows $control $main|Where-Object{
+     $cy=$_.y+$_.height/2
+     $cy -ge $r.Top+$selectedBand.Top -and $cy -le $r.Top+$selectedBand.Bottom
+    })
+   }
+   if($selected.Count -ne 1){continue}
+   $label=[string]$selected[0].text;$candidates+=$label
+   # Never repair missing letters or choose a similar payment type. An exact
+   # expected label may be checked across independent renderings of this same row.
+   if(-not $expected -or (ListKey $label) -ceq (ListKey $expected)){return $label}
   }
-  if($selected.Count -ne 1){throw ('Selection highlight does not identify one OCR line: '+(@{rows=$selected;highlightBands=$bands}|ConvertTo-Json -Depth 6 -Compress))}
-  return [string]$selected[0].text
+  throw ('Selection highlight label could not be verified: '+(@{expected=$expected;candidates=$candidates;highlightBands=$bands}|ConvertTo-Json -Depth 6 -Compress))
  }finally{$g.Dispose();$b.Dispose()}
 }
 

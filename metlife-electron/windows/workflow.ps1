@@ -67,11 +67,11 @@ function SetListExact($list,[string]$wanted,$main){
    if($matches.Count -eq 1){
     $line=$matches[0];PointClick ($line.x+$line.width/2) ($line.y+$line.height/2) $main
     Start-Sleep -Milliseconds 150
-    if((ListKey (SelectedText $list $main)) -cne (ListKey $wanted)){throw 'Selected list text does not match requested value'}
+    if((ListKey (SelectedText $list $main $wanted)) -cne (ListKey $wanted)){throw 'Selected list text does not match requested value'}
     return
    }
    # A full-list OCR pass may omit the highlighted row. Read its band separately.
-   try{if((ListKey (SelectedText $list $main)) -ceq (ListKey $wanted)){return}}catch{}
+   try{if((ListKey (SelectedText $list $main $wanted)) -ceq (ListKey $wanted)){return}}catch{}
    $list.SetFocus();AssertFocus $main
    [System.Windows.Forms.SendKeys]::SendWait('{'+$direction+'}')
    Start-Sleep -Milliseconds 100
@@ -133,7 +133,7 @@ function AssertPayment($payment,$draft,$main){
  if((ReadValue (ById $payment 'textCheckNum')) -cne [string]$draft.checkNum){throw 'Trace changed before Save'}
  if((ReadValue (ById $payment 'textNote')) -cne [string]$draft.note){throw 'Note changed before Save'}
  if([decimal](ReadValue (ById $payment 'textSplitTotal')) -ne [decimal]$draft.amount){throw 'Split total changed before Save'}
- if((SelectedText (ById $payment 'listPayType') $main).Trim() -ine ([string]$draft.paymentType).Trim()){throw 'Payment Type readback mismatch before Save'}
+ if((SelectedText (ById $payment 'listPayType') $main ([string]$draft.paymentType)).Trim() -ine ([string]$draft.paymentType).Trim()){throw 'Payment Type readback mismatch before Save'}
 }
 function VerifySplits($payment,$draft,$main){
  $grid=ById $payment 'gridSplits'
