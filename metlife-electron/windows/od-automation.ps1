@@ -183,13 +183,10 @@ try{
    try{$graphics.CopyFromScreen([int]$rect.Left,[int]$rect.Top,0,0,$image.Size);$image.Save((Join-Path $diagnosticFolder 'od.png'),[Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$image.Dispose()}
   }
  }catch{}
- if(-not $saveInvoked -and $automationStarted){
-  for($i=0;$i -lt 5;$i++){
-   $enabled=@(Modals $main|Where-Object{$_.Current.IsEnabled})
-   if($enabled.Count -ne 1 -or $enabled[0].Current.AutomationId -notin @('FormPatientSelect','InputBox','FormPayment','FormPaySplitEdit','FormProcSelect')){break}
-   try{CloseWindow $enabled[0]}catch{break};Start-Sleep -Milliseconds 100
-  }
- }elseif(-not $saveInvoked -and $null -ne $opened){try{CloseWindow $opened}catch{}}
+ # Preserve the exact OD state on failure so the user can inspect the draft.
+ # Never dismiss a popup or Payment implicitly from an error handler.
+ if($saveInvoked){$message+=' — Tool không tự đóng popup. Save đã được gọi; kiểm tra kết quả trên SERVER, không nhập lại.'}
+ else{$message+=' — Đã dừng tại màn hình hiện tại; tool không tự đóng hoặc Save. Kiểm tra OD trước khi thử lại.'}
 
  @{ok=$false;error=$message;saveInvoked=$saveInvoked;windowHandle=$paymentHandle;diagnosticFolder=$diagnosticFolder}|ConvertTo-Json -Compress;exit 1
 }

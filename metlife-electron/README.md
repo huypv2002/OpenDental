@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.7
+# LUK MetLife Assistant 0.3.8
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -91,3 +91,7 @@ OD có thể tự phân bổ khác số tiền từng dòng trên EOB, hoặc t�
 Kiểm thử Windows bổ sung Account grid tự vẽ, có dòng cùng code khác răng và bệnh nhân khác, cùng lựa chọn thừa từ trước. Kiểm tra OCR + Ctrl-click thực giữ đúng hai dòng không liền nhau và bỏ lựa chọn cũ.
 
 Kiểm chứng bản 0.3.7: Windows CI run 38755961349 đã pass cả fixture WinForms x86/x64, gồm OCR và Ctrl-click thật trên grid tự vẽ để chọn các dòng liền/không liền nhau và bỏ lựa chọn cũ. 20 test app và policy .NET bổ sung các ca thiếu/trùng dòng, khác răng/bệnh nhân, Prepayment và phân bổ sai đã pass. Đây chưa phải nghiệm thu trên OD thật. Nhận diện tiền tố OCR 0xxxx → Dxxxx chỉ áp dụng ở cột CDT Code đã xác định; giữ rawCode để chẩn đoán và vẫn yêu cầu khớp duy nhất các trường còn lại.
+
+## Bản 0.3.8 — giữ màn hình draft khi dừng
+
+Bỏ toàn bộ tự đóng popup/Payment trong error handler. Fill draft thành công giữ Payment mở trước Save như trước; nếu lỗi thì giữ nguyên popup và các giá trị tại bước bị lỗi để người dùng kiểm tra. Thông báo nói rõ tool dừng, chưa tự đóng/Save. Người dùng chủ động đóng popup trong OD nếu lỗi xảy ra giữa luồng; nút Đóng bản nháp của app vẫn đóng Payment đã quản lý và xác minh đúng identity khi được bấm. Luồng kiểm tra chi tiết Split vẫn mở rồi quay lại Payment để hoàn tất xác minh, không đóng Payment cuối luồng.
