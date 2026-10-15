@@ -14,9 +14,9 @@ function AwaitWinRT($operation,[Type]$resultType){
  if(-not $task.Wait(10000)){throw 'Windows OCR timed out'}
  return $task.GetAwaiter().GetResult()
 }
-function OcrControl($element,$main){
+function OcrControl($element,$main,$cropRect=$null){
  AssertFocus $main
- $r=$element.Current.BoundingRectangle
+ $r=if($cropRect){$cropRect}else{$element.Current.BoundingRectangle}
  if($r.Width -le 2 -or $r.Height -le 2 -or $element.Current.IsOffscreen){throw 'OCR target not visible'}
  $file=Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString()+'.png')
  $bitmap=[System.Drawing.Bitmap]::new([int]$r.Width,[int]$r.Height);$g=[System.Drawing.Graphics]::FromImage($bitmap)
@@ -80,16 +80,19 @@ function SelectedText($control,$main){
    if($n -gt 0 -and $hits/$n -gt 0.62){$ys+=$y}
   }
   if($ys.Count -eq 0){throw 'Could not verify selection highlight'}
-  $lines=@(OcrRows $control $main)
-  $selected=@($lines|Where-Object{$cy=$_.y-$r.Top+$_.height/2;@($ys|Where-Object{[Math]::Abs($_-$cy) -le 2}).Count -gt 0})
-  if($selected.Count -ne 1){throw ('Selection highlight does not identify one OCR line: '+(@{rows=$lines;highlightY=$ys;rect=@{left=$r.Left;top=$r.Top;width=$r.Width;height=$r.Height}}|ConvertTo-Json -Depth 6 -Compress))}
+  # OCR only the selected band: full-list OCR may omit short/highlighted labels.
+  $first=[int]$ys[0];$last=[int]$ys[-1]
+  if($last-$first+1 -ne $ys.Count){throw 'Selection highlight has multiple bands'}
+  $band=[pscustomobject]@{Left=$r.Left;Top=$r.Top+$first;Width=$r.Width;Height=$last-$first+1}
+  $selected=@(OcrRows $control $main $band)
+  if($selected.Count -ne 1){throw ('Selection highlight does not identify one OCR line: '+(@{rows=$selected;highlightY=$ys}|ConvertTo-Json -Depth 6 -Compress))}
   return [string]$selected[0].text
  }finally{$g.Dispose();$b.Dispose()}
 }
 
-function OcrRows($element,$main){
+function OcrRows($element,$main,$cropRect=$null){
  # OCR may split a table row into one line per column. Merge by vertical alignment.
- $lines=@(OcrControl $element $main|Sort-Object y,x);$rows=[Collections.Generic.List[object]]::new()
+ $lines=@(OcrControl $element $main $cropRect|Sort-Object y,x);$rows=[Collections.Generic.List[object]]::new()
  foreach($line in $lines){
   $cy=$line.y+$line.height/2;$match=$null
   foreach($row in $rows){if([Math]::Abs($row.cy-$cy) -le [Math]::Max(3,$line.height*0.35)){$match=$row;break}}

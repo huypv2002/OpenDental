@@ -23,6 +23,15 @@ public static class OdNative {
  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);
  [DllImport("user32.dll")] public static extern void mouse_event(uint a,uint b,uint c,uint d,UIntPtr e);
  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr c);
+ public static string VisualHash(int left,int top,int width,int height) {
+  using(var bitmap=new Bitmap(width,height))using(var graphics=Graphics.FromImage(bitmap)){
+   graphics.CopyFromScreen(left,top,0,0,bitmap.Size);
+   using(var stream=new System.IO.MemoryStream())using(var hash=System.Security.Cryptography.SHA256.Create()){
+    bitmap.Save(stream,System.Drawing.Imaging.ImageFormat.Png);
+    return Convert.ToBase64String(hash.ComputeHash(stream.ToArray()));
+   }
+  }
+ }
  public static void NormalizeOcr(Bitmap bitmap) {
   var rect=new Rectangle(0,0,bitmap.Width,bitmap.Height);
   var data=bitmap.LockBits(rect,System.Drawing.Imaging.ImageLockMode.ReadWrite,System.Drawing.Imaging.PixelFormat.Format32bppArgb);

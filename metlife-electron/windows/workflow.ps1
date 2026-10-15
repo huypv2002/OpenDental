@@ -73,9 +73,9 @@ function SetListExact($list,[string]$wanted,$main){
    $list.SetFocus();AssertFocus $main
    [System.Windows.Forms.SendKeys]::SendWait('{'+$direction+'}')
    Start-Sleep -Milliseconds 100
-   # Include selection in the fingerprint; unchanged visible text alone is not the end.
-   $selected=ListKey (SelectedText $list $main)
-   $signature=(@(OcrRows $list $main|ForEach-Object{$_.text}) -join '|')+'::'+$selected
+   # Include the painted selection in the image fingerprint, even when OCR omits a label.
+   $r=$list.Current.BoundingRectangle
+   $signature=[OdNative]::VisualHash([int]$r.Left,[int]$r.Top,[int]$r.Width,[int]$r.Height)
    if($signature -ceq $previous){$unchanged++}else{$unchanged=0}
    if($unchanged -ge 2){break}
    $previous=$signature
