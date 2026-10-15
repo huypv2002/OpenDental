@@ -1,7 +1,10 @@
 # Build only the newly opened Payment draft using Outstanding Charges / Add Partials.
 function ControlText($control,$main){
  try{return (ReadValue $control).Trim()}catch{}
- return ((@(OcrRows $control $main $control.Current.BoundingRectangle)|ForEach-Object{$_.text}) -join ' ').Trim()
+ # Exclude the dropdown arrow from the caption OCR.
+ $r=$control.Current.BoundingRectangle
+ $caption=[pscustomobject]@{Left=$r.Left;Top=$r.Top;Width=$r.Width-$r.Height;Height=$r.Height}
+ return ((@(OcrRows $control $main $caption)|ForEach-Object{$_.text}) -join ' ').Trim()
 }
 function ProcessPopup($main,[string]$id){
  $windows=@($AE::RootElement.FindAll($TS::Children,$TC))+@(Modals $main)
@@ -39,7 +42,8 @@ function SetComboExact($payment,[string]$id,[string]$wanted,$main){
  PointClick ($choices[0].x+$choices[0].width/2) ($choices[0].y+$choices[0].height/2) $main
  Start-Sleep -Milliseconds 200
  if(ProcessPopup $main 'FormComboPicker'){throw ('OD combo picker did not close: '+$id)}
- if((ListKey (ControlText (ById $payment $id) $main)) -cne (ListKey $wanted)){throw ('Combo selection readback failed: '+$id)}
+ $actual=ControlText (ById $payment $id) $main
+ if((ListKey $actual) -cne (ListKey $wanted)){throw ('Combo selection readback failed: '+$id+' / expected '+$wanted+' / actual '+$actual)}
 }
 function MatchChargeRows($rows,$draft){
  if(-not $draft.splitPatientName -or @($draft.splits).Count -eq 0){throw 'Missing verified Outstanding Charges plan'}
