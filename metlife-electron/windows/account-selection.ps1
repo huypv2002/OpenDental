@@ -4,8 +4,8 @@ function AccountRows($lines){
  if($header.Count -ne 1){throw ('Cannot identify Account column headers: '+($lines|ConvertTo-Json -Depth 5 -Compress))}
  $columns=@{}
  foreach($name in @('Date','Patient','Prov','Code')){
-  $word=@($header[0].words|Where-Object{$_.text -ceq $name})
-  if($word.Count -ne 1){throw ('Account column not unique: '+$name)}
+  $word=@($header[0].words|Where-Object{$_.text -ieq $name})
+  if($word.Count -ne 1){throw ('Account column not unique: '+$name+' / '+($header[0]|ConvertTo-Json -Depth 5 -Compress))}
   $columns[$name]=$word[0].x+$word[0].width/2
  }
  $tooth=@($header[0].words|Where-Object{$_.text -match '^(Tth|Th|Tooth)$'})
