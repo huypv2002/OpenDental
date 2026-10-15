@@ -34,8 +34,8 @@ API_TOKEN=replace-with-a-long-random-token
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=opendental_test
-DB_USER=luk2468
-DB_PASSWORD=luk2468
+DB_USER=change-this-db-user
+DB_PASSWORD=change-this-db-password
 DEFAULT_PROVIDER_NUM=1
 DEFAULT_OPERATORY_NUM=1
 DEFAULT_APPOINTMENT_TYPE_NUM=1
@@ -86,3 +86,23 @@ curl -H "Authorization: Bearer replace-with-a-long-random-token" "http://127.0.0
 - Start with `opendental_test`; only switch to production DB after the POC is verified.
 - Use the narrowest DB grants possible. Slot lookup needs `SELECT`; booking creation needs `SELECT`, `INSERT`, and `UPDATE`.
 - Keep `PATIENT_FILE_STORAGE_DIR` outside any public web directory. The current production target is `G:\Online Patient Information`.
+
+
+## MetLife API — integrated in the same Bridge
+
+MetLife is mounted by `src/server.js` at `/api/metlife` and uses `src/db.js`'s existing MySQL pool. It has no separate backend, port, database credentials, or startup process. `npm start` serves the booking/SMS/admin routes and MetLife routes together through the existing Bridge address/tunnel.
+
+- `GET /api/metlife/health`
+- `GET /api/metlife/patients?q=...&kind=all|name|patientId|subscriberId|groupNumber&page=0`
+- `GET /api/metlife/patients/:patNum/documents`
+- `GET /api/metlife/patients/:patNum/documents/:docNum/pdf`
+- `GET /api/metlife/patients/:patNum/context`
+- `GET /api/metlife/patients/:patNum/pending`
+- `POST /api/metlife/operations` — validate plan and lock one operation
+- `POST /api/metlife/operations/:id/recheck` — fresh validation before Save
+- `POST /api/metlife/operations/:id/verify` — read back Payment/Splits
+- `POST /api/metlife/operations/:id/abort` — release only when financial data is unchanged
+
+For the existing Windows Git installation, run `od-bridge.bat` (also available as `start-bridge-and-tunnel.bat`). It pulls `origin/main` with `--ff-only`, installs locked dependencies, initializes MetLife configuration without replacing DB/API settings, restarts the Bridge listener, checks `/health`, and retains the existing tunnel. On the first update, pull once to obtain this launcher. See [CAP-NHAT-METLIFE.md](CAP-NHAT-METLIFE.md). Import the generated private `metlife-r5-connection.json` once into Electron R5. Service-managed installations must restart through their existing supervisor.
+
+The financial tables are read only through these APIs. Financial changes go through the R5 Open Dental UI driver. The private operation journal contains patient context; keep it outside public web directories. Run `npm run test:metlife` for the API/posting tests. Driver implementation is present but has not been verified on the actual R5 workstation.

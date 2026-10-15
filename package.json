@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "metlife:configure": "node scripts/configure-metlife.mjs",
+    "test:metlife": "node --test src/metlife/*.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -1,15 +1,7 @@
 @echo off
 setlocal
-
-set "APP_DIR=%~dp0"
-set "TUNNEL_NAME=od-bridge"
-
-echo Starting Open Dental bridge and Cloudflare tunnel...
-echo App directory: %APP_DIR%
-echo Tunnel: %TUNNEL_NAME%
-
-start "Open Dental Bridge API" /D "%APP_DIR%" cmd /k npm start
-timeout /t 2 /nobreak >nul
-start "Cloudflare Tunnel - od-bridge.lukdental.us" /D "%APP_DIR%" cmd /k cloudflared tunnel run %TUNNEL_NAME%
-
+cd /d "%~dp0"
+rem Serialize updates so a double-click cannot start two Bridge processes.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$m = New-Object Threading.Mutex($false, 'Local\LUKOpenDentalBridgeUpdate'); if (-not $m.WaitOne(0)) { Write-Host 'Bridge update already running.'; exit 1 }; try { & '%~dp0scripts\update-bridge.ps1'; exit $LASTEXITCODE } finally { $m.ReleaseMutex(); $m.Dispose() }"
+if errorlevel 1 pause
 endlocal

@@ -1,0 +1,65 @@
+{
+  "name": "luk-metlife-assistant",
+  "version": "0.3.0",
+  "private": true,
+  "description": "LUK Dental MetLife PDF reconciliation and Open Dental payment draft assistant",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.mjs",
+    "test:ui": "node scripts/ui-test.cjs",
+    "pack:win": "node scripts/prepare-windows.cjs && electron-builder --win dir --x64",
+    "dist:win": "node scripts/prepare-windows.cjs && electron-builder --win portable --x64",
+    "pack:mac": "electron-builder --mac dir --arm64",
+    "test:patients": "node scripts/patient-ui-test.cjs",
+    "test:save": "node scripts/save-ui-test.cjs"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.4.299"
+  },
+  "devDependencies": {
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3",
+    "playwright": "1.64.0"
+  },
+  "build": {
+    "appId": "us.lukdental.metlife",
+    "productName": "LUK MetLife Assistant",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "lib/**",
+      "renderer/**",
+      "assets/**"
+    ],
+    "extraResources": [
+      {
+        "from": "windows",
+        "to": "windows",
+        "filter": [
+          "*.ps1",
+          "*.png"
+        ]
+      },
+      {
+        "from": "windows/native",
+        "to": "native"
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "assets/tooth.ico",
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "category": "public.app-category.medical",
+      "identity": null
+    }
+  },
+  "optionalDependencies": {},
+  "author": "LUK Dental"
+}

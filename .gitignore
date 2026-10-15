@@ -7,3 +7,7 @@ sms-reminder-tool/__pycache__/
 audit-trail-tool/audit_config.json
 audit-trail-tool/__pycache__/
 audit-trail-tool/.venv/
+
+metlife-r5-connection.json
+metlife-operations/
+metlife-backups/

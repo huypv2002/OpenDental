@@ -1,3 +1,4 @@
+import { createMetlifeRouter } from './metlife/router.js';
 import cors from 'cors';
 import express from 'express';
 import multer from 'multer';
@@ -273,6 +274,8 @@ app.use(cors({
 app.get('/api/booking-capabilities', requireApiToken, (_req, res) => {
   res.json({ ok: true, data: { dateHours: true } });
 });
+
+app.use('/api/metlife', createMetlifeRouter());
 
 app.get('/health', async (_req, res) => {
   try {
