@@ -14,6 +14,7 @@ try{
  . (Join-Path $windows 'uia-client.ps1')
  InitializeOdUia
  Add-Type -AssemblyName System.Drawing
+ Add-Type -AssemblyName System.Windows.Forms
  . (Join-Path $windows 'native-api.ps1')
  . (Join-Path $windows 'window-actions.ps1')
  if($script:odProvider.backend -cne 'UIA3-COM'){throw 'Wrong backend'}
