@@ -1,7 +1,7 @@
 # Build only the newly opened Payment draft using Outstanding Charges / Add Partials.
 function ControlText($control,$main){
  try{return (ReadValue $control).Trim()}catch{}
- return ((@(OcrRows $control $main)|ForEach-Object{$_.text}) -join ' ').Trim()
+ return ((@(OcrRows $control $main $control.Current.BoundingRectangle)|ForEach-Object{$_.text}) -join ' ').Trim()
 }
 function ProcessPopup($main,[string]$id){
  $windows=@($AE::RootElement.FindAll($TS::Children,$TC))+@(Modals $main)
@@ -20,10 +20,21 @@ function SetComboExact($payment,[string]$id,[string]$wanted,$main){
  $picker=$null
  for($i=0;$i -lt 30;$i++){$picker=ProcessPopup $main 'FormComboPicker';if($picker){break};Start-Sleep -Milliseconds 100}
  if(-not $picker){throw ('OD combo picker not found: '+$id)}
+ Start-Sleep -Milliseconds 150
  $lines=@(OcrRows $picker $main)
  # The picker paints the current caption above the actual options. Exclude that band.
  $r=$combo.Current.BoundingRectangle
  $choices=@($lines|Where-Object{$_.y -ge $r.Bottom -and (ListKey $_.text) -ceq (ListKey $wanted)})
+ if($choices.Count -eq 0){
+  # Windows OCR may omit a short option such as All in a larger popup.
+  # Re-read only the options, normalized and enlarged; never infer an unseen option.
+  $pr=$picker.Current.BoundingRectangle
+  $options=[pscustomobject]@{Left=$pr.Left;Top=$r.Bottom;Width=$pr.Width;Height=$pr.Bottom-$r.Bottom}
+  if($options.Height -gt 2){
+   $lines=@(OcrRows $picker $main $options)
+   $choices=@($lines|Where-Object{(ListKey $_.text) -ceq (ListKey $wanted)})
+  }
+ }
  if($choices.Count -ne 1){throw ('Combo option missing or ambiguous: '+$id+' / '+$wanted+' / '+(@{combo=$r.ToString();picker=$picker.Current.BoundingRectangle.ToString();rows=$lines}|ConvertTo-Json -Depth 6 -Compress))}
  PointClick ($choices[0].x+$choices[0].width/2) ($choices[0].y+$choices[0].height/2) $main
  Start-Sleep -Milliseconds 200
