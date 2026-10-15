@@ -63,7 +63,7 @@ public class PaintedCombo : Control {
  protected override void OnMouseDown(MouseEventArgs e){
   base.OnMouseDown(e);var picker=new Form {Name="FormComboPicker",FormBorderStyle=FormBorderStyle.None,StartPosition=FormStartPosition.Manual,Location=PointToScreen(Point.Empty),Size=new Size(Width,Height+options.Length*28+4),ShowInTaskbar=false,Font=Font};
   picker.Paint+=(sender,args)=>{args.Graphics.Clear(Color.White);args.Graphics.DrawString(current,Font,Brushes.Black,3,2);for(int i=0;i<options.Length;i++)args.Graphics.DrawString(options[i],Font,Brushes.Black,3,Height+4+i*28);};
-  picker.MouseDown+=(sender,args)=>{int index=(args.Y-Height-3)/28;if(args.Y>=Height+3&&index>=0&&index<options.Length){current=options[index];picker.Close();Invalidate();}};
+  picker.MouseDown+=(sender,args)=>{if(args.Y<Height){picker.Close();return;}int index=(args.Y-Height-3)/28;if(args.Y>=Height+3&&index>=0&&index<options.Length){current=options[index];picker.Close();Invalidate();}};
   picker.Show();
  }
 }
