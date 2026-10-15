@@ -26,10 +26,10 @@ function OcrControl($element,$main,$cropRect=$null){
   $g.CopyFromScreen([int]$r.Left,[int]$r.Top,0,0,$bitmap.Size)
   # OD's grey/blue selection can make Windows OCR omit the selected label entirely.
   # Normalize light backgrounds while preserving dark glyphs, then enlarge small text.
-  [OdNative]::NormalizeOcr($bitmap)
+  if($cropRect){[OdNative]::NormalizeOcr($bitmap)}
   $prepared=[Drawing.Bitmap]::new([int]($bitmap.Width*$scale),[int]($bitmap.Height*$scale))
   $pg=[Drawing.Graphics]::FromImage($prepared)
-  $pg.InterpolationMode=[Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+  $pg.InterpolationMode=[Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
   $pg.PixelOffsetMode=[Drawing.Drawing2D.PixelOffsetMode]::Half
   $pg.DrawImage($bitmap,0,0,$prepared.Width,$prepared.Height)
   $prepared.Save($file,[Drawing.Imaging.ImageFormat]::Png)

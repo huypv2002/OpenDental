@@ -70,6 +70,8 @@ function SetListExact($list,[string]$wanted,$main){
     if((ListKey (SelectedText $list $main)) -cne (ListKey $wanted)){throw 'Selected list text does not match requested value'}
     return
    }
+   # A full-list OCR pass may omit the highlighted row. Read its band separately.
+   try{if((ListKey (SelectedText $list $main)) -ceq (ListKey $wanted)){return}}catch{}
    $list.SetFocus();AssertFocus $main
    [System.Windows.Forms.SendKeys]::SendWait('{'+$direction+'}')
    Start-Sleep -Milliseconds 100
