@@ -61,6 +61,52 @@ function SetComboExact($payment,[string]$id,[string]$wanted,$main){
  }
  if((ListKey $actual) -cne (ListKey $wanted)){throw ('Combo selection readback failed: '+$id+' / expected '+$wanted+' / actual '+$actual)}
 }
+function ChargeHeader($lines){
+ $header=@($lines|Where-Object{$_.text -match '\bDate\b' -and $_.text -match '\bPatient\b' -and $_.text -match '\bCode\b'})
+ if($header.Count -ne 1){throw ('Cannot identify Outstanding headers: '+($lines|ConvertTo-Json -Depth 5 -Compress))}
+ return $header[0]
+}
+function ChargeRowsFromLines($lines,$edges){
+ $header=ChargeHeader $lines;$cells=@{}
+ foreach($name in @('Date','Patient','Prov','Code','Type')){
+  $words=@($header.words|Where-Object{$_.text -ieq $name})
+  if($words.Count -ne 1){throw ('Outstanding header not unique: '+$name)}
+  $center=$words[0].x+$words[0].width/2;$found=@()
+  for($i=0;$i -lt $edges.Count-1;$i++){if($center -gt $edges[$i] -and $center -lt $edges[$i+1]){$found+=$i}}
+  if($found.Count -ne 1){throw ('Outstanding column boundaries not unique: '+$name)}
+  $cells[$name]=$found[0]
+ }
+ # The OD layout has exactly one tooth cell between Code and Type. Use its
+ # physical borders, even when OCR omits the tiny Th/Tth caption entirely.
+ if($cells.Date -ne 0 -or $cells.Patient -ne 1 -or $cells.Prov -ne 2 -or $cells.Code -ne 3 -or $cells.Type -ne 5){throw 'Unsupported Outstanding column geometry'}
+ $cells.Tooth=4;$rows=@()
+ foreach($line in $lines){
+  if($line.y -le $header.y){continue}
+  $values=@{}
+  foreach($name in @('Date','Patient','Prov','Code','Tooth')){
+   $index=$cells[$name]
+   $values[$name]=(@($line.words|Where-Object{
+    $cx=$_.x+$_.width/2;$cx -ge $edges[$index] -and $cx -lt $edges[$index+1]
+   }|ForEach-Object{$_.text}) -join $(if($name -ceq 'Patient'){' '}else{''})).Trim()
+  }
+  if($values.Date -notmatch '^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$'){continue}
+  $code=$values.Code.ToUpperInvariant();if($code -cmatch '^0[0-9]{4}$'){$code='D'+$code.Substring(1)}
+  $rows+=@{date=$values.Date;patient=$values.Patient;provider=$values.Prov;code=$code;rawCode=$values.Code;tooth=$values.Tooth;x=($edges[3]+$edges[4])/2;y=$line.y;height=$line.height}
+ }
+ return @($rows|Sort-Object { [double]$_.y })
+}
+function ReadChargeRows($grid,$main){
+ $lines=@(OcrRows $grid $main);$header=ChargeHeader $lines
+ $r=$grid.Current.BoundingRectangle
+ $top=[int][Math]::Max($r.Top,$header.y-1)
+ $height=[int][Math]::Ceiling($header.height+2)
+ $bitmap=[Drawing.Bitmap]::new([int]$r.Width,$height);$graphics=[Drawing.Graphics]::FromImage($bitmap)
+ try{
+  AssertFocus $main;$graphics.CopyFromScreen([int]$r.Left,$top,0,0,$bitmap.Size)
+  $edges=@([OdNative]::HeaderDividers($bitmap)|ForEach-Object{$r.Left+$_})
+ }finally{$graphics.Dispose();$bitmap.Dispose()}
+ return @(ChargeRowsFromLines $lines $edges)
+}
 function MatchChargeRows($rows,$draft){
  if(-not $draft.splitPatientName -or @($draft.splits).Count -eq 0){throw 'Missing verified Outstanding Charges plan'}
  $targets=@()
@@ -77,7 +123,7 @@ function MatchChargeRows($rows,$draft){
  return @($targets|Sort-Object { [double]$_.row.y })
 }
 function SelectChargeRows($grid,$draft,$main){
- $rows=@(AccountRows @(OcrRows $grid $main))
+ $rows=@(ReadChargeRows $grid $main)
  $targets=@(MatchChargeRows $rows $draft)
  PointClick $targets[0].row.x ($targets[0].row.y+$targets[0].row.height/2) $main
  if($targets.Count -gt 1){
@@ -86,7 +132,7 @@ function SelectChargeRows($grid,$draft,$main){
   finally{[OdNative]::keybd_event(17,0,2,[UIntPtr]::Zero)}
  }
  Start-Sleep -Milliseconds 200
- $after=@(AccountRows @(OcrRows $grid $main));$confirmed=@(MatchChargeRows $after $draft)
+ $after=@(ReadChargeRows $grid $main);$confirmed=@(MatchChargeRows $after $draft)
  $rect=$grid.Current.BoundingRectangle;$selected=@{}
  foreach($row in $after){
   $center=[int]($row.y+$row.height/2)
@@ -123,8 +169,9 @@ function AllocatePayment($payment,$draft,$main){
  if([decimal](ReadValue (ById $payment 'textSplitTotal')) -ne 0){throw 'Delete All did not clear current draft splits'}
  $remaining=@(OcrRows (ById $payment 'gridSplits') $main)
  if(@($remaining|Where-Object{$_.text -match '\b(D\d{4}|Prepayment|Unearned)\b'}).Count){throw 'Current Payment Splits is not empty after Delete All'}
+$script:odStage='Đọc cột Outstanding Charges'
  $grid=ById $payment 'gridCharges'
- $rows=@(AccountRows @(OcrRows $grid $main))
+ $rows=@(ReadChargeRows $grid $main)
  try{[void](MatchChargeRows $rows $draft)}catch{
   if($_.Exception.Message -notlike 'Outstanding procedure missing or ambiguous:*'){throw}
   # OD's Show All Charges is custom-painted and may expose no TogglePattern.

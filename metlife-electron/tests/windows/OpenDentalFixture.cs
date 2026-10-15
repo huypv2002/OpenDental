@@ -44,7 +44,15 @@ public class AccountGrid : Control {
  protected override void OnPaint(PaintEventArgs e){
   e.Graphics.Clear(Color.White);
   string[] header={"Date","Patient","Prov","Code","Tth","Description","Charges"};
-  for(int c=0;c<header.Length;c++)e.Graphics.DrawString(header[c],Font,Brushes.Black,new PointF(x[c],5));
+  if(chargesMode){
+   int[] edges={0,120,310,380,460,510,775,850,970};
+   string[] captions={"Date","Patient","Prov","Code","","Type","AmtOrig","AmtEnd"};
+   for(int c=0;c<captions.Length;c++){
+    float center=(edges[c]+edges[c+1])/2f;
+    e.Graphics.DrawString(captions[c],Font,Brushes.Black,center-e.Graphics.MeasureString(captions[c],Font).Width/2,5);
+    e.Graphics.DrawLine(Pens.Gray,edges[c],0,edges[c],28);
+   }
+  }else{for(int c=0;c<header.Length;c++)e.Graphics.DrawString(header[c],Font,Brushes.Black,new PointF(x[c],5));}
   for(int r=0;r<rows.Length;r++){
    if(chargesMode&&!ShowAll&&(r==0||r==2))continue;
    int y=30+r*32;
@@ -124,6 +132,9 @@ public class Fixture : Form {
   var capturedImage=Image.FromFile(System.IO.Path.Combine(Application.StartupPath,"payment-type-r5.png"));
   var capturedList=new PictureBox{Name="listCapturedPayType",Image=capturedImage,Location=new Point(680,25),Size=capturedImage.Size};account.Controls.Add(capturedList);
   FormClosed+=(sender,e)=>capturedImage.Dispose();
+  var headerImage=Image.FromFile(System.IO.Path.Combine(Application.StartupPath,"outstanding-header-r5.png"));
+  account.Controls.Add(new PictureBox{Name="headerCapturedCharges",Image=headerImage,SizeMode=PictureBoxSizeMode.StretchImage,Location=new Point(5,580),Size=new Size(850,26)});
+  FormClosed+=(sender,e)=>headerImage.Dispose();
   var selection=new TextBox {Name="textPaintedSelection",ReadOnly=true,Location=new Point(400,180),Width=260};account.Controls.Add(selection);
   var timer=new Timer {Interval=50};timer.Tick+=(sender,e)=>{selection.Text=painted.SelectedLabel;};timer.Start();
   var accountGrid=new AccountGrid {Name="gridAccount",Location=new Point(5,350),Size=new Size(850,180)};account.Controls.Add(accountGrid);

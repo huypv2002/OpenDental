@@ -80,6 +80,15 @@ foreach($badAmount in @(-1,0,3501)){
  $caught=$false;try{AssertAllocationPlan $plan}catch{$caught=$true}
  if(-not $caught){throw 'Incorrect PDF allocation amount accepted'}
 }
+# Outstanding tooth caption may be completely absent from OCR; its physical cell is mandatory.
+$chargeHeader=@{text='Date Patient Prov Code Type';y=10;height=12;words=@(
+ @{text='Date';x=10;width=40},@{text='Patient';x=120;width=45},@{text='Prov';x=220;width=30},@{text='Code';x=280;width=35},@{text='Type';x=420;width=70}
+)}
+$chargeLines=@($chargeHeader,(AccountLine 40 'RYAN' '02392' '13'),(AccountLine 80 'RYAN' 'D2392' '14'))
+$chargeRows=@(ChargeRowsFromLines $chargeLines @(0,100,200,260,330,380,600))
+if($chargeRows.Count -ne 2 -or $chargeRows[0].tooth -cne '13' -or $chargeRows[1].tooth -cne '14' -or $chargeRows[0].code -cne 'D2392'){throw 'Outstanding physical tooth mapping failed without caption'}
+$caught=$false;try{ChargeRowsFromLines $chargeLines @(0,100,200,260,380,600)}catch{$caught=$true}
+if(-not $caught){throw 'Missing physical tooth column accepted'}
 # Invalid OD-generated allocations must stop without opening/editing a split.
 function OcrRows($element,$main){return $script:generatedRows}
 $draft=[pscustomobject]@{splits=@([pscustomobject]@{code='D0120';providerAbbr='DOC';amountCents=8640})}

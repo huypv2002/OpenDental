@@ -20,6 +20,7 @@ try{
  if($script:odProvider.backend -cne 'UIA3-COM'){throw 'Wrong backend'}
  [IO.File]::WriteAllText($exe+'.config','<configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" /></startup></configuration>')
  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/payment-type-r5.png') -Destination (Join-Path $out 'payment-type-r5.png')
+ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/outstanding-header-r5.png') -Destination (Join-Path $out 'outstanding-header-r5.png')
  $fixture=Start-Process -FilePath $exe -PassThru
  $handle=[IntPtr]::Zero
  for($i=0;$i -lt 200;$i++){
@@ -70,6 +71,16 @@ try{
  . (Join-Path $windows 'workflow.ps1')
  function Elements($element){@($element.FindAll($TS::Descendants,$TC))}
  # Regression from the user's real OD Payment Type crop (labels only, no patient data).
+ $headerBitmap=[Drawing.Bitmap]::new((Join-Path $PSScriptRoot 'fixtures/outstanding-header-r5.png'))
+ try{
+  # Same crop as the real OD header, with only generic column names, no patient rows.
+  $headerCrop=$headerBitmap.Clone([Drawing.Rectangle]::new(0,5,$headerBitmap.Width,$headerBitmap.Height-7),$headerBitmap.PixelFormat)
+  try{
+   $edges=@([OdNative]::HeaderDividers($headerCrop))
+   if($edges.Count -ne 9){throw ('R5 header divider count: '+($edges -join ','))}
+   if([Math]::Abs($edges[4]-480) -gt 2 -or [Math]::Abs($edges[5]-518) -gt 2){throw 'R5 tooth cell borders incorrect'}
+  }finally{$headerCrop.Dispose()}
+ }finally{$headerBitmap.Dispose()}
  $captured=[Drawing.Bitmap]::new((Join-Path $PSScriptRoot 'fixtures/payment-type-r5.png'))
  try{
   $bands=@([OdNative]::SelectionBands($captured))
@@ -122,6 +133,11 @@ try{
  if($selection -cne '0,1'){throw ('Wrong adjacent Account selection: '+$selection)}
  # Execute the actual Outstanding/Add Partials workflow on real painted controls and modals.
  . (Join-Path $windows 'payment-allocation.ps1')
+ $realHeader=ChargeHeader @(OcrRows (FindControl 'headerCapturedCharges') $main)
+ foreach($caption in @('Date','Patient','Prov','Code','Type')){
+  if(@($realHeader.words|Where-Object{$_.text -ieq $caption}).Count -ne 1){throw ('Real R5 charge header OCR failed: '+$caption+' / '+($realHeader|ConvertTo-Json -Depth 5 -Compress))}
+ }
+
  function Modals($scope){@(Elements $scope|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and -not $_.Current.IsOffscreen})}
  function ReadValue($element){return [string]$element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}
  function SetValue($scope,$id,$text,$owner){$field=ById $scope $id;$field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($text);if((ReadValue $field) -cne $text){throw 'Amount readback failed'}}

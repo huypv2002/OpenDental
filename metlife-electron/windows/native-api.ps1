@@ -45,6 +45,26 @@ public static class OdNative {
    return SelectionBands(bitmap);
   }
  }
+ // Identify actual grey header dividers, excluding black glyphs and blue title bars.
+ public static int[] HeaderDividers(Bitmap bitmap) {
+  var hits=new List<int>();
+  for(int x=2;x<bitmap.Width-2;x++){
+   int count=0;
+   for(int y=0;y<bitmap.Height;y++){
+    var c=bitmap.GetPixel(x,y);
+    if(c.R>=95&&c.R<=210&&Math.Abs(c.R-c.G)<18&&Math.Abs(c.G-c.B)<18)count++;
+   }
+   if((double)count/bitmap.Height>0.75)hits.Add(x);
+  }
+  var edges=new List<int>{0};int start=-1,last=-1;
+  foreach(int x in hits){
+   if(start<0){start=last=x;continue;}
+   if(x-last<=3){last=x;continue;}
+   edges.Add((start+last)/2);start=last=x;
+  }
+  if(start>=0)edges.Add((start+last)/2);
+  edges.Add(bitmap.Width);return edges.ToArray();
+ }
  public static string VisualHash(int left,int top,int width,int height) {
   using(var bitmap=new Bitmap(width,height))using(var graphics=Graphics.FromImage(bitmap)){
    graphics.CopyFromScreen(left,top,0,0,bitmap.Size);
