@@ -1,6 +1,6 @@
 {
   "name": "luk-metlife-assistant",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "LUK Dental MetLife PDF reconciliation and Open Dental payment draft assistant",
   "main": "main.cjs",
@@ -13,7 +13,7 @@
     "pack:mac": "electron-builder --mac dir --arm64",
     "test:patients": "node scripts/patient-ui-test.cjs",
     "test:save": "node scripts/save-ui-test.cjs",
-    "test:login": "node scripts/login-ui-test.cjs"
+    "test:connect": "node scripts/local-ui-test.cjs"
   },
   "dependencies": {
     "pdfjs-dist": "6.4.299"

@@ -13,6 +13,8 @@ Từ lần sau chỉ chạy `od-bridge.bat` (hoặc `start-bridge-and-tunnel.bat
 
 Launcher dành cho Bridge đang chạy bằng Node/BAT. Nếu đang chạy bằng Windows service/scheduled supervisor, phải dùng đúng cơ chế restart của supervisor để tránh nó tự mở lại process cũ.
 
-MetLife dùng cùng process, DB pool và URL `https://od-bridge.lukdental.us/api/metlife`. SERVER không chạy thêm app MetLife riêng. Electron 0.3.1 có sẵn địa chỉ SERVER: mở app, chọn Đăng nhập SERVER, dùng tài khoản quản trị LUK Dental (owner/admin). App giữ phiên 30 ngày bằng Windows safeStorage và tự kết nối lại. SERVER xác minh tài khoản còn hoạt động trên mỗi request; không cần chép file JSON. File cấu hình cũ vẫn hỗ trợ như cách nhập nâng cao.
+MetLife dùng cùng process, DB pool và URL `https://od-bridge.lukdental.us/api/metlife`. SERVER không chạy thêm app MetLife riêng. Electron 0.3.2 tự kết nối `http://SERVER:3008` trong mạng phòng khám khi mở: không đăng nhập và không chuyển JSON. Có nút Kết nối lại. SERVER phải phân giải được tên máy và cho phép R5 truy cập TCP 3008 trên mạng nội bộ. Có thể đặt biến môi trường `METLIFE_SERVER_URL=http://<IP-LAN-SERVER>:3008` khi cần địa chỉ riêng; chỉ nhận địa chỉ LAN/loopback.
+
+Truy cập không cần tài khoản chỉ áp dụng với desktop đi trực tiếp trong LAN, Host là tên/IP máy SERVER và socket hai đầu là địa chỉ nội bộ. Request từ browser hoặc proxy/tunnel không được miễn xác thực. Địa chỉ Internet `od-bridge.lukdental.us` tiếp tục yêu cầu token; không nhúng khóa dùng chung vào bộ cài. Các máy trên mạng LAN phòng khám được coi là máy tin cậy cho API MetLife.
 
 Source Electron R5 nằm trong `metlife-electron`. Chưa xác minh launcher trên Windows SERVER thật và chưa chạy driver Save trên R5 thật; kiểm thử local không thay thế các bước xác minh đó.

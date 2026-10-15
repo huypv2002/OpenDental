@@ -23,8 +23,8 @@ function render(s){
 }
 function renderPatients(){
  const b=state.patientBrowser||{patients:[],documents:[]};
- $('#server-status').textContent=b.connected?`Đã kết nối ${b.url} · Tìm bệnh nhân để xem FINISHED CLAM.`:'SERVER: https://od-bridge.lukdental.us · Đăng nhập một lần, app tự nhớ kết nối.';
- $('#connect-server').textContent=b.connected?'Tài khoản SERVER':'Đăng nhập SERVER';
+ $('#server-status').textContent=b.connected?`Đã kết nối ${b.url} · Tìm bệnh nhân để xem FINISHED CLAM.`:'Đang chờ SERVER trong mạng phòng khám. Bấm Kết nối lại nếu cần.';
+ $('#connect-server').textContent='Kết nối lại';
  $('#patient-results').innerHTML=b.patients.map(p=>`<tr class="${String(b.selectedPatient?.PatNum)===String(p.PatNum)?'patient-selected':''}"><td><b class="patient-name">${esc(p.LName)}, ${esc(p.FName)}</b><br><small>Patient ID ${esc(p.PatNum)}${p.ChartNumber?' · Chart '+esc(p.ChartNumber):''}</small></td><td>${esc(p.Birthdate||'—')}</td><td class="patient-insurance">${(p.insurance||[]).map(i=>`${esc(i.CarrierName)}<br>Subscriber: ${esc(i.SubscriberID||'—')}<br>Group: ${esc(i.GroupNum||'—')}`).join('<hr>')||'—'}</td><td><button class="small" data-patient="${esc(p.PatNum)}" data-action="patient-documents">Xem hồ sơ</button></td></tr>`).join('');
  $('#patient-results-empty').hidden=!!b.patients.length;
  $('#patients-prev').dataset.blocked=String(!b.connected||!b.page);$('#patients-next').dataset.blocked=String(!b.connected||!b.hasMore);$('#refresh-documents').dataset.blocked=String(!b.selectedPatient);
@@ -92,12 +92,5 @@ $('#refresh-documents').addEventListener('click',()=>action('patient-documents',
 $('#patient-results').addEventListener('click',e=>{const b=e.target.closest('[data-patient]');if(b)action('patient-documents',b.dataset.patient);});
 $('#patient-documents').addEventListener('click',e=>{const b=e.target.closest('[data-document]');if(b)action('open-document',b.dataset.document);});
 
-$('#connect-server').addEventListener('click',()=>{$('#server-login').hidden=!$('#server-login').hidden;});
+$('#connect-server').addEventListener('click',()=>action('reconnect-server'));
 $('#import-server-connection').addEventListener('click',()=>action('connect-server'));
-async function submitServerLogin(){
- const args={url:$('#server-url').value,username:$('#server-username').value,password:$('#server-password').value};
- $('#server-password').value='';
- const result=await action('login-server',args);if(result?.patientBrowser?.connected)$('#server-login').hidden=true;
-}
-$('#login-server').addEventListener('click',submitServerLogin);
-$('#server-password').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitServerLogin();}});

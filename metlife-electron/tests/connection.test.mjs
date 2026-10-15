@@ -2,7 +2,7 @@ import {test} from 'node:test';import assert from 'node:assert/strict';
 import {validateConnection} from '../lib/connection.mjs';import {Workspace} from '../lib/workspace.mjs';
 test('connection accepts HTTPS or loopback only and excludes credentials in URLs',()=>{
  const token='x'.repeat(64);assert.equal(validateConnection({url:'https://example.com/',token}).url,'https://example.com');
- for(const url of ['http://192.168.1.1','file:///tmp/file','https://user:pass@example.com','https://example.com/?token=x'])assert.throws(()=>validateConnection({url,token}));
+ for(const url of ['http://8.8.8.8','file:///tmp/file','https://user:pass@example.com','https://example.com/?token=x'])assert.throws(()=>validateConnection({url,token}));
  assert.throws(()=>validateConnection({url:'https://example.com',token:'short'}));
 });
 test('remote PDF context follows selected PatNum even when file names repeat',()=>{
@@ -17,4 +17,10 @@ if(process.env.METLIFE_SAMPLE_PDF)test('identical PDF bytes and filename still k
  const a=await w.addBytes(bytes,'same.pdf',{patNum:'99',docNum:'1',serverUrl:'https://one.test'});
  const b=await w.addBytes(bytes,'same.pdf',{patNum:'100',docNum:'2',serverUrl:'https://one.test'});
  assert.notEqual(a,b);assert.equal(await w.addBytes(bytes,'same.pdf',{patNum:'99',docNum:'1',serverUrl:'https://one.test'}),a);
+});
+
+test('automatic LAN connection excludes credential-free Internet URLs',()=>{
+ assert.equal(validateConnection({url:'http://SERVER:3008',token:''}).token,'');
+ assert.throws(()=>validateConnection({url:'https://od-bridge.lukdental.us',token:''}));
+ assert.throws(()=>validateConnection({url:'http://8.8.8.8:3008',token:''}));
 });

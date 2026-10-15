@@ -1,4 +1,5 @@
 import express from 'express';
+import {isLocalDesktop} from './local.js';
 import {loginAdminAccount,isMetlifeAdminActive} from '../adminAuth.js';
 import {issueSession,readSession,loginLimiter} from './session.js';
 import {fileURLToPath} from 'node:url';
@@ -24,6 +25,7 @@ export function createMetlifeRouter({repository=createRepository(pool),getToken=
  });
  router.use(async(req,res,next)=>{
   res.set('Cache-Control','no-store');
+  if(isLocalDesktop(req))return next();
   const expected=getToken();if(!expected||expected.length<32)return res.status(503).json({ok:false,error:'MetLife chưa được cấu hình trên SERVER.'});
   const header=req.get('authorization')||'',token=header.startsWith('Bearer ')?header.slice(7):'';
   const a=Buffer.from(token),b=Buffer.from(expected);

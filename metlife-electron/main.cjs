@@ -36,9 +36,18 @@ async function scan(){
 }
 async function choose(properties,filters,title){const r=await dialog.showOpenDialog(win,{properties,filters,title});return r.canceled?[]:r.filePaths;}
 function idArg(id){if(typeof id!=='string'||!workspace.items.has(id))throw new Error('Invalid PDF id');return id;}
+async function connectLocal(){
+ if(activeDraft)throw new Error('Đóng bản nháp trước khi đổi kết nối.');
+ const {autoConnect}=await import('./lib/connection.mjs');
+ const client=await autoConnect([...(pendingSave?[pendingSave.serverUrl]:[]),process.env.METLIFE_SERVER_URL||'http://SERVER:3008']);
+ if(pendingSave&&pendingSave.serverUrl!==client.connection.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi đang chờ.');
+ if(serverClient&&serverClient.connection.url!==client.connection.url){workspace.snapshots.clear();Object.assign(patientBrowser,{patients:[],selectedPatient:null,documents:[],openedId:null});}
+ serverClient=client;Object.assign(patientBrowser,{connected:true,url:client.connection.url});status.message='Đã kết nối SERVER. Tìm bệnh nhân để bắt đầu.';notify();
+}
 async function call(op,arg){
  switch(op){
   case 'state':return state();
+  case 'reconnect-server':await connectLocal();break;
   case 'login-server':
   case 'connect-server':{
    if(activeDraft)throw new Error('Đóng bản nháp trước khi đổi kết nối SERVER.');
@@ -204,12 +213,6 @@ app.whenReady().then(async()=>{
  try{const saved=JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'pending-save.json'),'utf8'));if(typeof saved.operationId==='string'&&typeof saved.serverUrl==='string')pendingSave=saved;}catch{}
  const {loadConfig}=await import('./lib/config.mjs');
  try{workspace.config=loadConfig(JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'settings.json'),'utf8')));}catch{}
- try{
-  if(safeStorage.isEncryptionAvailable()){
-   const saved=JSON.parse(safeStorage.decryptString(await fs.readFile(path.join(app.getPath('userData'),'server-connection.enc'))));
-   const {MetlifeClient}=await import('./lib/connection.mjs');serverClient=new MetlifeClient(saved);patientBrowser.url=serverClient.connection.url;
-  }
- }catch{serverClient=null;}
  win=new BrowserWindow({width:1400,height:920,minWidth:1050,minHeight:700,title:'LUK MetLife Assistant',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(e,url)=>{if(url!==rootUrl)e.preventDefault();});
  ipcMain.handle('metlife:call',async(event,op,arg)=>{
@@ -220,7 +223,7 @@ app.whenReady().then(async()=>{
   try{return {ok:true,data:await call(op,arg)}}catch(e){status.message=e.message;notify();return {ok:false,error:e.message}}finally{if(mutation)busy=false;}
  });
  await win.loadFile(path.join(__dirname,'renderer/index.html'));
- if(serverClient){serverClient.health().then(()=>{patientBrowser.connected=true;status.message='Đã kết nối lại SERVER. Tìm bệnh nhân để bắt đầu.';notify();}).catch(()=>{patientBrowser.connected=false;status.message='Chưa liên lạc được SERVER. Kiểm tra kết nối rồi thử tìm lại.';notify();});}
+ connectLocal().catch(e=>{patientBrowser.connected=false;status.message=e.message;notify();});
  win.on('close',e=>{if(activeDraft){e.preventDefault();status.message='Còn bản nháp OD. Đóng bằng nút Đóng bản nháp trước khi thoát tool.';notify();}});
 });
 app.on('window-all-closed',()=>{clearInterval(watchTimer);app.quit();});
