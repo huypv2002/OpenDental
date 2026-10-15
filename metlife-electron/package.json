@@ -1,6 +1,6 @@
 {
   "name": "luk-metlife-assistant",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "private": true,
   "description": "LUK Dental MetLife PDF reconciliation and Open Dental payment draft assistant",
   "main": "main.cjs",

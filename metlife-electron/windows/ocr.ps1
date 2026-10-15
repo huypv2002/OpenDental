@@ -67,7 +67,7 @@ function SelectedText($control,$main){
    if($n -gt 0 -and $hits/$n -gt 0.62){$ys+=$y}
   }
   if($ys.Count -eq 0){throw 'Could not verify selection highlight'}
-  $lines=@(OcrControl $control $main)
+  $lines=@(OcrRows $control $main)
   $selected=@($lines|Where-Object{$cy=$_.y-$r.Top+$_.height/2;@($ys|Where-Object{[Math]::Abs($_-$cy) -le 2}).Count -gt 0})
   if($selected.Count -ne 1){throw 'Selection highlight does not identify one OCR line'}
   return [string]$selected[0].text

@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.5
+# LUK MetLife Assistant 0.3.6
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -71,3 +71,11 @@ Workflow Test MetLife Windows UI Automation chạy hai WinForms fixture x86/x64,
 Cập nhật source trên R5: đóng MetLife, git pull ở root repo, vào metlife-electron, npm ci, npm start; nhấn Kiểm tra OD. Không cần tải ZIP hoặc sửa SERVER cho lỗi UIA.
 
 Thư viện: https://github.com/TestStack/UIAComWrapper; package và hash cụ thể nằm trong windows/uia3/manifest.json. Các mục 0.3.3–0.3.4 phía trên là lịch sử; 0.3.4 đã gặp lỗi khởi tạo trên R5 và được thay thế.
+
+## Bản 0.3.6 — Payment Type trong list tự vẽ OD
+
+OD UI.ListBox xử lý Up/Down, không triển khai Home/PageDown như list chuẩn. Bộ chọn cũ có thể dừng ngay khi viewport lặp sau Home, trước khi thực sự duyệt mục phía dưới. Bộ chọn mới dùng Up/Down theo cả hai hướng, nhận diện hàng OCR và đọc lại mục được tô chọn. Fingerprint tính cả mục đang chọn, không dừng chỉ vì các dòng đang nhìn thấy chưa đổi. Không đổi sang loại tiền khác khi thiếu mục hoặc không đọc lại được.
+
+Windows fixture bổ sung control tự vẽ không có UIA ListItem, bỏ qua Home/PageDown. Kiểm tra bằng OCR Windows thật: chọn Insurance Paid nằm ngoài viewport, tìm ngược lên Credit Card và từ chối nhãn không tồn tại. Vẫn cần nghiệm thu danh sách thực tại R5.
+
+Nguồn control OD: https://github.com/OpenDental/opendental/blob/24_3/OpenDental/UI/ListBox.cs

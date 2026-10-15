@@ -55,24 +55,36 @@ function SetListExact($list,[string]$wanted,$main){
   $pattern=$null
   if($items[0].TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pattern)){$pattern.Select();if($pattern.Current.IsSelected){return}}
  }
- # Owner-drawn list: scan its visible text while scrolling; verify highlighted text after clicking.
- $seen=@{}
- for($attempt=0;$attempt -lt 35;$attempt++){
-  AssertFocus $main;$lines=@(OcrControl $list $main);$matches=@($lines|Where-Object{(ListKey $_.text) -ceq (ListKey $wanted)})
-  if($matches.Count -gt 1){throw 'List value is ambiguous'}
-  if($matches.Count -eq 1){
-   $line=$matches[0];PointClick ($line.x+$line.width/2) ($line.y+$line.height/2) $main
-   Start-Sleep -Milliseconds 150
-   if((ListKey (SelectedText $list $main)) -cne (ListKey $wanted)){throw 'Selected list text does not match requested value'}
-   return
+ # OD UI.ListBox is a custom-painted Control: it handles Up/Down, not Home/PageDown.
+ # The same viewport can repeat while the selected row is still moving inside it.
+ foreach($direction in @('DOWN','UP')){
+  $previous=$null;$unchanged=0
+  for($attempt=0;$attempt -lt 150;$attempt++){
+   AssertFocus $main
+   $lines=@(OcrRows $list $main)
+   $matches=@($lines|Where-Object{(ListKey $_.text) -ceq (ListKey $wanted)})
+   if($matches.Count -gt 1){throw 'List value is ambiguous'}
+   if($matches.Count -eq 1){
+    $line=$matches[0];PointClick ($line.x+$line.width/2) ($line.y+$line.height/2) $main
+    Start-Sleep -Milliseconds 150
+    if((ListKey (SelectedText $list $main)) -cne (ListKey $wanted)){throw 'Selected list text does not match requested value'}
+    return
+   }
+   $list.SetFocus();AssertFocus $main
+   [System.Windows.Forms.SendKeys]::SendWait('{'+$direction+'}')
+   Start-Sleep -Milliseconds 100
+   # Include selection in the fingerprint; unchanged visible text alone is not the end.
+   $selected=ListKey (SelectedText $list $main)
+   $signature=(@(OcrRows $list $main|ForEach-Object{$_.text}) -join '|')+'::'+$selected
+   if($signature -ceq $previous){$unchanged++}else{$unchanged=0}
+   if($unchanged -ge 2){break}
+   $previous=$signature
+   if($attempt -eq 149){throw 'List navigation limit reached'}
   }
-  $signature=($lines|ForEach-Object{$_.text}) -join '|'
-  if($seen.ContainsKey($signature)){throw "List item not found: $wanted"};$seen[$signature]=$true
-  $list.SetFocus();AssertFocus $main
-  if($attempt -eq 0){[System.Windows.Forms.SendKeys]::SendWait('{HOME}')}else{[System.Windows.Forms.SendKeys]::SendWait('{PGDN}')}
-  Start-Sleep -Milliseconds 100
- };throw 'List navigation limit reached'
+ }
+ throw "List item not found after scanning down and up: $wanted"
 }
+
 function DateEquals([string]$actual,[string]$iso){
  $d=[DateTime]::MinValue
  if(-not [DateTime]::TryParse($actual,[Globalization.CultureInfo]::GetCultureInfo('en-US'),[Globalization.DateTimeStyles]::None,[ref]$d)){return $false}

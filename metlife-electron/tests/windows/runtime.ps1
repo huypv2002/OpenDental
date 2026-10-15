@@ -52,6 +52,25 @@ try{
  if($value.Current.Value -cne '77.00'){throw 'Nonmodal Invoke/readback failed'}
  [void][OdNative]::SetForegroundWindow($handle)
  Start-Sleep -Milliseconds 200
+ # Use the real OCR and exact production list selector on an OD-style painted control.
+ . (Join-Path $windows 'ocr.ps1')
+ . (Join-Path $windows 'workflow.ps1')
+ function Elements($element){@($element.FindAll($TS::Descendants,$TC))}
+ $painted=FindControl 'listCustomPayType'
+ if(@(Elements $painted|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::ListItem}).Count -ne 0){throw 'Painted fixture unexpectedly exposes standard ListItems'}
+ SetListExact $painted 'Insurance Paid' $main
+ Start-Sleep -Milliseconds 100
+ $readSelection=(FindControl 'textPaintedSelection').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+ if($readSelection.Current.Value -cne 'Insurance paid'){throw 'Painted list did not select the offscreen exact target'}
+ SetListExact $painted 'Credit Card' $main
+ Start-Sleep -Milliseconds 100
+ if($readSelection.Current.Value -cne 'Credit Card'){throw 'Painted list did not scan upward to target above viewport'}
+ $missing=$false
+ try{SetListExact $painted 'Absent Payment Type' $main}catch{
+  if($_.Exception.Message -notlike '*after scanning down and up*'){throw}
+  $missing=$true
+ }
+ if(-not $missing){throw 'Missing list label was accepted'}
  # Exercise the production click helper: a modal-opening Invoke can block the caller.
  Click (FindControl 'butPopup') $main
  $popup=$null
@@ -77,7 +96,7 @@ try{
  if($LASTEXITCODE -ne 1){throw 'Adapter did not refuse two OD main windows'}
  $ambiguous=($raw -join "`n")|ConvertFrom-Json
  if($ambiguous.ok -or $ambiguous.error -notlike '*2*' -or -not (Test-Path (Join-Path $ambiguous.diagnosticFolder 'window-discovery.json'))){throw ('Bad ambiguity/diagnostics response: '+($raw -join "`n"))}
- Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production modal click and full Node-to-PowerShell OD adapter inspect, two-window refusal and saved diagnostics."
+ Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production OCR selection of offscreen painted list items in both directions, missing-item refusal, modal click and full Node-to-PowerShell OD adapter inspect, two-window refusal and saved diagnostics."
 }finally{
  if($second -and -not $second.HasExited){Stop-Process -Id $second.Id -Force}
  if($fixture -and -not $fixture.HasExited){Stop-Process -Id $fixture.Id -Force}
