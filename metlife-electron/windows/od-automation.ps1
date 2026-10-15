@@ -2,8 +2,21 @@
 $ErrorActionPreference='Stop'
 [Console]::InputEncoding=New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false)
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
+$request=[Console]::In.ReadToEnd()|ConvertFrom-Json
+. (Join-Path $PSScriptRoot 'uia-client.ps1')
+try{InitializeOdUia}catch{
+ $startupError=$_.Exception.Message
+ $diagnosticFolder=$null
+ try{
+  if($request.diagnosticDir){
+   $diagnosticFolder=Join-Path ([string]$request.diagnosticDir) ('startup-'+[Guid]::NewGuid().ToString('N'))
+   [void][IO.Directory]::CreateDirectory($diagnosticFolder)
+   @{error=$startupError;provider=$script:odProvider}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'window-discovery.json') -Encoding UTF8
+  }
+ }catch{}
+ @{ok=$false;error=$startupError;provider=$script:odProvider;diagnosticFolder=$diagnosticFolder;saveInvoked=$false}|ConvertTo-Json -Depth 5 -Compress
+ exit 1
+}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -ReferencedAssemblies 'System.Drawing.dll' @'
@@ -110,7 +123,6 @@ function WaitModal($main,[string]$id){
  };throw "Popup not found: $id"
 }
 function CloseWindow($w){$w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()}
-. (Join-Path $PSScriptRoot 'ocr.ps1')
 . (Join-Path $PSScriptRoot 'workflow.ps1')
 . (Join-Path $PSScriptRoot 'window-discovery.ps1')
 $opened=$null
@@ -118,19 +130,6 @@ $saveInvoked=$false
 $paymentHandle=$null
 $automationStarted=$false
 try{
- $request=[Console]::In.ReadToEnd()|ConvertFrom-Json
- # PowerShell does not reliably load the managed Win32/WinForms proxies automatically.
- # Register before the first AutomationElement lookup, including discovery by HWND.
- $script:odProvider=@{registered=$false;error=$null;assembly=$null;clientBits=([IntPtr]::Size*8)}
- try{
-  $providerAssembly=[Reflection.Assembly]::Load('UIAutomationClientsideProviders, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
-  [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($providerAssembly.GetName())
-  $script:odProvider.registered=$true
-  $script:odProvider.assembly=$providerAssembly.FullName
- }catch{
-  $script:odProvider.error=$_.Exception.Message
-  throw ('Không khởi tạo được UI Automation provider cho WinForms: '+$script:odProvider.error)
- }
  $main=FindOdMain
  if([OdNative]::IsIconic([IntPtr]$main.Current.NativeWindowHandle)){
   [void][OdNative]::ShowWindow([IntPtr]$main.Current.NativeWindowHandle,9)
@@ -141,6 +140,7 @@ try{
   @{ok=$true;patNum=$pat;title=$main.Current.Name;modals=@(Modals $main|ForEach-Object{$_.Current.Name});accountVisible=(@(Elements $main|Where-Object{$_.Current.AutomationId -ceq 'ControlAccount' -and -not $_.Current.IsOffscreen}).Count -eq 1)}|ConvertTo-Json -Depth 5 -Compress
   exit 0
  }
+ . (Join-Path $PSScriptRoot 'ocr.ps1')
  if($request.action -notin @('fill-preview','save-preview','close-preview')){throw 'Unknown action'}
  if($request.action -eq 'close-preview' -and $pat -cne [string]$request.draft.patNum){throw 'Selected OD patient does not match verified PatNum.'}
  if($request.action -eq 'close-preview'){

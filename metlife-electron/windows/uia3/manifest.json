@@ -1,0 +1,10 @@
+{
+  "package": "UIAComWrapper",
+  "version": "1.1.0.14",
+  "source": "https://api.nuget.org/v3-flatcontainer/uiacomwrapper/1.1.0.14/uiacomwrapper.1.1.0.14.nupkg",
+  "packageSha256": "0776c98a7cd84129183e4ad606f317c68f1bd1385c4d2469dc6bdf4b9996f01e",
+  "files": {
+    "UIAComWrapper.dll": "34dd032ac0a9b03f72488cf2f6f4e5127c5c137187ee50bf7de8fef530762081",
+    "Interop.UIAutomationClient.dll": "33f86fb318635c9a1e9e47b1da2bc0d0e0dd5661ec7f15175b49f1f8cfd1462b"
+  }
+}

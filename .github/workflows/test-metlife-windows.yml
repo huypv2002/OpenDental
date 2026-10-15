@@ -1,0 +1,33 @@
+name: Test MetLife Windows UI Automation
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/metlife-uia3]
+  pull_request:
+    paths:
+      - 'metlife-electron/**'
+      - '.github/workflows/test-metlife-windows.yml'
+permissions:
+  contents: read
+jobs:
+  windows-uia:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [x86, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install app dependencies
+        run: npm ci --prefix metlife-electron
+      - name: App logic tests
+        run: npm test --prefix metlife-electron
+      - name: Real UIA3 with WinForms fixture and actual adapter
+        shell: powershell
+        run: |
+          & powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File metlife-electron/tests/windows/runtime.ps1 -FixtureArchitecture ${{ matrix.fixture }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
