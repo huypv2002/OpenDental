@@ -96,16 +96,23 @@ function AllocatePayment($payment,$draft,$main){
  SetComboExact $payment 'comboPatientPaySplitsFilter' 'All' $main
  SetComboExact $payment 'comboProviderPaySplitsFilter' 'All' $main
  SetComboExact $payment 'comboGroupBy' 'None' $main
- $check=(ById $payment 'checkShowAll').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
- if($check.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::Off){Click (ById $payment 'checkShowAll') $main;Start-Sleep -Milliseconds 200}
- if($check.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::On){throw 'Show All Charges was not enabled'}
  Click (ById $payment 'butClear') $main
  Start-Sleep -Milliseconds 300
  $payment=WaitOnly $main 'FormPayment'
  if([decimal](ReadValue (ById $payment 'textSplitTotal')) -ne 0){throw 'Delete All did not clear current draft splits'}
  $remaining=@(OcrRows (ById $payment 'gridSplits') $main)
  if(@($remaining|Where-Object{$_.text -match '\b(D\d{4}|Prepayment|Unearned)\b'}).Count){throw 'Current Payment Splits is not empty after Delete All'}
- $targets=@(SelectChargeRows (ById $payment 'gridCharges') $draft $main)
+ $grid=ById $payment 'gridCharges'
+ $rows=@(AccountRows @(OcrRows $grid $main))
+ try{[void](MatchChargeRows $rows $draft)}catch{
+  if($_.Exception.Message -notlike 'Outstanding procedure missing or ambiguous:*'){throw}
+  # OD's Show All Charges is custom-painted and may expose no TogglePattern.
+  # Toggle once only when required procedures are absent, then require an exact row match.
+  # This reveals zero-balance procedures without guessing the checkbox's state.
+  Click (ById $payment 'checkShowAll') $main
+  Start-Sleep -Milliseconds 300
+ }
+ $targets=@(SelectChargeRows $grid $draft $main)
  Click (ById $payment 'butCreatePartial') $main
  foreach($target in $targets){
   # OD iterates the selected grid rows in display order. Verify every amount dialog's code.

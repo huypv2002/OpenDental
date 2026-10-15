@@ -33,7 +33,8 @@ public class AccountGrid : Control {
  public string Selection {get{return string.Join(",",selected);}}
  public int[] SelectedRows {get{var result=new int[selected.Count];selected.CopyTo(result);return result;}}
  public string CodeAt(int row){return rows[row][3];}
- public AccountGrid(bool charges=false){if(charges){x=new[]{4,130,315,385,465,515,780};foreach(var row in rows)row[1]=row[1]=="RYAN"?"TEST, RYAN":"TEST, OTHER";}SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);TabStop=true;Font=new Font("Segoe UI",10);}
+ public bool ShowAll=true;bool chargesMode;
+ public AccountGrid(bool charges=false){chargesMode=charges;if(charges){x=new[]{4,130,315,385,465,515,780};foreach(var row in rows)row[1]=row[1]=="RYAN"?"TEST, RYAN":"TEST, OTHER";}SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);TabStop=true;Font=new Font("Segoe UI",10);}
  protected override void OnMouseDown(MouseEventArgs e){
   Focus();int row=(e.Y-30)/32;if(e.Y<30||row<0||row>=rows.Length)return;
   if((ModifierKeys&Keys.Control)==0){selected.Clear();selected.Add(row);}
@@ -45,6 +46,7 @@ public class AccountGrid : Control {
   string[] header={"Date","Patient","Prov","Code","Tth","Description","Charges"};
   for(int c=0;c<header.Length;c++)e.Graphics.DrawString(header[c],Font,Brushes.Black,new PointF(x[c],5));
   for(int r=0;r<rows.Length;r++){
+   if(chargesMode&&!ShowAll&&(r==0||r==2))continue;
    int y=30+r*32;
    if(selected.Contains(r)){using(var brush=new SolidBrush(Color.FromArgb(200,220,235)))e.Graphics.FillRectangle(brush,1,y,Width-2,32);}
    for(int c=0;c<rows[r].Length;c++)e.Graphics.DrawString(rows[r][c],Font,Brushes.Black,new PointF(x[c],y+7));
@@ -65,6 +67,11 @@ public class PaintedCombo : Control {
   picker.Show();
  }
 }
+public class PaintedCheck : Control {
+ public bool Checked=false;public event Action Changed;
+ protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(BackColor);e.Graphics.DrawString("Show All Charges",Font,Brushes.Black,0,3);e.Graphics.DrawRectangle(Pens.DimGray,Width-14,4,12,12);if(Checked){e.Graphics.DrawLine(Pens.DimGray,Width-12,9,Width-8,14);e.Graphics.DrawLine(Pens.DimGray,Width-8,14,Width-3,6);}}
+ protected override void OnMouseDown(MouseEventArgs e){Checked=!Checked;Invalidate();if(Changed!=null)Changed();base.OnMouseDown(e);}
+}
 public class SplitGrid : Control {
  public readonly System.Collections.Generic.List<string> Rows=new System.Collections.Generic.List<string>{"DOC TEST, RYAN Prepayment 236.40"};
  public SplitGrid(){Font=new Font("Segoe UI",10);}
@@ -77,14 +84,14 @@ public class AllocationPayment : Form {
   Controls.Add(new PaintedCombo(new[]{"All","RYAN"},"RYAN"){Name="comboPatientPaySplitsFilter",Location=new Point(10,20),Size=new Size(160,25)});
   Controls.Add(new PaintedCombo(new[]{"All","DOC"},"DOC"){Name="comboProviderPaySplitsFilter",Location=new Point(180,20),Size=new Size(160,25)});
   Controls.Add(new PaintedCombo(new[]{"None","Patient"},"Patient"){Name="comboGroupBy",Location=new Point(740,20),Size=new Size(180,25)});
-  var all=new CheckBox{Name="checkShowAll",Text="Show All Charges",Location=new Point(550,60),Width=200};Controls.Add(all);
-  var grid=new AccountGrid(true){Name="gridCharges",Location=new Point(5,120),Size=new Size(970,180)};Controls.Add(grid);
+  var all=new PaintedCheck{Name="checkShowAll",Location=new Point(550,60),Size=new Size(200,24)};Controls.Add(all);
+  var grid=new AccountGrid(true){ShowAll=false,Name="gridCharges",Location=new Point(5,120),Size=new Size(970,180)};Controls.Add(grid);all.Changed+=()=>{grid.ShowAll=all.Checked;grid.Invalidate();};
   var splits=new SplitGrid{Name="gridSplits",Location=new Point(10,330),Size=new Size(600,180)};Controls.Add(splits);
   var total=new TextBox{Name="textSplitTotal",Text="236.40",Location=new Point(650,350)};Controls.Add(total);
   var state=new TextBox{Name="textAllocationState",Text="0|0|0",Location=new Point(650,400),Width=320};Controls.Add(state);
   int cleared=0,prompts=0,saves=0;decimal sum=0;
   var clear=new Button{Name="butClear",Text="Delete All",Location=new Point(10,550),Width=120};Controls.Add(clear);
-  clear.Click+=(sender,e)=>{if(patient.Selected!="RYAN"||!all.Checked)throw new Exception("Wrong patient/show-all state before clearing");cleared++;splits.Rows.Clear();splits.Invalidate();sum=0;total.Text="0.00";state.Text=cleared+"|"+prompts+"|"+saves;};
+  clear.Click+=(sender,e)=>{if(patient.Selected!="RYAN")throw new Exception("Wrong patient before clearing");cleared++;splits.Rows.Clear();splits.Invalidate();sum=0;total.Text="0.00";state.Text=cleared+"|"+prompts+"|"+saves;};
   var partial=new Button{Name="butCreatePartial",Text="Add Partials",Location=new Point(550,550),Width=120};Controls.Add(partial);
   partial.Click+=(sender,e)=>{
    foreach(int row in grid.SelectedRows){
