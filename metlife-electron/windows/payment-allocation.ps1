@@ -98,8 +98,8 @@ function ChargeRowsFromLines($lines,$edges){
 function ReadChargeRows($grid,$main){
  $lines=@(OcrRows $grid $main);$header=ChargeHeader $lines
  $r=$grid.Current.BoundingRectangle
- $top=[int][Math]::Max($r.Top,$header.y-1)
- $height=[int][Math]::Ceiling($header.height+2)
+ $top=[int][Math]::Max($r.Top,$header.y-4)
+ $height=[int][Math]::Ceiling($header.height+8)
  $bitmap=[Drawing.Bitmap]::new([int]$r.Width,$height);$graphics=[Drawing.Graphics]::FromImage($bitmap)
  try{
   AssertFocus $main;$graphics.CopyFromScreen([int]$r.Left,$top,0,0,$bitmap.Size)
