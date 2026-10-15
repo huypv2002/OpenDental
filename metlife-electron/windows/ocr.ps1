@@ -85,7 +85,7 @@ function SelectedText($control,$main){
   $selectedBand=$bands[0]
   $margin=[Math]::Max(2,[Math]::Round($selectedBand.Height*0.12))
   $top=[Math]::Max(0,$selectedBand.Top-$margin);$bottom=[Math]::Min($r.Height,$selectedBand.Bottom+$margin)
-  $band=[pscustomobject]@{Left=$r.Left;Top=$r.Top+$top;Width=$r.Width;Height=$bottom-$top}
+  $band=[pscustomobject]@{Left=$r.Left;Top=$r.Top+$top;Width=$r.Width-18;Height=$bottom-$top}
   # Remote-display antialiasing can lose glyphs when thresholded. Prefer raw
   # colour OCR; normalize only if necessary, then try the full-list row at the
   # independently verified highlight position. Every path must identify one row.
