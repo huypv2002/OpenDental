@@ -69,7 +69,7 @@ function SelectedText($control,$main){
   if($ys.Count -eq 0){throw 'Could not verify selection highlight'}
   $lines=@(OcrRows $control $main)
   $selected=@($lines|Where-Object{$cy=$_.y-$r.Top+$_.height/2;@($ys|Where-Object{[Math]::Abs($_-$cy) -le 2}).Count -gt 0})
-  if($selected.Count -ne 1){throw 'Selection highlight does not identify one OCR line'}
+  if($selected.Count -ne 1){throw ('Selection highlight does not identify one OCR line: '+(@{rows=$lines;highlightY=$ys;rect=@{left=$r.Left;top=$r.Top;width=$r.Width;height=$r.Height}}|ConvertTo-Json -Depth 6 -Compress))}
   return [string]$selected[0].text
  }finally{$g.Dispose();$b.Dispose()}
 }
