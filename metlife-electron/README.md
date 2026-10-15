@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.8
+# LUK MetLife Assistant 0.3.9
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -10,17 +10,26 @@ Trên SERVER chạy `od-bridge.bat` trong checkout Bridge hiện có để pull 
 
 ## R5: kết nối một lần, sau đó tìm bệnh nhân
 
-Giải nén toàn bộ gói Windows và mở LUK MetLife Assistant.exe. Giữ thư mục resources/locales/DLL cạnh EXE. Không cần Node hoặc Python trên R5.
+Chạy Electron source từ checkout Git trên R5 (đã cài Node.js):
+
+```bat
+git pull --ff-only origin main
+cd metlife-electron
+npm ci
+npm start
+```
+
+Nếu đã ở trong thư mục `metlife-electron`, bỏ dòng `cd`. Đóng app đang chạy trước khi mở lại để nhận source mới.
 
 1. Mở app trong mạng phòng khám: tự kết nối `http://SERVER:3008`, không đăng nhập hoặc chuyển file JSON. Nếu SERVER chưa sẵn sàng, bấm **Kết nối lại**. Tên SERVER cần phân giải được và cổng TCP 3008 phải cho phép trong mạng nội bộ. Khi dùng địa chỉ LAN khác, đặt `METLIFE_SERVER_URL=http://<IP-SERVER>:3008` trước khi mở app. Không tự mở truy cập ẩn danh qua tunnel Internet.
 2. Nhập tên, Patient ID/PatNum, Chart Number, Subscriber ID hoặc Group Number; có thể chọn loại tìm hoặc tìm tất cả. Group/Subscriber ID có thể trả nhiều bệnh nhân: xem Patient ID, ngày sinh và bảo hiểm rồi chọn đúng người.
 3. Nhấn **Xem hồ sơ**: app lấy danh sách PDF trong FINISHED CLAM/FINISHED CLAIMS của chính PatNum đó. Chọn PDF để xem và đối chiếu. File và dữ liệu OD được lấy từ SERVER; không cần chọn thư mục UNC hay nạp JSON.
-4. **Auto fill · bản nháp OD** tự tìm bệnh nhân trong OD bằng PatNum, kiểm tra lại tiêu đề, mở Account, bôi chọn các dòng dịch vụ đã khớp PDF theo patient/ngày/mã/răng/provider, rồi mở Payment và nhập số tiền PDF. Giữ Splits OD tự tạo; nhập ngày/trace/Note, chọn **Insurance Paid**, rồi kiểm tra từng Split. Không xóa hoặc dựng lại Splits. Nếu còn Prepayment, sai số dòng hoặc phân bổ khác PDF thì dừng trước Save. Không nhận diện hoặc đọc lại được thì dừng.
+4. **Auto fill · bản nháp OD** tự chọn bệnh nhân bằng PatNum, mở Account rồi Payment, nhập Amount từ PDF, ngày/trace/Note và **Insurance Paid**. Trong Payment: chọn đúng patient ở Filtering bên phải; đưa bộ lọc Splits bên trái về All; Group By None; **Delete All** Splits của bản nháp vừa mở; đổi Show All Charges nếu cần để hiện đủ dịch vụ; chọn các dịch vụ khớp PDF trong **Outstanding Charges**; **Add Partials** và nhập tiền benefit từng dòng. Kiểm tra tổng Splits và từng dịch vụ trước khi dừng ở Payment để người dùng kiểm tra. Gặp cảnh báo số dư âm thì giữ nguyên popup, không tự bấm OK hay đóng.
 5. **Auto fill & Save vào OD**: SERVER đọc dữ liệu/file mới, khóa lượt ghi cho bệnh nhân; app tạo bản nháp hoàn chỉnh; SERVER kiểm tra lại ngay trước Save; app mở kiểm tra từng Split, bấm Save trong OD; SERVER đọc lại Payment và Splits để đối chiếu tất cả trường. Chỉ báo thành công khi readback đạt. Không gọi nút thu tiền thẻ/merchant.
 6. Nếu timeout, crash hoặc readback không khớp: giữ lượt ghi trên SERVER và local, không tự nhập lại. Dùng **Kiểm tra kết quả trên SERVER** để xác minh; nếu vẫn không khớp phải kiểm tra giao dịch cụ thể. Lỗi trước Save chỉ giải phóng khóa khi dữ liệu tài chính không thay đổi. Khi mở hồ sơ, app tự lấy lại lượt ghi còn chờ từ SERVER ngay cả khi local journal mất.
 7. Bản nháp có thể đóng bằng nút tool. OD/R5 cần đang đăng nhập, desktop mở khóa và cùng mức quyền với tool. Owner-drawn controls dùng Windows OCR tiếng Anh và nhận diện vùng chọn; thiếu OCR/control lạ sẽ dừng và tự chụp ảnh/control OD trong `od-diagnostics` dưới userData của app. Ảnh có thể chứa dữ liệu bệnh nhân, chỉ lưu trên máy và không được đóng gói vào bản phát hành.
 
-**Driver 0.3.0 đã được viết và kiểm tra cú pháp; chưa được chạy xác minh trên R5.** Nên chạy luồng ghi trên bản sao database/môi trường thử trước khi sử dụng cho dữ liệu thật. Nếu OD tạo draft DB records ngay khi mở Payment, kiểm tra dữ liệu trước Save sẽ phát hiện và dừng thay vì tự bỏ qua; cần bằng chứng thực tế của phiên bản đó để xử lý tiếp.
+**Luồng mới 0.3.9 đã qua fixture Windows x86/x64; chưa được nghiệm thu trên OD thật tại R5.** Nên chạy luồng ghi trên bản sao database/môi trường thử trước khi sử dụng cho dữ liệu thật. Nếu OD tạo draft DB records ngay khi mở Payment, kiểm tra dữ liệu trước Save sẽ phát hiện và dừng thay vì tự bỏ qua; cần bằng chứng thực tế của phiên bản đó để xử lý tiếp.
 
 Tab PDF & đối chiếu vẫn hỗ trợ mở PDF local và snapshot để chẩn đoán các trường hợp ngoại lệ. Đó không phải luồng dùng hằng ngày.
 
@@ -95,3 +104,15 @@ Kiểm chứng bản 0.3.7: Windows CI run 38755961349 đã pass cả fixture Wi
 ## Bản 0.3.8 — giữ màn hình draft khi dừng
 
 Bỏ toàn bộ tự đóng popup/Payment trong error handler. Fill draft thành công giữ Payment mở trước Save như trước; nếu lỗi thì giữ nguyên popup và các giá trị tại bước bị lỗi để người dùng kiểm tra. Thông báo nói rõ tool dừng, chưa tự đóng/Save. Người dùng chủ động đóng popup trong OD nếu lỗi xảy ra giữa luồng; nút Đóng bản nháp của app vẫn đóng Payment đã quản lý và xác minh đúng identity khi được bấm. Luồng kiểm tra chi tiết Split vẫn mở rồi quay lại Payment để hoàn tất xác minh, không đóng Payment cuối luồng.
+
+## Bản 0.3.9 — phân bổ trong Outstanding Charges theo demo mới
+
+Thay thế luồng 0.3.7: không bôi chọn các dòng trong Account trước Payment. Sau khi nhập thông tin Payment, dùng combo `comboPatientOutstandingFilter` để chọn đúng FName của bệnh nhân PDF. Combo tự vẽ OD mở `FormComboPicker` riêng; tool đọc danh sách lựa chọn, yêu cầu tên khớp duy nhất rồi đọc lại caption sau khi chọn. Tên dùng preferred hoặc bị cắt không khớp thì dừng, không chọn gần đúng. Các dòng Outstanding vẫn phải khớp tên đầy đủ, ngày, code, răng và provider trong kế hoạch đã đối chiếu SERVER.
+
+Đưa patient/provider filter của Splits về All để không giữ sót dòng ẩn; Group By None để mỗi prompt ứng với một procedure; Nếu thiếu dịch vụ, thử đổi Show All Charges một lần rồi yêu cầu khớp đầy đủ các dòng; checkbox OD tự vẽ không bắt buộc có TogglePattern. Không đoán trạng thái checkbox hoặc chọn dòng chưa nhận diện được. Delete All chỉ áp dụng Payment mới do tool vừa mở, không đụng Payment cũ. Đọc lại Split Total bằng 0, chọn chính xác các dòng benefit dương (Ctrl-click các dòng không liền nhau), xác minh highlight không thừa/thiếu rồi bấm Add Partials. OD hỏi số tiền theo thứ tự hiển thị: tool kiểm tra mã trên từng FormAmountEdit, nhập đúng benefit của procedure đó; không lấy AmtOrig/AmtEnd làm số tiền PDF. Cuối cùng kiểm tra tổng bằng Amount và giữ bộ kiểm tra chi tiết Splits hiện có.
+
+Theo lựa chọn của người dùng, **Overpaid Charge Warning dừng ngay để người dùng tự kiểm tra và bấm**; tool không xác nhận popup này. Khi đã dừng, các bước còn lại của Add Partials cần xử lý thủ công trong OD; không bấm Auto fill lại trên Payment đang mở. Fill draft không Save và không tự đóng Payment. Luồng Auto fill & Save hiện có vẫn chỉ Save sau khi tất cả kiểm tra thành công.
+
+Kiểm thử bổ sung Windows WinForms x86/x64: combo family tự vẽ mở cửa sổ riêng; khôi phục các bộ lọc; xóa Splits cũ; OCR và Ctrl-click Outstanding có mã trùng khác răng/bệnh nhân; prompt Add Partials theo thứ tự grid khác thứ tự PDF; nhập từng amount và kiểm tra tổng; không gọi Save; dừng và giữ nguyên Overpaid Charge Warning. Đây là fixture, chưa phải nghiệm thu trên Open Dental thật tại R5.
+
+Kiểm chứng 0.3.9: [Windows CI 38762303435](https://github.com/huypv2002/OpenDental/actions/runs/38762303435) pass cả x86/x64, gồm Add Partials, tổng tiền và dừng trước cảnh báo số dư âm; 20 app tests pass trên mỗi job. Bộ policy PowerShell và kiểm tra cú pháp cũng pass tại máy phát triển. CI dùng dữ liệu tổng hợp, không tạo thanh toán trên database phòng khám.
