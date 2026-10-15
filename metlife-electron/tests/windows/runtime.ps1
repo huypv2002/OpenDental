@@ -165,6 +165,7 @@ try{
    $stopped=$true
   }
   if($warningCase){
+   if($script:odChargeGeometry.method -cne 'verified-ocr-headers'){throw 'Missing-dividers fallback was not exercised'}
    if(-not $stopped){throw 'Overpaid Charge Warning was accepted automatically'}
    $warnings=@(Modals $main|Where-Object{$_.Current.Name -ceq 'Overpaid Charge Warning'})
    if($warnings.Count -ne 1){throw 'Warning was not preserved on screen'}

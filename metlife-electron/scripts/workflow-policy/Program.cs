@@ -1,7 +1,7 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.IO;
-var initial=InitialSessionState.CreateDefault2();initial.Commands.Add(new SessionStateCmdletEntry("Sort-Object",typeof(Microsoft.PowerShell.Commands.SortObjectCommand),null));initial.Commands.Add(new SessionStateCmdletEntry("Measure-Object",typeof(Microsoft.PowerShell.Commands.MeasureObjectCommand),null));using var runspace=RunspaceFactory.CreateRunspace(initial);runspace.Open();using var ps=PowerShell.Create();ps.Runspace=runspace;
+var initial=InitialSessionState.CreateDefault2();initial.Commands.Add(new SessionStateCmdletEntry("Sort-Object",typeof(Microsoft.PowerShell.Commands.SortObjectCommand),null));initial.Commands.Add(new SessionStateCmdletEntry("Measure-Object",typeof(Microsoft.PowerShell.Commands.MeasureObjectCommand),null));initial.Commands.Add(new SessionStateCmdletEntry("ConvertTo-Json",typeof(Microsoft.PowerShell.Commands.ConvertToJsonCommand),null));using var runspace=RunspaceFactory.CreateRunspace(initial);runspace.Open();using var ps=PowerShell.Create();ps.Runspace=runspace;
 foreach(var file in Directory.GetFiles(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,"*.ps1")) {
  System.Management.Automation.Language.Parser.ParseFile(file,out var tokens,out var errors);
  if(errors.Length>0)throw new Exception(file+": "+string.Join("; ",errors.Select(e=>e.ToString())));

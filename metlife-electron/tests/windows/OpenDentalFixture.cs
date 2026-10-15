@@ -33,7 +33,7 @@ public class AccountGrid : Control {
  public string Selection {get{return string.Join(",",selected);}}
  public int[] SelectedRows {get{var result=new int[selected.Count];selected.CopyTo(result);return result;}}
  public string CodeAt(int row){return rows[row][3];}
- public bool ShowAll=true;bool chargesMode;
+ public bool ShowAll=true,NoDividers=false;bool chargesMode;
  public AccountGrid(bool charges=false){chargesMode=charges;if(charges){x=new[]{4,130,315,385,465,515,780};foreach(var row in rows)row[1]=row[1]=="RYAN"?"TEST, RYAN":"TEST, OTHER";}SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);TabStop=true;Font=new Font("Segoe UI",10);}
  protected override void OnMouseDown(MouseEventArgs e){
   Focus();int row=(e.Y-30)/32;if(e.Y<30||row<0||row>=rows.Length)return;
@@ -47,12 +47,12 @@ public class AccountGrid : Control {
   if(chargesMode){
    int[] edges={0,120,310,380,460,510,775,850,970};
    // Reproduce an outer frame inside the UIA grid bounds: it is not a data column.
-   e.Graphics.DrawLine(Pens.Gray,3,0,3,28);
-   string[] captions={"Date","Patient","Prov","Code","","Type","AmtOrig","AmtEnd"};
+   if(!NoDividers)e.Graphics.DrawLine(Pens.Gray,3,0,3,28);
+   string[] captions={"Date","Patient","Prov","Code",NoDividers?"Tth":"","Type","AmtOrig","AmtEnd"};
    for(int c=0;c<captions.Length;c++){
     float center=(edges[c]+edges[c+1])/2f;
     e.Graphics.DrawString(captions[c],Font,Brushes.Black,center-e.Graphics.MeasureString(captions[c],Font).Width/2,5);
-    e.Graphics.DrawLine(Pens.Gray,edges[c],0,edges[c],28);
+    if(!NoDividers)e.Graphics.DrawLine(Pens.Gray,edges[c],0,edges[c],28);
    }
   }else{for(int c=0;c<header.Length;c++)e.Graphics.DrawString(header[c],Font,Brushes.Black,new PointF(x[c],5));}
   for(int r=0;r<rows.Length;r++){
@@ -95,7 +95,7 @@ public class AllocationPayment : Form {
   Controls.Add(new PaintedCombo(new[]{"All","DOC"},"DOC"){Name="comboProviderPaySplitsFilter",Location=new Point(180,20),Size=new Size(160,25)});
   Controls.Add(new PaintedCombo(new[]{"None","Patient"},"Patient"){Name="comboGroupBy",Location=new Point(740,20),Size=new Size(180,25)});
   var all=new PaintedCheck{Checked=warn,Name="checkShowAll",Location=new Point(550,60),Size=new Size(200,24)};Controls.Add(all);
-  var grid=new AccountGrid(true){ShowAll=warn,Name="gridCharges",Location=new Point(5,120),Size=new Size(970,180)};Controls.Add(grid);
+  var grid=new AccountGrid(true){NoDividers=warn,ShowAll=warn,Name="gridCharges",Location=new Point(5,120),Size=new Size(970,180)};Controls.Add(grid);
   var clicks=new TextBox{Name="textShowAllClicks",Text="0",Location=new Point(650,440)};Controls.Add(clicks);
   all.Changed+=()=>{clicks.Text=(int.Parse(clicks.Text)+1).ToString();grid.ShowAll=all.Checked;grid.Invalidate();};
   var splits=new SplitGrid{Name="gridSplits",Location=new Point(10,330),Size=new Size(600,180)};Controls.Add(splits);
