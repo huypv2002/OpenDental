@@ -32,9 +32,13 @@ function AccountRows($lines){
   }
   $date=$cell.Date -join ''
   if($date -notmatch '^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$'){continue}
-  $rows+=@{date=$date;patient=($cell.Patient -join ' ');provider=($cell.Prov -join '');code=($cell.Code -join '');tooth=($cell.Tooth -join '');x=$columns.Code;y=$line.y;height=$line.height}
+  $rawCode=$cell.Code -join ''
+  # In the verified CDT Code column only, OCR often reads the D prefix as zero.
+  $code=$rawCode.ToUpperInvariant()
+  if($code -cmatch '^0[0-9]{4}$'){$code='D'+$code.Substring(1)}
+  $rows+=@{rawCode=$rawCode;date=$date;patient=($cell.Patient -join ' ');provider=($cell.Prov -join '');code=$code;tooth=($cell.Tooth -join '');x=$columns.Code;y=$line.y;height=$line.height}
  }
- return @($rows|Sort-Object y)
+ return @($rows|Sort-Object { [double]$_.y })
 }
 function MatchAccountRows($rows,$draft){
  $firstName=([string]$draft.patientName -split ',',2)[-1].Trim()

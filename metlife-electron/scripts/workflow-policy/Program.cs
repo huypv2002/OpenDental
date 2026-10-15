@@ -50,7 +50,7 @@ function AccountLine($y,$patient,$code,$tooth){
  @{text='09/20/2026 '+$patient+' DOC '+$code+' '+$tooth;y=$y;height=14;words=@(
  @{text='09/20/2026';x=10;width=75},@{text=$patient;x=120;width=45},@{text='DOC';x=220;width=30},@{text=$code;x=280;width=35},@{text=$tooth;x=350;width=25},@{text='Restoration 14';x=420;width=120})}
 }
-$accountRows=@(AccountRows @($header,(AccountLine 40 'RYAN' 'D0120' ''),(AccountLine 80 'RYAN' 'D2392' '13'),(AccountLine 120 'RYAN' 'D2392' '14'),(AccountLine 160 'OTHER' 'D2392' '14')))
+$accountRows=@(AccountRows @($header,(AccountLine 40 'RYAN' '00120' ''),(AccountLine 80 'RYAN' 'D2392' '13'),(AccountLine 120 'RYAN' 'D2392' '14'),(AccountLine 160 'OTHER' 'D2392' '14')))
 $draft=[pscustomobject]@{patientName='PHAM, RYAN';splits=@(
  [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC'},
  [pscustomobject]@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC'}

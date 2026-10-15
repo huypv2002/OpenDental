@@ -92,7 +92,7 @@ function SelectedText($control,$main){
 
 function OcrRows($element,$main,$cropRect=$null){
  # OCR may split a table row into one line per column. Merge by vertical alignment.
- $lines=@(OcrControl $element $main $cropRect|Sort-Object y,x);$rows=[Collections.Generic.List[object]]::new()
+ $lines=@(OcrControl $element $main $cropRect|Sort-Object { [double]$_.y },{ [double]$_.x });$rows=[Collections.Generic.List[object]]::new()
  foreach($line in $lines){
   $cy=$line.y+$line.height/2;$match=$null
   foreach($row in $rows){if([Math]::Abs($row.cy-$cy) -le [Math]::Max(3,$line.height*0.35)){$match=$row;break}}
@@ -101,7 +101,7 @@ function OcrRows($element,$main,$cropRect=$null){
  }
  $result=@()
  foreach($row in $rows){
-  $parts=@($row.parts|Sort-Object x)
+  $parts=@($row.parts|Sort-Object { [double]$_.x })
   $left=($parts|ForEach-Object{$_.x}|Measure-Object -Minimum).Minimum
   $top=($parts|ForEach-Object{$_.y}|Measure-Object -Minimum).Minimum
   $right=($parts|ForEach-Object{$_.x+$_.width}|Measure-Object -Maximum).Maximum
