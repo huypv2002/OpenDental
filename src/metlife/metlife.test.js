@@ -28,12 +28,23 @@ test('PDF lookup verifies patient/document, reads within root and rejects traver
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-pdf-test-'));const images=path.join(dir,'images');await fs.mkdir(path.join(images,'T','Test99'),{recursive:true});
  const filename=path.join(images,'T','Test99','test.pdf');await fs.writeFile(filename,'%PDF-1.7\nfixture');await fs.utimes(filename,new Date(0),new Date(0));
  let name='test.pdf',params;
+ let storagePrefs=[{PrefName:'DocPath',ValueString:images},{PrefName:'AtoZfolderUsed',ValueString:'1'}];
  const repo=createRepository({execute:async(sql,values)=>{
   if(sql.includes('FROM document d')){params=values;return [[{FileName:name,ImageFolder:'Test99'}]];}
-  return [[{PrefName:'AtoZfolder',ValueString:images},{PrefName:'ImageStore',ValueString:'0'}]];
+  return [storagePrefs];
  }});
  try{
   const file=await repo.pdf('99','55');assert.match(file.bytes.toString(),/^%PDF/);assert.equal(file.sha256.length,64);assert.deepEqual(params,['99','55','FINISHED CLAM','FINISHED CLAIMS']);
+  for(const mode of ['0','2','3','99','']){
+   storagePrefs=[{PrefName:'DocPath',ValueString:images},{PrefName:'AtoZfolderUsed',ValueString:mode},{PrefName:'ImageStore',ValueString:'1'}];
+   await assert.rejects(repo.pdf('99','55'),/cần LocalAtoZ/);
+  }
+  storagePrefs=[{PrefName:'AtoZfolder',ValueString:images},{PrefName:'ImageStore',ValueString:'1'}];
+  assert.match((await repo.pdf('99','55')).bytes.toString(),/^%PDF/);
+  storagePrefs=[{PrefName:'AtoZfolder',ValueString:images}];
+  await assert.rejects(repo.pdf('99','55'),/chưa xác định/);
+  storagePrefs=[{PrefName:'DocPath',ValueString:images},{PrefName:'AtoZfolderUsed',ValueString:'1'},{PrefName:'AtoZfolder',ValueString:'/invalid/legacy/path'},{PrefName:'ImageStore',ValueString:'0'}];
+  assert.match((await repo.pdf('99','55')).bytes.toString(),/^%PDF/);
   name='../test.pdf';await assert.rejects(repo.pdf('99','55'));
   const outside=path.join(dir,'outside.pdf');await fs.writeFile(outside,'%PDF-1.7');await fs.symlink(outside,path.join(images,'T','Test99','escape.pdf'));name='escape.pdf';await assert.rejects(repo.pdf('99','55'),/outside image root/);
  }finally{await fs.rm(dir,{recursive:true,force:true});}

@@ -35,10 +35,13 @@ export function createRepository(pool){return {
   if(!validId(patNum)||!validId(docNum))throw new Error('Invalid document identity');
   const [docs]=await pool.execute(`SELECT d.FileName,p.ImageFolder FROM document d JOIN patient p ON p.PatNum=d.PatNum JOIN definition de ON de.DefNum=d.DocCategory WHERE d.PatNum=? AND d.DocNum=? AND UPPER(TRIM(de.ItemName)) IN (?,?)`,[patNum,docNum,...categories]);
   if(docs.length!==1)throw new Error('Không tìm thấy PDF FINISHED CLAM của bệnh nhân đã chọn.');
-  const [prefs]=await pool.execute("SELECT PrefName,ValueString FROM preference WHERE LOWER(PrefName) IN ('atozfolder','imagestore')");
-  const root=prefs.find(r=>r.PrefName.toLowerCase()==='atozfolder')?.ValueString;
-  const store=prefs.find(r=>r.PrefName.toLowerCase()==='imagestore')?.ValueString;
-  if(store!==undefined&&String(store)!=='0')throw new Error('ImageStore này chưa hỗ trợ đọc file theo AtoZfolder.');
+  const [prefs]=await pool.execute("SELECT PrefName,ValueString FROM preference WHERE LOWER(PrefName) IN ('docpath','atozfolderused','atozfolder','imagestore')");
+  const pref=name=>prefs.find(r=>r.PrefName.toLowerCase()===name)?.ValueString;
+  // Open Dental DataStorageType: 0=InDatabase, 1=LocalAtoZ, 2=Dropbox, 3=SFTP.
+  // Prefer the OD preference names; retain legacy names for existing installations.
+  const root=pref('docpath')||pref('atozfolder');
+  const store=String(pref('atozfolderused')??pref('imagestore')??'').trim();
+  if(store!=='1')throw new Error(`Không thể đọc PDF từ AtoZ: chế độ lưu trữ ${store||'chưa xác định'}; cần LocalAtoZ (1). Database/cloud chưa được hỗ trợ.`);
   const file=docs[0].FileName,folder=docs[0].ImageFolder;
   if(!root||!folder||!file||/[\\/]/.test(file)||/[\\/]/.test(folder)||['.','..'].includes(file)||['.','..'].includes(folder)||!/\.pdf$/i.test(file))throw new Error('Cấu hình hoặc đường dẫn PDF chưa được hỗ trợ.');
   const base=await fs.realpath(root),target=await fs.realpath(path.join(base,folder[0].toUpperCase(),folder,file));

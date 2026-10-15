@@ -31,7 +31,7 @@ try {
  const t=snapshot.tables;
  t.patient=await read('patient','PatNum,FName,LName,MiddleI,Birthdate,Guarantor,PatStatus,ImageFolder,BalTotal,EstBalance','PatNum',[pat]);
  if (t.patient.length!==1) throw new Error('Patient did not resolve to exactly one row.');
- t.preference=await read('preference','PrefName,ValueString','PrefName',['ProgramVersion','DataBaseVersion','AtoZfolder','AtoZFolder','ImageStore','ClaimPaymentBatchOnly','RigorousAccounting']);
+ t.preference=await read('preference','PrefName,ValueString','PrefName',['ProgramVersion','DataBaseVersion','DocPath','AtoZfolderUsed','AtoZfolder','AtoZFolder','ImageStore','ClaimPaymentBatchOnly','RigorousAccounting']);
  t.definition=await read('definition','DefNum,Category,ItemName,ItemOrder,IsHidden,ItemValue','Category',[10,18,32]);
  t.document=await read('document','DocNum,PatNum,DocCategory,FileName,Description,DateCreated,DateTStamp,ImgType,Note','PatNum',[pat]);
  t.patplan=await read('patplan','PatPlanNum,PatNum,InsSubNum,Ordinal,IsPending','PatNum',[pat]);
