@@ -74,15 +74,13 @@ function SelectAccountProcedures($account,$draft,$main){
   if([Math]::Abs($confirmed[$i].y-$targets[$i].y) -gt 2){throw 'Account rows moved during selection'}
  }
  $rect=$grid.Current.BoundingRectangle
- # Exclude the blue title/column header; it is not a selected service row.
- $bodyTop=[int]$after[0].y
- $bands=@([OdNative]::SelectedBands([int]$rect.Left,$bodyTop,[int]$rect.Width,[int]($rect.Bottom-$bodyTop)))
+ # Check each row anchor independently: adjacent selected rows may form one colour band.
+ # Sampling only body row anchors also excludes OD's blue title/header.
  $selected=@{}
- foreach($band in $bands){
-  $center=$bodyTop+$band.Y+$band.Height/2
-  $owner=@($after|Where-Object{($_.y-8) -le $center}|Sort-Object y -Descending|Select-Object -First 1)
-  if($owner.Count -ne 1){throw 'Unidentified highlighted Account row'}
-  $selected[[string]$owner[0].y]=$true
+ foreach($row in $after){
+  $center=[int]($row.y+$row.height/2)
+  $bands=@([OdNative]::SelectedBands([int]$rect.Left,($center-5),[int]$rect.Width,11))
+  if($bands.Count -gt 0){$selected[[string]$row.y]=$true}
  }
  if($selected.Count -ne $confirmed.Count){throw 'Account selection includes missing or extra rows; Payment was not opened'}
  foreach($row in $confirmed){if(-not $selected.ContainsKey([string]$row.y)){throw 'Could not verify all Account procedure highlights'}}

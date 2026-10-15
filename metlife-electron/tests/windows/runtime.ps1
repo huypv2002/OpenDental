@@ -97,6 +97,11 @@ try{
  Start-Sleep -Milliseconds 100
  $selection=(FindControl 'textAccountSelection').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
  if($selection -cne '0,2'){throw ('Wrong real Account selection: '+$selection)}
+ $draft.splits[1].tooth='13'
+ SelectAccountProcedures $account $draft $main
+ Start-Sleep -Milliseconds 100
+ $selection=(FindControl 'textAccountSelection').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+ if($selection -cne '0,1'){throw ('Wrong adjacent Account selection: '+$selection)}
  # Exercise the production click helper: a modal-opening Invoke can block the caller.
  Click (FindControl 'butPopup') $main
  $popup=$null
