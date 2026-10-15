@@ -23,6 +23,20 @@ public static class OdNative {
  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);
  [DllImport("user32.dll")] public static extern void mouse_event(uint a,uint b,uint c,uint d,UIntPtr e);
  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr c);
+ public static void NormalizeOcr(Bitmap bitmap) {
+  var rect=new Rectangle(0,0,bitmap.Width,bitmap.Height);
+  var data=bitmap.LockBits(rect,System.Drawing.Imaging.ImageLockMode.ReadWrite,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+  try {
+   var bytes=new byte[Math.Abs(data.Stride)*data.Height];
+   Marshal.Copy(data.Scan0,bytes,0,bytes.Length);
+   for(int y=0;y<data.Height;y++)for(int x=0;x<bitmap.Width;x++){
+    int i=y*Math.Abs(data.Stride)+x*4;
+    byte value=(byte)(bytes[i+2]*0.299+bytes[i+1]*0.587+bytes[i]*0.114<120?0:255);
+    bytes[i]=value;bytes[i+1]=value;bytes[i+2]=value;bytes[i+3]=255;
+   }
+   Marshal.Copy(bytes,0,data.Scan0,bytes.Length);
+  }finally{bitmap.UnlockBits(data);}
+ }
  public static Point Locate(Bitmap screen, Bitmap template) {
    // Conservative colour match. Native capture templates only; unknown themes/layouts stop.
    var found=new List<Point>();
