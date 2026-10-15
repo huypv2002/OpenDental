@@ -18,10 +18,21 @@ try{
  . (Join-Path $windows 'native-api.ps1')
  . (Join-Path $windows 'window-actions.ps1')
  if($script:odProvider.backend -cne 'UIA3-COM'){throw 'Wrong backend'}
+ [IO.File]::WriteAllText($exe+'.config','<configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" /></startup></configuration>')
  $fixture=Start-Process -FilePath $exe -PassThru
  $handle=[IntPtr]::Zero
- for($i=0;$i -lt 80;$i++){
+ for($i=0;$i -lt 200;$i++){
   $fixture.Refresh();$handle=$fixture.MainWindowHandle
+  if($fixture.HasExited){throw ('Fixture exited before opening its window, exit code '+$fixture.ExitCode)}
+  if($handle -eq [IntPtr]::Zero){
+   foreach($candidateHandle in [OdNative]::TopWindows()){
+    [uint32]$owner=0;[void][OdNative]::GetWindowThreadProcessId($candidateHandle,[ref]$owner)
+    if($owner -eq $fixture.Id -and [OdNative]::IsWindowVisible($candidateHandle)){
+     $candidate=[System.Windows.Automation.AutomationElement]::FromHandle($candidateHandle)
+     if($candidate.Current.AutomationId -ceq 'FormOpenDental'){$handle=$candidateHandle;break}
+    }
+   }
+  }
   if($handle -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 100
  }
  if($handle -eq [IntPtr]::Zero){$details=if(Test-Path ($exe+'.error.txt')){Get-Content -Raw ($exe+'.error.txt')}else{'No fixture exception log'};throw ('Fixture did not create a native window: '+$details)}

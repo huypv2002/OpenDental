@@ -74,7 +74,7 @@ Thư viện: https://github.com/TestStack/UIAComWrapper; package và hash cụ t
 
 ## Bản 0.3.6 — Payment Type trong list tự vẽ OD
 
-OD UI.ListBox xử lý Up/Down, không triển khai Home/PageDown như list chuẩn. Bộ chọn cũ có thể dừng ngay khi viewport lặp sau Home, trước khi thực sự duyệt mục phía dưới. Bộ chọn mới dùng Up/Down theo cả hai hướng, nhận diện hàng OCR và đọc lại mục được tô chọn. Fingerprint tính cả mục đang chọn, không dừng chỉ vì các dòng đang nhìn thấy chưa đổi. Không đổi sang loại tiền khác khi thiếu mục hoặc không đọc lại được.
+OD UI.ListBox xử lý Up/Down, không triển khai Home/PageDown như list chuẩn. Bộ chọn cũ có thể dừng ngay khi viewport lặp sau Home, trước khi thực sự duyệt mục phía dưới. Bộ chọn mới dùng Up/Down theo cả hai hướng, nhận diện hàng OCR và đọc lại mục được tô chọn. Fingerprint ảnh tính cả vùng tô chọn, không dừng chỉ vì các dòng đang nhìn thấy chưa đổi. OCR làm rõ nền và phóng chữ, ánh xạ kết quả về đúng tọa độ màn hình. Khi xác minh mục được chọn, chỉ OCR dải tô sáng để tránh OCR toàn danh sách bỏ sót dòng đó. Không đổi sang loại tiền khác khi thiếu mục hoặc không đọc lại được.
 
 Windows fixture bổ sung control tự vẽ không có UIA ListItem, bỏ qua Home/PageDown. Kiểm tra bằng OCR Windows thật: chọn Insurance Paid nằm ngoài viewport, tìm ngược lên Credit Card và từ chối nhãn không tồn tại. Vẫn cần nghiệm thu danh sách thực tại R5.
 
