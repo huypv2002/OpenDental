@@ -22,17 +22,19 @@ function OcrControl($element,$main,$cropRect=$null){
  $bitmap=[System.Drawing.Bitmap]::new([int]$r.Width,[int]$r.Height);$g=[System.Drawing.Graphics]::FromImage($bitmap)
  $scaleLimit=if($cropRect -and $r.Height -lt 150){6}else{3}
  $scale=[Math]::Max(1,[Math]::Min($scaleLimit,[Math]::Floor(4000/[Math]::Max($r.Width,$r.Height))))
+ $padding=if($cropRect){4}else{0}
  $prepared=$null;$pg=$null
  try{
   $g.CopyFromScreen([int]$r.Left,[int]$r.Top,0,0,$bitmap.Size)
   # OD's grey/blue selection can make Windows OCR omit the selected label entirely.
   # Normalize light backgrounds while preserving dark glyphs, then enlarge small text.
   if($cropRect){[OdNative]::NormalizeOcr($bitmap)}
-  $prepared=[Drawing.Bitmap]::new([int]($bitmap.Width*$scale),[int]($bitmap.Height*$scale))
+  $prepared=[Drawing.Bitmap]::new([int](($bitmap.Width+2*$padding)*$scale),[int](($bitmap.Height+2*$padding)*$scale))
   $pg=[Drawing.Graphics]::FromImage($prepared)
   $pg.InterpolationMode=[Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
   $pg.PixelOffsetMode=[Drawing.Drawing2D.PixelOffsetMode]::Half
-  $pg.DrawImage($bitmap,0,0,$prepared.Width,$prepared.Height)
+  $pg.Clear([Drawing.Color]::White)
+  $pg.DrawImage($bitmap,[int]($padding*$scale),[int]($padding*$scale),[int]($bitmap.Width*$scale),[int]($bitmap.Height*$scale))
   $prepared.Save($file,[Drawing.Imaging.ImageFormat]::Png)
  }finally{if($pg){$pg.Dispose()};if($prepared){$prepared.Dispose()};$g.Dispose();$bitmap.Dispose()}
  $stream=$null;$software=$null
@@ -52,8 +54,8 @@ function OcrControl($element,$main,$cropRect=$null){
    $top=($words|ForEach-Object{$_.BoundingRect.Y}|Measure-Object -Minimum).Minimum
    $right=($words|ForEach-Object{$_.BoundingRect.X+$_.BoundingRect.Width}|Measure-Object -Maximum).Maximum
    $bottom=($words|ForEach-Object{$_.BoundingRect.Y+$_.BoundingRect.Height}|Measure-Object -Maximum).Maximum
-   $wordBoxes=@($words|ForEach-Object{@{text=$_.Text;x=$r.Left+$_.BoundingRect.X/$scale;y=$r.Top+$_.BoundingRect.Y/$scale;width=$_.BoundingRect.Width/$scale;height=$_.BoundingRect.Height/$scale}})
-   $lines+=@{text=$line.Text;x=$r.Left+$left/$scale;y=$r.Top+$top/$scale;width=($right-$left)/$scale;height=($bottom-$top)/$scale;words=$wordBoxes}
+   $wordBoxes=@($words|ForEach-Object{@{text=$_.Text;x=$r.Left+$_.BoundingRect.X/$scale-$padding;y=$r.Top+$_.BoundingRect.Y/$scale-$padding;width=$_.BoundingRect.Width/$scale;height=$_.BoundingRect.Height/$scale}})
+   $lines+=@{text=$line.Text;x=$r.Left+$left/$scale-$padding;y=$r.Top+$top/$scale-$padding;width=($right-$left)/$scale;height=($bottom-$top)/$scale;words=$wordBoxes}
   }
   return $lines
  }finally{if($software){$software.Dispose()};if($stream){$stream.Dispose()};Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue}
@@ -81,7 +83,9 @@ function SelectedText($control,$main){
   if($bands.Count -eq 0){throw 'Could not verify selection highlight'}
   if($bands.Count -ne 1){throw ('Selection highlight has multiple substantial bands: '+($bands|ConvertTo-Json -Compress))}
   $selectedBand=$bands[0]
-  $band=[pscustomobject]@{Left=$r.Left;Top=$r.Top+$selectedBand.Top;Width=$r.Width;Height=$selectedBand.Height}
+  $margin=[Math]::Max(2,[Math]::Round($selectedBand.Height*0.12))
+  $top=[Math]::Max(0,$selectedBand.Top-$margin);$bottom=[Math]::Min($r.Height,$selectedBand.Bottom+$margin)
+  $band=[pscustomobject]@{Left=$r.Left;Top=$r.Top+$top;Width=$r.Width;Height=$bottom-$top}
   $selected=@(OcrRows $control $main $band)
   if($selected.Count -ne 1){throw ('Selection highlight does not identify one OCR line: '+(@{rows=$selected;highlightBands=$bands}|ConvertTo-Json -Depth 6 -Compress))}
   return [string]$selected[0].text
