@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.10
+# LUK MetLife Assistant 0.3.11
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -124,3 +124,11 @@ Sửa lỗi `Selection highlight has multiple bands` dừng ngay sau chọn Paym
 Bài regression dùng crop danh sách Payment Type từ ảnh R5 người dùng gửi, chỉ có nhãn các loại tiền, không có thông tin bệnh nhân. Kiểm tra cả vị trí vùng chọn và OCR Insurance Paid qua control hiển thị ảnh trên Windows; thêm ca hai vùng chọn tách biệt. Khi dừng, lỗi có tên bước để phân biệt Payment Type, chọn combo, Delete All, Outstanding và Add Partials. Cập nhật mô tả luồng trên giao diện và thông báo thành công để phản ánh đúng việc phân bổ Splits. Không thay đổi lựa chọn dừng tại cảnh báo số dư âm hoặc giữ Payment mở.
 
 Kiểm chứng 0.3.10: [Windows CI 38772797451](https://github.com/huypv2002/OpenDental/actions/runs/38772797451) pass x86/x64. Cả hai job đọc đúng `Insurance paid` từ crop R5, từ chối hai vùng chọn tách biệt, rồi pass lại luồng family filter → Delete All → Outstanding → Add Partials và giữ cảnh báo số dư âm. 20 app tests mỗi job và kiểm tra cú pháp/policy tại máy phát triển đều pass. Đây là regression ảnh thật và fixture Windows; chưa chạy lại luồng mới trên OD thật tại R5.
+
+## Bản 0.3.11 — nhận diện cột răng Outstanding Charges
+
+Sửa lỗi dừng `Cannot identify Account tooth column` sau khi lọc đúng patient và xóa Splits. Outstanding Charges dùng bộ đọc riêng: nhận diện các đường chia cột trên ảnh header, xác minh thứ tự Date/Patient/Prov/Code/Type và chỉ chấp nhận đúng một ô răng nằm giữa Code và Type. Không yêu cầu Windows OCR đọc được nhãn Th/Tth nhỏ; không suy số răng từ mô tả Type. Các giá trị răng vẫn được đọc trong đúng ô và so sánh chính xác với kế hoạch PDF/SERVER. Không thấy các đường chia hoặc bố cục khác thì dừng, không click theo tọa độ cố định.
+
+Regression dùng ảnh header R5 chỉ có tên cột chung, không có dòng bệnh nhân: kiểm tra OCR các cột dùng làm mốc và các đường chia thật. Fixture Outstanding cố ý bỏ hẳn chữ ở tiêu đề cột răng, vẫn phải đọc đúng các dòng cùng code khác răng và chạy Add Partials theo đúng tiền từng procedure; bộ policy từ chối khi thiếu đường chia cột răng. Giữ nguyên hành vi dừng để người dùng kiểm tra cảnh báo số dư âm, không tự đóng hoặc Save Payment.
+
+Kiểm chứng 0.3.11: [Windows CI 38783432967](https://github.com/huypv2002/OpenDental/actions/runs/38783432967) pass x86/x64, gồm ảnh header R5, grid cố ý thiếu nhãn răng, chọn đúng procedure/răng và Add Partials. 20 app tests mỗi job và policy/cú pháp tại máy phát triển đều pass. Chưa nghiệm thu lại trên Open Dental thật tại R5.
