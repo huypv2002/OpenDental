@@ -1,7 +1,9 @@
 # Build only the newly opened Payment draft using Outstanding Charges / Add Partials.
 function ControlText($control,$main){
- try{return (ReadValue $control).Trim()}catch{}
- # Exclude the dropdown arrow from the caption OCR.
+ try{$value=(ReadValue $control).Trim();if($value){return $value}}catch{}
+ $raw=@(OcrRows $control $main)
+ if($raw.Count -eq 1){return [string]$raw[0].text}
+ # Exclude the dropdown arrow for the normalized fallback.
  $r=$control.Current.BoundingRectangle
  $caption=[pscustomobject]@{Left=$r.Left;Top=$r.Top;Width=$r.Width-$r.Height;Height=$r.Height}
  return ((@(OcrRows $control $main $caption)|ForEach-Object{$_.text}) -join ' ').Trim()
@@ -43,6 +45,19 @@ function SetComboExact($payment,[string]$id,[string]$wanted,$main){
  Start-Sleep -Milliseconds 200
  if(ProcessPopup $main 'FormComboPicker'){throw ('OD combo picker did not close: '+$id)}
  $actual=ControlText (ById $payment $id) $main
+ if(-not $actual){
+  Click (ById $payment $id) $main
+  $picker=$null
+  for($i=0;$i -lt 30;$i++){$picker=ProcessPopup $main 'FormComboPicker';if($picker){break};Start-Sleep -Milliseconds 100}
+  if(-not $picker){throw ('Combo caption picker not found: '+$id)}
+  Start-Sleep -Milliseconds 150
+  $captionRows=@(OcrRows $picker $main|Where-Object{$_.y -lt $r.Bottom})
+  if($captionRows.Count -eq 1){$actual=[string]$captionRows[0].text}
+  # Clicking the repeated caption dismisses OD's picker without changing its selection.
+  PointClick ($r.Left+$r.Width/2) ($r.Top+$r.Height/2) $main
+  Start-Sleep -Milliseconds 150
+  if(ProcessPopup $main 'FormComboPicker'){throw ('Combo caption picker did not close: '+$id)}
+ }
  if((ListKey $actual) -cne (ListKey $wanted)){throw ('Combo selection readback failed: '+$id+' / expected '+$wanted+' / actual '+$actual)}
 }
 function MatchChargeRows($rows,$draft){
