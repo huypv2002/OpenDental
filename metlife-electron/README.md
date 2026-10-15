@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.11
+# LUK MetLife Assistant 0.3.12
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -132,3 +132,11 @@ Sửa lỗi dừng `Cannot identify Account tooth column` sau khi lọc đúng p
 Regression dùng ảnh header R5 chỉ có tên cột chung, không có dòng bệnh nhân: kiểm tra OCR các cột dùng làm mốc và các đường chia thật. Fixture Outstanding cố ý bỏ hẳn chữ ở tiêu đề cột răng, vẫn phải đọc đúng các dòng cùng code khác răng và chạy Add Partials theo đúng tiền từng procedure; bộ policy từ chối khi thiếu đường chia cột răng. Giữ nguyên hành vi dừng để người dùng kiểm tra cảnh báo số dư âm, không tự đóng hoặc Save Payment.
 
 Kiểm chứng 0.3.11: [Windows CI 38783432967](https://github.com/huypv2002/OpenDental/actions/runs/38783432967) pass x86/x64, gồm ảnh header R5, grid cố ý thiếu nhãn răng, chọn đúng procedure/răng và Add Partials. 20 app tests mỗi job và policy/cú pháp tại máy phát triển đều pass. Chưa nghiệm thu lại trên Open Dental thật tại R5.
+
+## Bản 0.3.12 — cột tương đối và chẩn đoán geometry
+
+Bỏ giả định Date phải là ô số 0 của các đường chia được phát hiện. Viền ngoài nằm trong bounding rectangle UIA có thể được nhận thành một ô hẹp phía trước Date. Bộ đọc dùng các cột mốc liên tiếp Date → Patient → Prov → Code, rồi yêu cầu chính xác một ô răng giữa Code và Type; vị trí click Code cũng dùng chỉ số đã xác minh. Không bỏ điều kiện kiểm tra răng hoặc chấp nhận một cột răng thiếu đường chia.
+
+Fixture thêm viền ngoài tại x=3 để làm lệch chỉ số, vẫn phải chọn đúng hai răng khác nhau và chạy Add Partials; policy có cả trường hợp viền ngoài và thiếu đường chia bên trong. Khi geometry vẫn không khớp, lỗi ghi header/edges/cells và lưu riêng `outstanding-columns.json` trong thư mục chẩn đoán hiện có. File chỉ chứa tiêu đề và tọa độ cột, không chứa các dòng bệnh nhân. Điều này giúp phân biệt thêm viền ngoài, mất đường chia hoặc OCR khác thay vì tiếp tục suy từ thông báo chung. Ảnh thông báo R5 trước đó chưa đủ chứng minh nguyên nhân thực tế là viền ngoài; cần chạy lại hoặc xem dữ liệu chẩn đoán để xác nhận.
+
+Kiểm chứng 0.3.12: [Windows CI 38788379422](https://github.com/huypv2002/OpenDental/actions/runs/38788379422) pass x86/x64, gồm viền ngoài trong grid và Add Partials; 20 app tests mỗi job và policy tại máy phát triển pass. Chưa xác nhận lỗi geometry thực tế trên R5 đã hết.
