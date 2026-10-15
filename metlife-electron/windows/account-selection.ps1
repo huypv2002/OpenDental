@@ -74,10 +74,12 @@ function SelectAccountProcedures($account,$draft,$main){
   if([Math]::Abs($confirmed[$i].y-$targets[$i].y) -gt 2){throw 'Account rows moved during selection'}
  }
  $rect=$grid.Current.BoundingRectangle
- $bands=@([OdNative]::SelectedBands([int]$rect.Left,[int]$rect.Top,[int]$rect.Width,[int]$rect.Height))
+ # Exclude the blue title/column header; it is not a selected service row.
+ $bodyTop=[int]$after[0].y
+ $bands=@([OdNative]::SelectedBands([int]$rect.Left,$bodyTop,[int]$rect.Width,[int]($rect.Bottom-$bodyTop)))
  $selected=@{}
  foreach($band in $bands){
-  $center=$rect.Top+$band.Y+$band.Height/2
+  $center=$bodyTop+$band.Y+$band.Height/2
   $owner=@($after|Where-Object{($_.y-8) -le $center}|Sort-Object y -Descending|Select-Object -First 1)
   if($owner.Count -ne 1){throw 'Unidentified highlighted Account row'}
   $selected[[string]$owner[0].y]=$true

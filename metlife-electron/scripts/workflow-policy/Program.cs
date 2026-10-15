@@ -64,5 +64,21 @@ foreach($badRows in @(
  $caught=$false;try{MatchAccountRows $badRows.rows $draft}catch{$caught=$true}
  if(-not $caught){throw 'Missing/ambiguous Account procedure was accepted'}
 }
-'Workflow policy executed: fragmented OCR rows, procedure identity, Account columns, repeated codes/different teeth, other patient exclusion, missing/duplicate row refusal and date checks passed.' 
+# Invalid OD-generated allocations must stop without opening/editing a split.
+function OcrRows($element,$main){return $script:generatedRows}
+$draft=[pscustomobject]@{splits=@([pscustomobject]@{code='D0120';providerAbbr='DOC';amountCents=8640})}
+foreach($case in @(
+ @{rows=@(@{text='RYAN Prepayment 395.40'});expected='Prepayment'},
+ @{rows=@();expected='Splits do not match'},
+ @{rows=@(@{text='DOC RYAN D0120 4.50'});expected='row match is ambiguous'}
+)){
+ $script:generatedRows=$case.rows
+ $caught=$false
+ try{VerifySplits $null $draft $null}catch{
+  $caught=$true
+  if($_.Exception.Message -notlike ('*'+$case.expected+'*')){throw}
+ }
+ if(-not $caught){throw 'Invalid generated allocation was accepted'}
+}
+'Workflow policy executed: Account column/identity mapping, different teeth/patients, duplicate/missing rows and rejected OD-generated Prepayment/wrong allocations passed.'
 """);var results=ps.Invoke();if(ps.InvocationStateInfo.State==PSInvocationState.Failed||ps.Streams.Error.Count>0)throw new Exception(ps.InvocationStateInfo.Reason?.Message+"\n"+string.Join("\n",ps.Streams.Error.Select(e=>e.Exception.Message+" at "+e.ScriptStackTrace)));foreach(var r in results)Console.WriteLine(r);
