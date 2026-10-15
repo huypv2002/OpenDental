@@ -53,7 +53,7 @@ try {
     Start-Process -FilePath $env:ComSpec -WorkingDirectory $root -ArgumentList '/k', 'title Cloudflare Tunnel - od-bridge & cloudflared tunnel run od-bridge'
   }
   Write-Host 'Bridge updated and /health passed. Existing tunnel retained or launched.'
-  Write-Host "R5 one-time connection file: $root\metlife-r5-connection.json"
+  Write-Host 'R5: open MetLife Assistant 0.3.1 and sign in with a LUK Dental admin account. No JSON copy needed.'
   exit 0
 } catch {
   Write-Host ("UPDATE FAILED: " + $_.Exception.Message) -ForegroundColor Red

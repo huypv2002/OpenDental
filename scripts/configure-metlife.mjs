@@ -26,5 +26,5 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
  const base=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
  const {connection}=await configureMetlife(base,process.argv[2]);
  console.log('Configured /api/metlife inside this Bridge. Restart the existing Bridge once.');
- console.log('R5 connection file: '+connection);
+ console.log('R5: MetLife Assistant 0.3.1 supports admin sign-in; no JSON copy needed.');
 }

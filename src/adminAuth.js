@@ -185,3 +185,9 @@ export async function deleteAdminAccount(body = {}) {
   await pool.execute('DELETE FROM luk_admin_accounts WHERE AdminId = ?', [adminId]);
   return { deleted: true, adminId };
 }
+
+// Revalidate desktop sessions against current account status on every request.
+export async function isMetlifeAdminActive(adminId) {
+  const [rows] = await pool.execute('SELECT Role, IsActive FROM luk_admin_accounts WHERE AdminId = ? LIMIT 1', [adminId]);
+  return Boolean(rows[0]?.IsActive) && ['admin', 'owner'].includes(rows[0]?.Role);
+}

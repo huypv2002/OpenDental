@@ -13,6 +13,6 @@ Từ lần sau chỉ chạy `od-bridge.bat` (hoặc `start-bridge-and-tunnel.bat
 
 Launcher dành cho Bridge đang chạy bằng Node/BAT. Nếu đang chạy bằng Windows service/scheduled supervisor, phải dùng đúng cơ chế restart của supervisor để tránh nó tự mở lại process cũ.
 
-MetLife dùng cùng process, DB pool và URL `https://od-bridge.lukdental.us/api/metlife`. SERVER không chạy thêm app MetLife riêng. File `metlife-r5-connection.json` chứa token kết nối: chuyển riêng sang R5 và chọn một lần trong Electron; không đưa lên Git hay gửi công khai. Những lần dùng sau tool tự tìm bệnh nhân, lấy Finished Claims và PDF qua API.
+MetLife dùng cùng process, DB pool và URL `https://od-bridge.lukdental.us/api/metlife`. SERVER không chạy thêm app MetLife riêng. Electron 0.3.1 có sẵn địa chỉ SERVER: mở app, chọn Đăng nhập SERVER, dùng tài khoản quản trị LUK Dental (owner/admin). App giữ phiên 30 ngày bằng Windows safeStorage và tự kết nối lại. SERVER xác minh tài khoản còn hoạt động trên mỗi request; không cần chép file JSON. File cấu hình cũ vẫn hỗ trợ như cách nhập nâng cao.
 
 Source Electron R5 nằm trong `metlife-electron`. Chưa xác minh launcher trên Windows SERVER thật và chưa chạy driver Save trên R5 thật; kiểm thử local không thay thế các bước xác minh đó.

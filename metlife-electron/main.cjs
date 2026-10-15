@@ -39,12 +39,18 @@ function idArg(id){if(typeof id!=='string'||!workspace.items.has(id))throw new E
 async function call(op,arg){
  switch(op){
   case 'state':return state();
+  case 'login-server':
   case 'connect-server':{
    if(activeDraft)throw new Error('Đóng bản nháp trước khi đổi kết nối SERVER.');
-   const files=await choose(['openFile'],[{name:'Kết nối MetLife R5',extensions:['json']}],'Chọn file metlife-r5-connection.json tạo trên SERVER');if(!files.length)break;
-   if((await fs.stat(files[0])).size>65536)throw new Error('File kết nối quá lớn.');
-   const {MetlifeClient,validateConnection}=await import('./lib/connection.mjs');
-   const c=validateConnection(JSON.parse(await fs.readFile(files[0],'utf8'))),client=new MetlifeClient(c);
+   const {MetlifeClient,validateConnection,loginConnection}=await import('./lib/connection.mjs');
+   let c;
+   if(op==='login-server')c=await loginConnection(arg||{});
+   else{
+    const files=await choose(['openFile'],[{name:'Kết nối MetLife R5',extensions:['json']}],'Nhập cấu hình kết nối cũ');if(!files.length)break;
+    if((await fs.stat(files[0])).size>65536)throw new Error('File kết nối quá lớn.');
+    c=validateConnection(JSON.parse(await fs.readFile(files[0],'utf8')));
+   }
+   const client=new MetlifeClient(c);
    if(pendingSave&&pendingSave.serverUrl!==c.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi chưa xác minh.');
    await client.health();if(!safeStorage.isEncryptionAvailable())throw new Error('Kho bảo vệ thông tin kết nối chưa sẵn sàng trên máy này.');
    await fs.writeFile(path.join(app.getPath('userData'),'server-connection.enc'),safeStorage.encryptString(JSON.stringify(c)),{mode:0o600});

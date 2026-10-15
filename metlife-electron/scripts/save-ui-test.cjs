@@ -32,7 +32,7 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   const page=await a.firstWindow();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.waitForSelector('#patient-search-query');
   await a.evaluate(({dialog,safeStorage},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});safeStorage.isEncryptionAvailable=()=>true;safeStorage.encryptString=s=>Buffer.from(s);safeStorage.decryptString=b=>b.toString();},pairing);
-  await page.click('#connect-server');await page.waitForFunction(()=>document.querySelector('#server-status').textContent.startsWith('Đã kết nối'));
+  await page.click('#import-server-connection');await page.waitForFunction(()=>document.querySelector('#server-status').textContent.startsWith('Đã kết nối'));
   await page.selectOption('#patient-search-kind','groupNumber');await page.fill('#patient-search-query',fixtureGroup);await page.click('#search-patients');
   await page.waitForSelector('[data-patient="99"]');assert.equal(await page.locator('#patient-results tr').count(),2);
   await page.screenshot({path:path.join(root,'test-results/patient-search.png')});

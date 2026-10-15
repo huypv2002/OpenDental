@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.0
+# LUK MetLife Assistant 0.3.1
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -6,13 +6,13 @@ Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm
 
 MetLife là `/api/metlife` trong `src/server.js` của Bridge, dùng cùng pool `src/db.js`, cùng process/cổng/tunnel. Không có backend MetLife riêng.
 
-Trên SERVER chạy `od-bridge.bat` trong checkout Bridge hiện có để pull Git và restart cùng Bridge. Xem `../CAP-NHAT-METLIFE.md` cho lần cập nhật đầu. Chuyển riêng `metlife-r5-connection.json` sang R5 và chọn một lần trong Electron. Đây là cấu hình ban đầu, không phải snapshot bệnh nhân.
+Trên SERVER chạy `od-bridge.bat` trong checkout Bridge hiện có để pull Git và restart cùng Bridge. Xem `../CAP-NHAT-METLIFE.md` cho lần cập nhật đầu. Electron đã có sẵn địa chỉ SERVER; không cần chép file kết nối.
 
 ## R5: kết nối một lần, sau đó tìm bệnh nhân
 
 Giải nén toàn bộ gói Windows và mở LUK MetLife Assistant.exe. Giữ thư mục resources/locales/DLL cạnh EXE. Không cần Node hoặc Python trên R5.
 
-1. Tại **Tìm bệnh nhân**, nhấn **Kết nối SERVER**, chọn file kết nối được tạo trên SERVER. App lưu bằng Electron safeStorage/Windows. Những lần mở sau tự kết nối lại.
+1. Tại **Tìm bệnh nhân**, nhấn **Đăng nhập SERVER**, nhập tài khoản quản trị LUK Dental (owner/admin). Địa chỉ SERVER có sẵn; phiên được mã hóa trên máy, app tự kết nối lại khi mở. Phiên hết hạn sau 30 ngày; tài khoản bị khóa/đổi quyền mất truy cập ngay. Không lưu mật khẩu. Nhập JSON cũ còn nằm trong phần cấu hình nâng cao.
 2. Nhập tên, Patient ID/PatNum, Chart Number, Subscriber ID hoặc Group Number; có thể chọn loại tìm hoặc tìm tất cả. Group/Subscriber ID có thể trả nhiều bệnh nhân: xem Patient ID, ngày sinh và bảo hiểm rồi chọn đúng người.
 3. Nhấn **Xem hồ sơ**: app lấy danh sách PDF trong FINISHED CLAM/FINISHED CLAIMS của chính PatNum đó. Chọn PDF để xem và đối chiếu. File và dữ liệu OD được lấy từ SERVER; không cần chọn thư mục UNC hay nạp JSON.
 4. **Auto fill · bản nháp OD** tự tìm bệnh nhân trong OD bằng PatNum, kiểm tra lại tiêu đề, mở Account/Payment, nhập ngày/số tiền/trace/Note và chọn **Insurance Paid**. Nó xóa các Split do OD tự đề xuất trong Payment mới rồi tạo từng Split, gắn procedure hoàn tất theo ngày/mã/răng/provider. Không nhận diện hoặc đọc lại được thì dừng.

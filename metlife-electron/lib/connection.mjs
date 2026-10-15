@@ -1,3 +1,13 @@
+export const DEFAULT_SERVER_URL='https://od-bridge.lukdental.us';
+export async function loginConnection({url=DEFAULT_SERVER_URL,username,password}){
+ const base=validateConnection({url,token:'x'.repeat(64)}).url;
+ if(typeof username!=='string'||!username.trim()||username.length>64||typeof password!=='string'||!password||password.length>512)throw new Error('Nhập tài khoản và mật khẩu quản trị LUK Dental.');
+ const r=await fetch(base+'/api/metlife/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username.trim(),password}),signal:AbortSignal.timeout(30000),redirect:'error'});
+ const text=await r.text();if(text.length>8192)throw new Error('SERVER trả sai định dạng.');
+ let data;try{data=JSON.parse(text);}catch{throw new Error('SERVER cần cập nhật API đăng nhập MetLife.');}
+ if(!r.ok||!data.ok)throw new Error(data.error||'Đăng nhập SERVER chưa thành công.');
+ return validateConnection({url:base,token:data.data.token});
+}
 export function validateConnection(value){
  if(!value||typeof value.url!=='string'||typeof value.token!=='string'||value.token.length<32||value.token.length>512)throw new Error('File kết nối SERVER không hợp lệ.');
  const url=new URL(value.url);

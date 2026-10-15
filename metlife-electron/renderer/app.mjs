@@ -6,7 +6,7 @@ const events=[];let lastMessage='';
 async function request(op,arg){const r=await window.metlife.call(op,arg);if(!r.ok)throw new Error(r.error);return r.data;}
 function toast(msg){$('#toast').textContent=msg;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,6500);}
 async function action(op,arg){if(working)return;working=true;document.body.setAttribute('aria-busy','true');updateButtons();try{const s=await request(op,arg);if(s?.items){if(op==='open-document'){selected=s.patientBrowser.openedId;view='review';$('nav [data-tab="queue"]').click();}render(s);}return s;}catch(e){toast(e.message);}finally{working=false;document.body.removeAttribute('aria-busy');updateButtons();}}
-function updateButtons(){document.querySelectorAll('[data-action],#import-pdf,#import-snapshot,#choose-folder,#scan,#inspect-od,#save-settings,#empty-import,#connect-server,#disconnect-server,#search-patients,#patients-prev,#patients-next,#refresh-documents,#verify-save').forEach(b=>b.disabled=working||b.dataset.blocked==='true');}
+function updateButtons(){document.querySelectorAll('[data-action],#import-pdf,#import-snapshot,#choose-folder,#scan,#inspect-od,#save-settings,#empty-import,#connect-server,#login-server,#disconnect-server,#search-patients,#patients-prev,#patients-next,#refresh-documents,#verify-save').forEach(b=>b.disabled=working||b.dataset.blocked==='true');}
 function field(label,value,cls=''){return `<div><span class="field-label">${esc(label)}</span><span class="field-value ${cls}">${esc(value||'—')}</span></div>`;}
 function addEvent(message){if(!message||message===lastMessage)return;lastMessage=message;events.unshift({at:new Date().toLocaleTimeString('vi-VN'),message});$('#events').innerHTML=events.map(e=>`<div class="event"><time>${esc(e.at)}</time>${esc(e.message)}</div>`).join('');}
 function render(s){
@@ -23,8 +23,8 @@ function render(s){
 }
 function renderPatients(){
  const b=state.patientBrowser||{patients:[],documents:[]};
- $('#server-status').textContent=b.connected?`Đã kết nối ${b.url} · Tìm bệnh nhân để xem FINISHED CLAM.`:'Chưa kết nối SERVER. Chọn file kết nối một lần; dữ liệu OD sẽ được lấy tự động.';
- $('#connect-server').textContent=b.connected?'Đổi kết nối SERVER':'Kết nối SERVER';
+ $('#server-status').textContent=b.connected?`Đã kết nối ${b.url} · Tìm bệnh nhân để xem FINISHED CLAM.`:'SERVER: https://od-bridge.lukdental.us · Đăng nhập một lần, app tự nhớ kết nối.';
+ $('#connect-server').textContent=b.connected?'Tài khoản SERVER':'Đăng nhập SERVER';
  $('#patient-results').innerHTML=b.patients.map(p=>`<tr class="${String(b.selectedPatient?.PatNum)===String(p.PatNum)?'patient-selected':''}"><td><b class="patient-name">${esc(p.LName)}, ${esc(p.FName)}</b><br><small>Patient ID ${esc(p.PatNum)}${p.ChartNumber?' · Chart '+esc(p.ChartNumber):''}</small></td><td>${esc(p.Birthdate||'—')}</td><td class="patient-insurance">${(p.insurance||[]).map(i=>`${esc(i.CarrierName)}<br>Subscriber: ${esc(i.SubscriberID||'—')}<br>Group: ${esc(i.GroupNum||'—')}`).join('<hr>')||'—'}</td><td><button class="small" data-patient="${esc(p.PatNum)}" data-action="patient-documents">Xem hồ sơ</button></td></tr>`).join('');
  $('#patient-results-empty').hidden=!!b.patients.length;
  $('#patients-prev').dataset.blocked=String(!b.connected||!b.page);$('#patients-next').dataset.blocked=String(!b.connected||!b.hasMore);$('#refresh-documents').dataset.blocked=String(!b.selectedPatient);
@@ -71,7 +71,7 @@ async function renderPdf(id,container){
   }finally{await task.destroy();}
  }catch(e){if(token===pdfToken)container.textContent=`Không mở được bản xem PDF: ${e.message}. Dùng Mở PDF gốc.`;}
 }
-for(const id of ['verify-save','connect-server','disconnect-server','import-pdf','import-snapshot','choose-folder','scan','inspect-od'])$('#'+id).addEventListener('click',()=>action(id));
+for(const id of ['verify-save','disconnect-server','import-pdf','import-snapshot','choose-folder','scan','inspect-od'])$('#'+id).addEventListener('click',()=>action(id));
 $('#empty-import').addEventListener('click',()=>action('import-pdf'));
 $('#watch').addEventListener('change',async e=>{await action('watch',e.target.checked);$('#watch').checked=state.status.watching;});
 $('#search').addEventListener('input',renderList);
@@ -91,3 +91,13 @@ $('#patients-next').addEventListener('click',()=>searchPatients((state.patientBr
 $('#refresh-documents').addEventListener('click',()=>action('patient-documents',state.patientBrowser.selectedPatient?.PatNum));
 $('#patient-results').addEventListener('click',e=>{const b=e.target.closest('[data-patient]');if(b)action('patient-documents',b.dataset.patient);});
 $('#patient-documents').addEventListener('click',e=>{const b=e.target.closest('[data-document]');if(b)action('open-document',b.dataset.document);});
+
+$('#connect-server').addEventListener('click',()=>{$('#server-login').hidden=!$('#server-login').hidden;});
+$('#import-server-connection').addEventListener('click',()=>action('connect-server'));
+async function submitServerLogin(){
+ const args={url:$('#server-url').value,username:$('#server-username').value,password:$('#server-password').value};
+ $('#server-password').value='';
+ const result=await action('login-server',args);if(result?.patientBrowser?.connected)$('#server-login').hidden=true;
+}
+$('#login-server').addEventListener('click',submitServerLogin);
+$('#server-password').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitServerLogin();}});
