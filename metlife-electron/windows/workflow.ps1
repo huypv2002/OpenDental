@@ -124,40 +124,6 @@ function FindProcedureRow($picker,$split,$main){
   Start-Sleep -Milliseconds 100
  };throw 'Procedure search limit reached'
 }
-function BuildSplits($payment,$draft,$main){
- if(@($draft.splits).Count -eq 0){throw 'No verified allocation plan'}
- foreach($s in $draft.splits){if(-not $s.providerAbbr -or -not $s.description -or -not $s.ProcNum){throw 'Allocation needs procedure/provider metadata from SERVER'}}
- # This is only the newly opened preview, never an existing payment editor.
- Click (ById $payment 'butClear') $main
- Start-Sleep -Milliseconds 200
- if([decimal](ReadValue (ById $payment 'textSplitTotal')) -ne 0){throw 'New draft splits were not cleared'}
- foreach($split in $draft.splits){
-  AssertFocus $main
-  Click (ById $payment 'butAddManual') $main
-  $edit=WaitOnly $main 'FormPaySplitEdit'
-  SetListExact (ById $edit 'listPatient') ([string]$draft.splitPatientName) $main
-  $payDate=[DateTime]::ParseExact([string]$draft.date,'yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture).ToString('MM-dd-yyyy')
-  SetValue $edit 'textDatePay' $payDate $main
-  SetValue $edit 'textAmount' ([decimal]$split.amountCents/100).ToString('F2',[Globalization.CultureInfo]::InvariantCulture) $main
-  Click (ById $edit 'butAttachProc') $main
-  $picker=WaitOnly $main 'FormProcSelect'
-  $row=FindProcedureRow $picker $split $main
-  PointClick ($row.x+$row.width/2) ($row.y+$row.height/2) $main
-  Click (ById $picker 'butOK') $main
-  $edit=WaitOnly $main 'FormPaySplitEdit'
-  if(-not (DateEquals (ReadValue (ById $edit 'textProcDate')) ([string]$split.date))){throw 'Attached procedure date mismatch'}
-  if((ReadValue (ById $edit 'textProcDescription')).Trim() -ine ([string]$split.description).Trim()){throw 'Attached procedure description mismatch'}
-  if((ReadValue (ById $edit 'textProcTooth')).Trim() -ine ([string]$split.tooth).Trim()){throw 'Attached tooth mismatch'}
-  if((ReadValue (ById $edit 'textProcProv')).Trim() -ine ([string]$split.providerAbbr).Trim()){throw 'Attached provider mismatch'}
-  # Attaching a completed procedure is expected to remove Prepayment. Verify visible combo text.
-  $unearned=@(OcrControl (ById $edit 'comboUnearnedTypes') $main)
-  if((($unearned|ForEach-Object{$_.text}) -join ' ') -notmatch '^\s*(None|\(none\))\s*$'){throw 'Attached split still has an unverified Unearned Type'}
-  SetValue $edit 'textAmount' ([decimal]$split.amountCents/100).ToString('F2',[Globalization.CultureInfo]::InvariantCulture) $main
-  Click (ById $edit 'butSave') $main
-  $payment=WaitOnly $main 'FormPayment'
- }
- if([decimal](ReadValue (ById $payment 'textSplitTotal')) -ne [decimal]$draft.amount){throw 'Split total differs from payment amount'}
-}
 function AssertPayment($payment,$draft,$main){
  if([regex]::Match($main.Current.Name,'-\s*(\d+)\s*$').Groups[1].Value -cne [string]$draft.patNum){throw 'Patient changed before Save'}
  if([decimal](ReadValue (ById $payment 'textAmount')) -ne [decimal]$draft.amount){throw 'Amount changed before Save'}
@@ -172,7 +138,8 @@ function VerifySplits($payment,$draft,$main){
  $all=@(OcrRows $grid $main)
  $rows=@($all|Where-Object{$_.text -match '(?<![A-Z0-9])D\d{4}(?![A-Z0-9])'})
  # No guessed scrolling in the final verification: all planned rows must be visible.
- if($rows.Count -ne @($draft.splits).Count){throw 'Cannot verify all split rows before Save'}
+ if(@($all|Where-Object{$_.text -match '\b(Prepayment|Unearned)\b'}).Count -gt 0){throw 'OD generated Prepayment/Unearned. Splits were kept unchanged; review allocation manually.'}
+ if($rows.Count -ne @($draft.splits).Count){throw 'OD-generated Splits do not match the PDF plan. Splits were kept unchanged.'}
  foreach($split in $draft.splits){
   $amount=([decimal]$split.amountCents/100).ToString('F2',[Globalization.CultureInfo]::InvariantCulture)
   $matches=@($rows|Where-Object{$_.text -match ('(?<![A-Z0-9])'+[regex]::Escape([string]$split.code)+'(?![A-Z0-9])') -and $_.text -match [regex]::Escape([string]$split.providerAbbr) -and $_.text.Replace(',','') -match ([regex]::Escape($amount)+'\s*$')})

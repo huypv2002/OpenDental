@@ -7,10 +7,11 @@ foreach(var file in Directory.GetFiles(Path.GetDirectoryName(Path.GetFullPath(ar
  if(errors.Length>0)throw new Exception(file+": "+string.Join("; ",errors.Select(e=>e.ToString())));
 }
 var discovery=File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,"window-discovery.ps1"));
+var account=File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,"account-selection.ps1"));
 var ocr=File.ReadAllText(args[0]);var workflow=File.ReadAllText(args[1]);
 // Load only the pure OCR row aggregation; WinRT hardware calls remain untested here.
 ocr=ocr[ocr.IndexOf("function OcrRows(")..];
-ps.AddScript("$ErrorActionPreference='Stop'\n"+workflow+"\n"+discovery+"\n"+ocr+"\n"+"""
+ps.AddScript("$ErrorActionPreference='Stop'\n"+workflow+"\n"+discovery+"\n"+account+"\n"+ocr+"\n"+"""
 $same=@{handle=100;processId=20;id='FormOpenDental';element='correct'}
 if((SelectOdMain @($same,$same)) -cne 'correct'){throw 'Duplicate native/UIA handle was not deduplicated'}
 $cases=@(
@@ -42,5 +43,26 @@ if($row.y -ne 100){throw 'Wrong exact procedure selected'}
 if((ListKey 'LE , JULIE') -cne (ListKey 'LE, JULIE')){throw 'Patient punctuation normalization failed'}
 if(-not (DateEquals '9/13/2026' '2026-09-13')){throw 'US date comparison failed'}
 if(DateEquals '9/14/2026' '2026-09-13'){throw 'Different dates considered equal'}
-'Workflow policy executed: fragmented OCR rows, repeated code/date with different teeth, patient punctuation and date checks passed.'
+$header=@{text='Date Patient Prov Code Tth Description';y=10;height=12;words=@(
+ @{text='Date';x=10;width=40},@{text='Patient';x=120;width=45},@{text='Prov';x=220;width=30},@{text='Code';x=280;width=35},@{text='Tth';x=350;width=25},@{text='Description';x=420;width=70}
+)}
+function AccountLine($y,$patient,$code,$tooth){
+ @{text='09/20/2026 '+$patient+' DOC '+$code+' '+$tooth;y=$y;height=14;words=@(
+ @{text='09/20/2026';x=10;width=75},@{text=$patient;x=120;width=45},@{text='DOC';x=220;width=30},@{text=$code;x=280;width=35},@{text=$tooth;x=350;width=25},@{text='Restoration 14';x=420;width=120})}
+}
+$accountRows=@(AccountRows @($header,(AccountLine 40 'RYAN' 'D0120' ''),(AccountLine 80 'RYAN' 'D2392' '13'),(AccountLine 120 'RYAN' 'D2392' '14'),(AccountLine 160 'OTHER' 'D2392' '14')))
+$draft=[pscustomobject]@{patientName='PHAM, RYAN';splits=@(
+ [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC'},
+ [pscustomobject]@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC'}
+)}
+$targets=@(MatchAccountRows $accountRows $draft)
+if($targets.Count -ne 2 -or $targets[0].y -ne 40 -or $targets[1].y -ne 120){throw 'Wrong Account procedure identity'}
+foreach($badRows in @(
+ @{rows=@($accountRows[0],$accountRows[1],$accountRows[3])},
+ @{rows=@($accountRows)+@($accountRows[2])}
+)){
+ $caught=$false;try{MatchAccountRows $badRows.rows $draft}catch{$caught=$true}
+ if(-not $caught){throw 'Missing/ambiguous Account procedure was accepted'}
+}
+'Workflow policy executed: fragmented OCR rows, procedure identity, Account columns, repeated codes/different teeth, other patient exclusion, missing/duplicate row refusal and date checks passed.' 
 """);var results=ps.Invoke();if(ps.InvocationStateInfo.State==PSInvocationState.Failed||ps.Streams.Error.Count>0)throw new Exception(ps.InvocationStateInfo.Reason?.Message+"\n"+string.Join("\n",ps.Streams.Error.Select(e=>e.Exception.Message+" at "+e.ScriptStackTrace)));foreach(var r in results)Console.WriteLine(r);

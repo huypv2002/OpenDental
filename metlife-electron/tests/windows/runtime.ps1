@@ -83,6 +83,20 @@ try{
   $missing=$true
  }
  if(-not $missing){throw 'Missing list label was accepted'}
+ # Match and Ctrl-select actual painted Account rows before any Payment is opened.
+ . (Join-Path $windows 'account-selection.ps1')
+ function ById($scope,[string]$id){
+  $found=@($scope.FindAll($TS::Descendants,[System.Windows.Automation.PropertyCondition]::new($AE::AutomationIdProperty,$id)))
+  if($found.Count -ne 1){throw ('Test control not unique: '+$id)};return $found[0]
+ }
+ $draft=[pscustomobject]@{patNum='99';patientName='TEST, RYAN';splits=@(
+  [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC'},
+  [pscustomobject]@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC'}
+ )}
+ SelectAccountProcedures $account $draft $main
+ Start-Sleep -Milliseconds 100
+ $selection=(FindControl 'textAccountSelection').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+ if($selection -cne '0,2'){throw ('Wrong real Account selection: '+$selection)}
  # Exercise the production click helper: a modal-opening Invoke can block the caller.
  Click (FindControl 'butPopup') $main
  $popup=$null
@@ -108,7 +122,7 @@ try{
  if($LASTEXITCODE -ne 1){throw 'Adapter did not refuse two OD main windows'}
  $ambiguous=($raw -join "`n")|ConvertFrom-Json
  if($ambiguous.ok -or $ambiguous.error -notlike '*2*' -or -not (Test-Path (Join-Path $ambiguous.diagnosticFolder 'window-discovery.json'))){throw ('Bad ambiguity/diagnostics response: '+($raw -join "`n"))}
- Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production OCR selection of offscreen painted list items in both directions, missing-item refusal, modal click and full Node-to-PowerShell OD adapter inspect, two-window refusal and saved diagnostics."
+ Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production OCR selection of offscreen painted list items in both directions, missing-item refusal, exact Account Ctrl-selection of nonadjacent procedures, modal click and full Node-to-PowerShell OD adapter inspect, two-window refusal and saved diagnostics."
 }finally{
  if($second -and -not $second.HasExited){Stop-Process -Id $second.Id -Force}
  if($fixture -and -not $fixture.HasExited){Stop-Process -Id $fixture.Id -Force}

@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.6
+# LUK MetLife Assistant 0.3.7
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -15,7 +15,7 @@ Giải nén toàn bộ gói Windows và mở LUK MetLife Assistant.exe. Giữ th
 1. Mở app trong mạng phòng khám: tự kết nối `http://SERVER:3008`, không đăng nhập hoặc chuyển file JSON. Nếu SERVER chưa sẵn sàng, bấm **Kết nối lại**. Tên SERVER cần phân giải được và cổng TCP 3008 phải cho phép trong mạng nội bộ. Khi dùng địa chỉ LAN khác, đặt `METLIFE_SERVER_URL=http://<IP-SERVER>:3008` trước khi mở app. Không tự mở truy cập ẩn danh qua tunnel Internet.
 2. Nhập tên, Patient ID/PatNum, Chart Number, Subscriber ID hoặc Group Number; có thể chọn loại tìm hoặc tìm tất cả. Group/Subscriber ID có thể trả nhiều bệnh nhân: xem Patient ID, ngày sinh và bảo hiểm rồi chọn đúng người.
 3. Nhấn **Xem hồ sơ**: app lấy danh sách PDF trong FINISHED CLAM/FINISHED CLAIMS của chính PatNum đó. Chọn PDF để xem và đối chiếu. File và dữ liệu OD được lấy từ SERVER; không cần chọn thư mục UNC hay nạp JSON.
-4. **Auto fill · bản nháp OD** tự tìm bệnh nhân trong OD bằng PatNum, kiểm tra lại tiêu đề, mở Account/Payment, nhập ngày/số tiền/trace/Note và chọn **Insurance Paid**. Nó xóa các Split do OD tự đề xuất trong Payment mới rồi tạo từng Split, gắn procedure hoàn tất theo ngày/mã/răng/provider. Không nhận diện hoặc đọc lại được thì dừng.
+4. **Auto fill · bản nháp OD** tự tìm bệnh nhân trong OD bằng PatNum, kiểm tra lại tiêu đề, mở Account, bôi chọn các dòng dịch vụ đã khớp PDF theo patient/ngày/mã/răng/provider, rồi mở Payment và nhập số tiền PDF. Giữ Splits OD tự tạo; nhập ngày/trace/Note, chọn **Insurance Paid**, rồi kiểm tra từng Split. Không xóa hoặc dựng lại Splits. Nếu còn Prepayment, sai số dòng hoặc phân bổ khác PDF thì dừng trước Save. Không nhận diện hoặc đọc lại được thì dừng.
 5. **Auto fill & Save vào OD**: SERVER đọc dữ liệu/file mới, khóa lượt ghi cho bệnh nhân; app tạo bản nháp hoàn chỉnh; SERVER kiểm tra lại ngay trước Save; app mở kiểm tra từng Split, bấm Save trong OD; SERVER đọc lại Payment và Splits để đối chiếu tất cả trường. Chỉ báo thành công khi readback đạt. Không gọi nút thu tiền thẻ/merchant.
 6. Nếu timeout, crash hoặc readback không khớp: giữ lượt ghi trên SERVER và local, không tự nhập lại. Dùng **Kiểm tra kết quả trên SERVER** để xác minh; nếu vẫn không khớp phải kiểm tra giao dịch cụ thể. Lỗi trước Save chỉ giải phóng khóa khi dữ liệu tài chính không thay đổi. Khi mở hồ sơ, app tự lấy lại lượt ghi còn chờ từ SERVER ngay cả khi local journal mất.
 7. Bản nháp có thể đóng bằng nút tool. OD/R5 cần đang đăng nhập, desktop mở khóa và cùng mức quyền với tool. Owner-drawn controls dùng Windows OCR tiếng Anh và nhận diện vùng chọn; thiếu OCR/control lạ sẽ dừng và tự chụp ảnh/control OD trong `od-diagnostics` dưới userData của app. Ảnh có thể chứa dữ liệu bệnh nhân, chỉ lưu trên máy và không được đóng gói vào bản phát hành.
@@ -79,3 +79,13 @@ OD UI.ListBox xử lý Up/Down, không triển khai Home/PageDown như list chu�
 Windows fixture bổ sung control tự vẽ không có UIA ListItem, bỏ qua Home/PageDown. Kiểm tra bằng OCR Windows thật: chọn Insurance Paid nằm ngoài viewport, tìm ngược lên Credit Card và từ chối nhãn không tồn tại. Vẫn cần nghiệm thu danh sách thực tại R5.
 
 Nguồn control OD: https://github.com/OpenDental/opendental/blob/24_3/OpenDental/UI/ListBox.cs
+
+## Bản 0.3.7 — chọn dịch vụ trước Payment
+
+Luồng được sửa theo demo: chọn đúng bệnh nhân → Account → chọn các procedure đã đối chiếu PDF (Ctrl để chọn nhiều dòng không liền nhau) → Payment → nhập Amount từ PDF → điền ngày/trace/Note/Insurance Paid → kiểm tra Splits OD tự tạo → dừng bản nháp hoặc Save có recheck/readback. Không còn Delete All/Add Split/Attach Procedure để dựng lại phân bổ. Bộ kiểm tra Split chỉ mở xem và đóng chi tiết, không sửa Split.
+
+Chỉ chọn khi mọi procedure mục tiêu đang hiện trong Account và khớp duy nhất theo patient/ngày/mã/răng/provider; không tự cuộn chọn các dòng chưa thấy hoặc chọn cả dải bằng Shift. Một click đầu bỏ lựa chọn cũ; Ctrl-click các dòng còn lại, thả Ctrl trong finally. Đọc lại OCR và vùng highlight để kiểm tra tập dòng trước Payment. Thiếu/nhầm/không đọc được thì dừng và chụp chẩn đoán. Các procedure benefit > 0 trong kế hoạch đối chiếu là mục tiêu; không tự chọn dòng denied/0 USD hoặc tạo procedure gộp mới.
+
+OD có thể tự phân bổ khác số tiền từng dòng trên EOB, hoặc tạo Prepayment nếu Amount lớn hơn phần còn lại. Tool dừng khi kết quả đó không khớp kế hoạch PDF, không sửa để ép khớp. Việc mở bản nháp có thể tác động DB theo phiên bản OD; khóa/recheck/readback hiện có vẫn áp dụng. Chưa nghiệm thu luồng mới trên R5 thật.
+
+Kiểm thử Windows bổ sung Account grid tự vẽ, có dòng cùng code khác răng và bệnh nhân khác, cùng lựa chọn thừa từ trước. Kiểm tra OCR + Ctrl-click thực giữ đúng hai dòng không liền nhau và bỏ lựa chọn cũ.

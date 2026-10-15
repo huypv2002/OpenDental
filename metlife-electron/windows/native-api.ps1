@@ -23,6 +23,25 @@ public static class OdNative {
  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);
  [DllImport("user32.dll")] public static extern void mouse_event(uint a,uint b,uint c,uint d,UIntPtr e);
  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr c);
+ [DllImport("user32.dll")] public static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
+ public static Rectangle[] SelectedBands(int left,int top,int width,int height) {
+  var bands=new List<Rectangle>();
+  using(var bitmap=new Bitmap(width,height))using(var graphics=Graphics.FromImage(bitmap)){
+   graphics.CopyFromScreen(left,top,0,0,bitmap.Size);
+   int start=-1,last=-1;
+   for(int y=1;y<height-1;y++){
+    int hits=0,count=0;
+    for(int x=3;x<width-18;x+=5){
+     var c=bitmap.GetPixel(x,y);count++;
+     if((c.B-c.R>15&&c.B>120&&c.R<225)||(c.R>=140&&c.R<=215&&Math.Abs(c.R-c.G)<15&&c.B-c.R>=0&&c.B-c.R<35))hits++;
+    }
+    if(count>0&&(double)hits/count>0.62){if(start<0)start=y;last=y;}
+    else if(start>=0&&y-last>4){if(last-start>=3)bands.Add(new Rectangle(0,start,width,last-start+1));start=-1;}
+   }
+   if(start>=0&&last-start>=3)bands.Add(new Rectangle(0,start,width,last-start+1));
+  }
+  return bands.ToArray();
+ }
  public static string VisualHash(int left,int top,int width,int height) {
   using(var bitmap=new Bitmap(width,height))using(var graphics=Graphics.FromImage(bitmap)){
    graphics.CopyFromScreen(left,top,0,0,bitmap.Size);

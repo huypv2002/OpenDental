@@ -21,6 +21,35 @@ public class PaintedChoices : Control {
   e.Graphics.DrawRectangle(Pens.SlateGray,0,0,Width-1,Height-1);
  }
 }
+public class AccountGrid : Control {
+ readonly string[][] rows={
+  new[]{"09/20/2026","RYAN","DOC","D0120","","Periodic exam","86.40"},
+  new[]{"09/20/2026","RYAN","DOC","D2392","13","Restoration","150.00"},
+  new[]{"09/20/2026","RYAN","DOC","D2392","14","Restoration","150.00"},
+  new[]{"09/20/2026","OTHER","DOC","D1110","","Cleaning","108.00"}
+ };
+ readonly int[] x={4,120,225,290,355,410,720};
+ readonly System.Collections.Generic.SortedSet<int> selected=new System.Collections.Generic.SortedSet<int>{3};
+ public string Selection {get{return string.Join(",",selected);}}
+ public AccountGrid(){SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);TabStop=true;Font=new Font("Segoe UI",10);}
+ protected override void OnMouseDown(MouseEventArgs e){
+  Focus();int row=(e.Y-30)/32;if(e.Y<30||row<0||row>=rows.Length)return;
+  if((ModifierKeys&Keys.Control)==0){selected.Clear();selected.Add(row);}
+  else if(!selected.Remove(row))selected.Add(row);
+  Invalidate();base.OnMouseDown(e);
+ }
+ protected override void OnPaint(PaintEventArgs e){
+  e.Graphics.Clear(Color.White);
+  string[] header={"Date","Patient","Prov","Code","Tth","Description","Charges"};
+  for(int c=0;c<header.Length;c++)e.Graphics.DrawString(header[c],Font,Brushes.Black,new PointF(x[c],5));
+  for(int r=0;r<rows.Length;r++){
+   int y=30+r*32;
+   if(selected.Contains(r)){using(var brush=new SolidBrush(Color.FromArgb(200,220,235)))e.Graphics.FillRectangle(brush,1,y,Width-2,32);}
+   for(int c=0;c<rows[r].Length;c++)e.Graphics.DrawString(rows[r][c],Font,Brushes.Black,new PointF(x[c],y+7));
+   e.Graphics.DrawLine(Pens.LightGray,0,y+31,Width,y+31);
+  }
+ }
+}
 public class Fixture : Form {
  public Fixture() {
   Name="FormOpenDental"; Text="Open Dental {Fixture} - TEST , PERSON - 99";
@@ -33,6 +62,9 @@ public class Fixture : Form {
   var painted=new PaintedChoices {Name="listCustomPayType",Location=new Point(400,30),Size=new Size(260,134)};account.Controls.Add(painted);
   var selection=new TextBox {Name="textPaintedSelection",ReadOnly=true,Location=new Point(400,180),Width=260};account.Controls.Add(selection);
   var timer=new Timer {Interval=50};timer.Tick+=(sender,e)=>{selection.Text=painted.SelectedLabel;};timer.Start();
+  var accountGrid=new AccountGrid {Name="gridAccount",Location=new Point(5,350),Size=new Size(850,180)};account.Controls.Add(accountGrid);
+  var gridSelection=new TextBox {Name="textAccountSelection",Location=new Point(400,550),Width=260,ReadOnly=true};account.Controls.Add(gridSelection);
+  timer.Tick+=(sender,e)=>{gridSelection.Text=accountGrid.Selection;};
   var action=new Button {Name="butAction",Text="Action",Location=new Point(250,290)};
   action.Click+=(sender,e)=>{amount.Text="77.00";};account.Controls.Add(action);
   var popup=new Button {Name="butPopup",Text="Open fixture popup",Location=new Point(20,290),Size=new Size(200,35)};

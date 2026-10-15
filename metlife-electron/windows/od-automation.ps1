@@ -59,6 +59,7 @@ function WaitModal($main,[string]$id){
 }
 function CloseWindow($w){$w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()}
 . (Join-Path $PSScriptRoot 'workflow.ps1')
+. (Join-Path $PSScriptRoot 'account-selection.ps1')
 . (Join-Path $PSScriptRoot 'window-discovery.ps1')
 $opened=$null
 $saveInvoked=$false
@@ -132,6 +133,7 @@ try{
   Start-Sleep -Milliseconds 350
  }
  $account=ById $main 'ControlAccount'
+ SelectAccountProcedures $account $request.draft $main
  # Payment toolbar is owner-drawn. Search only its visible account toolbar rectangle.
  $toolbar=ById $account 'ToolBarMain';$r=$toolbar.Current.BoundingRectangle
  $bitmap=[System.Drawing.Bitmap]::new([int]$r.Width,[int]$r.Height)
@@ -159,7 +161,7 @@ try{
  SetValue $payment 'textCheckNum' ([string]$request.draft.checkNum) $main
  SetValue $payment 'textNote' ([string]$request.draft.note) $main
  SetListExact (ById $payment 'listPayType') ([string]$request.draft.paymentType) $main
- BuildSplits $payment $request.draft $main
+ VerifySplits $payment $request.draft $main
  $payment=WaitOnly $main 'FormPayment'
  AssertPayment $payment $request.draft $main
  $opened=$null
