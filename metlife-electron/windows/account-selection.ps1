@@ -1,7 +1,7 @@
 ﻿# Select verified Account procedures before opening Payment; OD owns split creation.
 function AccountRows($lines){
  $header=@($lines|Where-Object{$_.text -match '\bDate\b' -and $_.text -match '\bPatient\b' -and $_.text -match '\bCode\b'})
- if($header.Count -ne 1){throw 'Cannot identify Account column headers'}
+ if($header.Count -ne 1){throw ('Cannot identify Account column headers: '+($lines|ConvertTo-Json -Depth 5 -Compress))}
  $columns=@{}
  foreach($name in @('Date','Patient','Prov','Code')){
   $word=@($header[0].words|Where-Object{$_.text -ceq $name})
