@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.9
+# LUK MetLife Assistant 0.3.10
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -116,3 +116,11 @@ Theo lựa chọn của người dùng, **Overpaid Charge Warning dừng ngay đ
 Kiểm thử bổ sung Windows WinForms x86/x64: combo family tự vẽ mở cửa sổ riêng; khôi phục các bộ lọc; xóa Splits cũ; OCR và Ctrl-click Outstanding có mã trùng khác răng/bệnh nhân; prompt Add Partials theo thứ tự grid khác thứ tự PDF; nhập từng amount và kiểm tra tổng; không gọi Save; dừng và giữ nguyên Overpaid Charge Warning. Đây là fixture, chưa phải nghiệm thu trên Open Dental thật tại R5.
 
 Kiểm chứng 0.3.9: [Windows CI 38762303435](https://github.com/huypv2002/OpenDental/actions/runs/38762303435) pass cả x86/x64, gồm Add Partials, tổng tiền và dừng trước cảnh báo số dư âm; 20 app tests pass trên mỗi job. Bộ policy PowerShell và kiểm tra cú pháp cũng pass tại máy phát triển. CI dùng dữ liệu tổng hợp, không tạo thanh toán trên database phòng khám.
+
+## Bản 0.3.10 — đọc lại dòng Insurance Paid trên R5
+
+Sửa lỗi `Selection highlight has multiple bands` dừng ngay sau chọn Payment Type. Bộ đọc cũ yêu cầu mọi hàng pixel nhận diện nền tô chọn phải liền nhau tuyệt đối: chữ đen làm gián đoạn nền, còn viền xám mỏng cũng bị nhận nhầm. Bộ đọc mới dùng chung bộ nhóm vùng highlight: gộp khoảng trống nhỏ trong cùng một dòng, bỏ các dải viền quá mỏng, yêu cầu chỉ một vùng đủ dày rồi OCR đúng một dòng. Vẫn từ chối hai vùng chọn thực sự tách biệt hoặc OCR cho nhiều dòng.
+
+Bài regression dùng crop danh sách Payment Type từ ảnh R5 người dùng gửi, chỉ có nhãn các loại tiền, không có thông tin bệnh nhân. Kiểm tra cả vị trí vùng chọn và OCR Insurance Paid qua control hiển thị ảnh trên Windows; thêm ca hai vùng chọn tách biệt. Khi dừng, lỗi có tên bước để phân biệt Payment Type, chọn combo, Delete All, Outstanding và Add Partials. Cập nhật mô tả luồng trên giao diện và thông báo thành công để phản ánh đúng việc phân bổ Splits. Không thay đổi lựa chọn dừng tại cảnh báo số dư âm hoặc giữ Payment mở.
+
+Kiểm chứng 0.3.10: [Windows CI 38772797451](https://github.com/huypv2002/OpenDental/actions/runs/38772797451) pass x86/x64. Cả hai job đọc đúng `Insurance paid` từ crop R5, từ chối hai vùng chọn tách biệt, rồi pass lại luồng family filter → Delete All → Outstanding → Add Partials và giữ cảnh báo số dư âm. 20 app tests mỗi job và kiểm tra cú pháp/policy tại máy phát triển đều pass. Đây là regression ảnh thật và fixture Windows; chưa chạy lại luồng mới trên OD thật tại R5.
