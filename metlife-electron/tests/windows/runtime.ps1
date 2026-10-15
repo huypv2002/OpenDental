@@ -93,6 +93,7 @@ try{
   [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC'},
   [pscustomobject]@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC'}
  )}
+ Write-Output ('ACCOUNT ROWS: '+(@(AccountRows @(OcrRows (FindControl 'gridAccount') $main))|ConvertTo-Json -Depth 5 -Compress))
  SelectAccountProcedures $account $draft $main
  Start-Sleep -Milliseconds 100
  $selection=(FindControl 'textAccountSelection').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
