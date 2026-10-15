@@ -10,6 +10,8 @@ public class Fixture : Form {
   var note=new RichTextBox {Name="textNote",Text="Synthetic fixture only",Location=new Point(20,75),Size=new Size(300,90)};account.Controls.Add(note);
   var types=new ListBox {Name="listPayType",Location=new Point(20,180),Size=new Size(200,80)};
   types.Items.AddRange(new object[]{"Credit Card","Insurance Paid"});account.Controls.Add(types);
+  var action=new Button {Name="butAction",Text="Action",Location=new Point(250,290)};
+  action.Click+=(sender,e)=>{amount.Text="77.00";};account.Controls.Add(action);
   var popup=new Button {Name="butPopup",Text="Open fixture popup",Location=new Point(20,290),Size=new Size(200,35)};
   popup.Click+=(sender,e)=>{using(var child=new Form {Name="FormPayment",Text="Fixture Payment",Size=new Size(400,250)}){
    child.Controls.Add(new TextBox {Name="textCheckNum",Text="FIXTURE",Location=new Point(20,30)});

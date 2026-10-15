@@ -12,6 +12,9 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Fixture compilation failed'}
  . (Join-Path $windows 'uia-client.ps1')
  InitializeOdUia
+ Add-Type -AssemblyName System.Drawing
+ . (Join-Path $windows 'native-api.ps1')
+ . (Join-Path $windows 'window-actions.ps1')
  if($script:odProvider.backend -cne 'UIA3-COM'){throw 'Wrong backend'}
  $fixture=Start-Process -FilePath $exe -PassThru
  $handle=[IntPtr]::Zero
@@ -44,7 +47,12 @@ try{
  $pattern=$null
  if(-not $items[0].TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pattern)){throw 'SelectionItemPattern unavailable'}
  $pattern.Select();if(-not $pattern.Current.IsSelected){throw 'Selection verification failed'}
- (FindControl 'butPopup').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+ (FindControl 'butAction').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+ if($value.Current.Value -cne '77.00'){throw 'Nonmodal Invoke/readback failed'}
+ [void][OdNative]::SetForegroundWindow($handle)
+ Start-Sleep -Milliseconds 200
+ # Exercise the production click helper: a modal-opening Invoke can block the caller.
+ Click (FindControl 'butPopup') $main
  $popup=$null
  for($i=0;$i -lt 40;$i++){
   $found=@($main.FindAll($TS::Descendants,[System.Windows.Automation.PropertyCondition]::new($AE::AutomationIdProperty,'FormPayment')))
@@ -59,7 +67,7 @@ try{
  if($LASTEXITCODE -ne 0){throw ('Real adapter inspection failed: '+($raw -join "`n"))}
  $inspection=($raw -join "`n")|ConvertFrom-Json
  if(-not $inspection.ok -or $inspection.patNum -cne '99' -or -not $inspection.accountVisible){throw ('Bad adapter result: '+($raw -join "`n"))}
- Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns and full OD adapter inspect."
+ Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production modal click and full OD adapter inspect."
 }finally{
  if($fixture -and -not $fixture.HasExited){Stop-Process -Id $fixture.Id -Force}
  Remove-Item -LiteralPath $out -Recurse -Force -ErrorAction SilentlyContinue

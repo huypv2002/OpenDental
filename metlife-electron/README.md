@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.4
+# LUK MetLife Assistant 0.3.5
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -61,3 +61,13 @@ Chẩn đoán R5 0.3.3 đã tìm thấy đúng tiến trình/cửa sổ OD nhưn
 Đóng MetLife cũ, pull repo trên R5, vào `metlife-electron`, chạy `npm ci` rồi `npm start`. Nhấn Kiểm tra OD trước khi chạy Auto fill. Nếu chưa nhận ra, kiểm tra file window-discovery.json mới (có mục provider). Thay đổi này chỉ ở app R5; không cần cập nhật SERVER riêng cho lỗi provider.
 
 Nguồn: https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/register-a-client-side-provider-assembly và https://source.dot.net/UIAutomationClientSideProviders/MS/Internal/AutomationProxies/ProxyHwnd.cs.html
+
+## Bản 0.3.5 — UIA3 COM và kiểm thử Windows
+
+Thay managed UIAutomationClient/UIAutomationClientsideProviders bằng UIAComWrapper 1.1.0.14 (native UIA3 COM). Không gọi RegisterClientSideProviderAssembly và không bỏ kiểm tra FormOpenDental để chọn theo tiêu đề. Giữ các pattern/control checks và xác minh dữ liệu. DLL được ghim phiên bản, SHA-256 và license trong windows/uia3; có sẵn khi pull source, không cần Python hoặc .NET SDK trên R5. Kiểm tra hash trước khi nạp, xác nhận assembly đúng và thực sự tạo desktop COM object trước khi báo khởi tạo thành công. Lỗi khởi tạo cũng lưu chẩn đoán.
+
+Workflow Test MetLife Windows UI Automation chạy hai WinForms fixture x86/x64, kiểm tra native COM startup, form/control IDs, Value/Text/Selection/Invoke/Window patterns và gọi chính adapter PowerShell action inspect như Electron. Fixture là ứng dụng thử có tên/ID giống OD với dữ liệu giả; kết quả CI không thay thế nghiệm thu Open Dental thật trên R5. Test này chỉ thao tác fixture, không kết nối DB hoặc nhập tiền.
+
+Cập nhật source trên R5: đóng MetLife, git pull ở root repo, vào metlife-electron, npm ci, npm start; nhấn Kiểm tra OD. Không cần tải ZIP hoặc sửa SERVER cho lỗi UIA.
+
+Thư viện: https://github.com/TestStack/UIAComWrapper; package và hash cụ thể nằm trong windows/uia3/manifest.json. Các mục 0.3.3–0.3.4 phía trên là lịch sử; 0.3.4 đã gặp lỗi khởi tạo trên R5 và được thay thế.
