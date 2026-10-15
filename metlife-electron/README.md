@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.3
+# LUK MetLife Assistant 0.3.4
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -53,3 +53,11 @@ UI integration fixtures are supplied locally through `METLIFE_SAMPLE_PDF`; confi
 ## Bản 0.3.3 — nhận diện cửa sổ OD
 
 Tìm tiến trình OpenDental trong cùng phiên Windows, lấy cửa sổ bằng native handle và xác minh FormOpenDental qua UIA, kể cả form nằm dưới một root khác. Loại trùng handle và không tự chọn nếu có nhiều cửa sổ OD. Khôi phục cửa sổ chính đang thu nhỏ sau khi xác định duy nhất. Phân biệt không có tiến trình với tiến trình đang chạy nhưng UIA chưa đọc được. Lỗi discovery cũng lưu window-discovery.json trong thư mục od-diagnostics dưới userData. Đã kiểm tra cú pháp và policy bằng .NET; chưa xác minh native/UIA trên R5 thật. Cần thay toàn bộ app R5 để nhận bản vá này; cập nhật Bridge trên SERVER không thay adapter của app R5.
+
+## Bản 0.3.4 — đăng ký WinForms UIA provider
+
+Chẩn đoán R5 0.3.3 đã tìm thấy đúng tiến trình/cửa sổ OD nhưng AutomationId rỗng; capture R5 trước đây của cùng handle có FormOpenDental. Adapter đăng ký tường minh UIAutomationClientsideProviders trước mọi lookup UIA để đọc các ID/control WinForms bằng managed client. Vẫn xác minh FormOpenDental, không chọn chỉ bằng tiêu đề. File chẩn đoán bổ sung trạng thái đăng ký provider, assembly, bitness client, class/framework cửa sổ. Đây là bản sửa theo bằng chứng và tài liệu Microsoft, chưa xác nhận kết quả trên R5.
+
+Đóng MetLife cũ, pull repo trên R5, vào `metlife-electron`, chạy `npm ci` rồi `npm start`. Nhấn Kiểm tra OD trước khi chạy Auto fill. Nếu chưa nhận ra, kiểm tra file window-discovery.json mới (có mục provider). Thay đổi này chỉ ở app R5; không cần cập nhật SERVER riêng cho lỗi provider.
+
+Nguồn: https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/register-a-client-side-provider-assembly và https://source.dot.net/UIAutomationClientSideProviders/MS/Internal/AutomationProxies/ProxyHwnd.cs.html

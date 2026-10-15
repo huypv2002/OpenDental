@@ -32,7 +32,7 @@ function FindOdMain {
   try{
    $root=$AE::FromHandle([IntPtr]$handle)
    $info=$root.Current
-   $script:odDiscovery.windows+=@{handle=[string]$handle;processId=$info.ProcessId;id=$info.AutomationId;title=$info.Name;offscreen=$info.IsOffscreen;minimized=[OdNative]::IsIconic([IntPtr]$handle)}
+   $script:odDiscovery.windows+=@{handle=[string]$handle;processId=$info.ProcessId;id=$info.AutomationId;title=$info.Name;className=$info.ClassName;frameworkId=$info.FrameworkId;offscreen=$info.IsOffscreen;minimized=[OdNative]::IsIconic([IntPtr]$handle)}
    if($info.ProcessId -notin $processIds){continue}
    $forms=@($root)
    if($info.AutomationId -cne 'FormOpenDental'){

@@ -119,6 +119,18 @@ $paymentHandle=$null
 $automationStarted=$false
 try{
  $request=[Console]::In.ReadToEnd()|ConvertFrom-Json
+ # PowerShell does not reliably load the managed Win32/WinForms proxies automatically.
+ # Register before the first AutomationElement lookup, including discovery by HWND.
+ $script:odProvider=@{registered=$false;error=$null;assembly=$null;clientBits=([IntPtr]::Size*8)}
+ try{
+  $providerAssembly=[Reflection.Assembly]::Load('UIAutomationClientsideProviders, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
+  [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($providerAssembly.GetName())
+  $script:odProvider.registered=$true
+  $script:odProvider.assembly=$providerAssembly.FullName
+ }catch{
+  $script:odProvider.error=$_.Exception.Message
+  throw ('Không khởi tạo được UI Automation provider cho WinForms: '+$script:odProvider.error)
+ }
  $main=FindOdMain
  if([OdNative]::IsIconic([IntPtr]$main.Current.NativeWindowHandle)){
   [void][OdNative]::ShowWindow([IntPtr]$main.Current.NativeWindowHandle,9)
@@ -224,7 +236,7 @@ try{
   if($request.diagnosticDir){
    $diagnosticFolder=Join-Path ([string]$request.diagnosticDir) ([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N'))
    [void][IO.Directory]::CreateDirectory($diagnosticFolder)
-   @{error=$message;discovery=$script:odDiscovery}|ConvertTo-Json -Depth 7|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'window-discovery.json') -Encoding UTF8
+   @{error=$message;provider=$script:odProvider;discovery=$script:odDiscovery}|ConvertTo-Json -Depth 7|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'window-discovery.json') -Encoding UTF8
   }
   if($diagnosticFolder -and $main){
    $nodes=@(Elements $main|ForEach-Object{@{id=$_.Current.AutomationId;name=$_.Current.Name;type=$_.Current.ControlType.ProgrammaticName;enabled=$_.Current.IsEnabled;offscreen=$_.Current.IsOffscreen;rect=$_.Current.BoundingRectangle.ToString()}})
