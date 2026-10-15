@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.12
+# LUK MetLife Assistant 0.3.13
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -140,3 +140,11 @@ Bỏ giả định Date phải là ô số 0 của các đường chia được 
 Fixture thêm viền ngoài tại x=3 để làm lệch chỉ số, vẫn phải chọn đúng hai răng khác nhau và chạy Add Partials; policy có cả trường hợp viền ngoài và thiếu đường chia bên trong. Khi geometry vẫn không khớp, lỗi ghi header/edges/cells và lưu riêng `outstanding-columns.json` trong thư mục chẩn đoán hiện có. File chỉ chứa tiêu đề và tọa độ cột, không chứa các dòng bệnh nhân. Điều này giúp phân biệt thêm viền ngoài, mất đường chia hoặc OCR khác thay vì tiếp tục suy từ thông báo chung. Ảnh thông báo R5 trước đó chưa đủ chứng minh nguyên nhân thực tế là viền ngoài; cần chạy lại hoặc xem dữ liệu chẩn đoán để xác nhận.
 
 Kiểm chứng 0.3.12: [Windows CI 38788379422](https://github.com/huypv2002/OpenDental/actions/runs/38788379422) pass x86/x64, gồm viền ngoài trong grid và Add Partials; 20 app tests mỗi job và policy tại máy phát triển pass. Chưa xác nhận lỗi geometry thực tế trên R5 đã hết.
+
+## Bản 0.3.13 — luôn bật Show All Charges; xử lý log R5 thiếu đường chia
+
+Show All Charges là điều kiện bắt buộc sau Delete All, trước mọi lần đọc/chọn Outstanding Charges. Dùng TogglePattern nếu có; với checkbox OD tự vẽ, xác định ô vuông và trạng thái dấu tích qua ảnh control. Chưa tích thì click đúng một lần và đọc lại On; đã tích thì không click; không nhận diện chắc chắn thì dừng, không toggle mù. Bỏ cách bật/tắt khi dò thấy thiếu procedure. Regression có ảnh ô vuông tích/chưa tích từ R5 (không chứa dữ liệu bệnh nhân), kiểm tra gọi lặp không bỏ tích và trạng thái ảnh lạ phải bị từ chối.
+
+Log thực tế R5 cho biết chỉ phát hiện edges [905,1503] trong khi OCR đã đọc đầy đủ Date/Patient/Prov/Code/Tth/Type. Nếu không có đủ đường chia, bộ đọc mới chỉ dùng cách dựa trên OCR khi đủ các tiêu đề duy nhất, đúng thứ tự và không chồng lấn; đọc răng trong vùng cột đã xác minh, rồi vẫn kiểm tra toàn bộ danh tính từng procedure. Không suy đoán hoặc tự bổ sung chữ Tth nếu thiếu. Khi cả hai cách không đạt, lưu dữ liệu chẩn đoán và dừng. Policy tái hiện đúng tọa độ header từ log với các dòng giả lập cùng code khác răng để kiểm tra chọn đúng.
+
+Kiểm chứng 0.3.13: [Windows CI 38798757742](https://github.com/huypv2002/OpenDental/actions/runs/38798757742) pass x86/x64, 20 app tests mỗi job. Runtime kiểm tra ảnh checkbox R5 tích/chưa tích, idempotence (không bấm lại khi On), trạng thái lạ bị từ chối, luồng grid thiếu đường chia dùng OCR anchors và Add Partials, giữ nguyên cảnh báo số dư âm. Policy với chính tọa độ header từ log R5 đã pass tại máy phát triển. Chưa chạy lại bản này trên OD thật tại R5.
