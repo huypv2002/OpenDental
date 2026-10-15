@@ -148,7 +148,7 @@ async function call(op,arg){
    const result=await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'fill-preview',draft});
    activeDraft={...draft,windowHandle:result.windowHandle};workspace.preview={id,amount:draft.amount,paymentType:draft.paymentType,paymentTypeApplied:result.paymentTypeApplied,at:new Date().toISOString()};
    await audit('preview-filled',{hash:draft.sha256,saveInvoked:false});
-   status.message=result.paymentTypeApplied?'Đã điền bản nháp OD và chọn Payment Type. Kiểm tra Splits; chưa Save.':`Đã điền bản nháp. Chưa chọn được ${draft.paymentType} qua UI Automation; chọn Payment Type trên OD và kiểm tra Splits.`;break;
+   status.message=result.paymentTypeApplied?'Đã lọc bệnh nhân, xóa Splits của draft và phân bổ bằng Add Partials; tổng khớp PDF. Giữ Payment mở để kiểm tra; chưa Save.':`Đã điền bản nháp. Chưa chọn được ${draft.paymentType} qua UI Automation; chọn Payment Type trên OD và kiểm tra Splits.`;break;
   }
   case 'save-payment':{
    if(activeDraft||pendingSave)throw new Error('Còn bản nháp hoặc lượt ghi chưa xác minh. Hoàn tất lượt trước.');

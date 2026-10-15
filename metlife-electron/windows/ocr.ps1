@@ -74,19 +74,16 @@ function SelectedText($control,$main){
  $r=$control.Current.BoundingRectangle;$b=[System.Drawing.Bitmap]::new([int]$r.Width,[int]$r.Height);$g=[System.Drawing.Graphics]::FromImage($b)
  try{
   AssertFocus $main;$g.CopyFromScreen([int]$r.Left,[int]$r.Top,0,0,$b.Size)
-  $ys=@()
-  for($y=1;$y -lt $b.Height-1;$y++){
-   $hits=0;$n=0
-   for($x=3;$x -lt $b.Width-18;$x+=5){$c=$b.GetPixel($x,$y);$n++;if(($c.B-$c.R -gt 15 -and $c.B -gt 120 -and $c.R -lt 225) -or ($c.R -ge 140 -and $c.R -le 215 -and [Math]::Abs($c.R-$c.G) -lt 15 -and $c.B-$c.R -ge 0 -and $c.B-$c.R -lt 35)){$hits++}}
-   if($n -gt 0 -and $hits/$n -gt 0.62){$ys+=$y}
-  }
-  if($ys.Count -eq 0){throw 'Could not verify selection highlight'}
-  # OCR only the selected band: full-list OCR may omit short/highlighted labels.
-  $first=[int]$ys[0];$last=[int]$ys[-1]
-  if($last-$first+1 -ne $ys.Count){throw 'Selection highlight has multiple bands'}
-  $band=[pscustomobject]@{Left=$r.Left;Top=$r.Top+$first;Width=$r.Width;Height=$last-$first+1}
+  # Glyphs interrupt the background samples inside one selected row; the list's
+  # thin grey borders also match the colour. Group small internal gaps and reject
+  # thin runs before deciding whether there are genuinely multiple selected rows.
+  $bands=@([OdNative]::SelectionBands($b))
+  if($bands.Count -eq 0){throw 'Could not verify selection highlight'}
+  if($bands.Count -ne 1){throw ('Selection highlight has multiple substantial bands: '+($bands|ConvertTo-Json -Compress))}
+  $selectedBand=$bands[0]
+  $band=[pscustomobject]@{Left=$r.Left;Top=$r.Top+$selectedBand.Top;Width=$r.Width;Height=$selectedBand.Height}
   $selected=@(OcrRows $control $main $band)
-  if($selected.Count -ne 1){throw ('Selection highlight does not identify one OCR line: '+(@{rows=$selected;highlightY=$ys}|ConvertTo-Json -Depth 6 -Compress))}
+  if($selected.Count -ne 1){throw ('Selection highlight does not identify one OCR line: '+(@{rows=$selected;highlightBands=$bands}|ConvertTo-Json -Depth 6 -Compress))}
   return [string]$selected[0].text
  }finally{$g.Dispose();$b.Dispose()}
 }

@@ -66,6 +66,7 @@ $opened=$null
 $saveInvoked=$false
 $paymentHandle=$null
 $automationStarted=$false
+$script:odStage=$null
 try{
  $main=FindOdMain
  if([OdNative]::IsIconic([IntPtr]$main.Current.NativeWindowHandle)){
@@ -160,8 +161,10 @@ try{
  SetValue $payment 'textDate' $date $main
  SetValue $payment 'textCheckNum' ([string]$request.draft.checkNum) $main
  SetValue $payment 'textNote' ([string]$request.draft.note) $main
+ $script:odStage='Đọc lại Payment Type Insurance Paid'
  SetListExact (ById $payment 'listPayType') ([string]$request.draft.paymentType) $main
  AllocatePayment $payment $request.draft $main
+ $script:odStage='Kiểm tra chi tiết Splits'
  VerifySplits $payment $request.draft $main
  $payment=WaitOnly $main 'FormPayment'
  AssertPayment $payment $request.draft $main
@@ -169,6 +172,7 @@ try{
  @{ok=$true;patNum=$pat;previewOpen=$true;windowHandle=$paymentHandle;saveInvoked=$false;amount=[string]$request.draft.amount;paymentTypeApplied=$true;splitsApplied=$true;requiresReview=@()}|ConvertTo-Json -Depth 4 -Compress
 }catch{
  $message=$_.Exception.Message
+ if($script:odStage){$message='Bước '+$script:odStage+': '+$message}
  $diagnosticFolder=$null
  try{
   if($request.diagnosticDir){

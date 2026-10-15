@@ -18,6 +18,7 @@ function ProcessPopup($main,[string]$id){
  return $null
 }
 function SetComboExact($payment,[string]$id,[string]$wanted,$main){
+ $script:odStage='Chọn '+$id+' / '+$wanted
  $combo=ById $payment $id
  # Always inspect the expanded options, even if the collapsed caption already matches:
  # two family members may have the same first/preferred name.
@@ -115,6 +116,7 @@ function AllocatePayment($payment,$draft,$main){
  SetComboExact $payment 'comboPatientPaySplitsFilter' 'All' $main
  SetComboExact $payment 'comboProviderPaySplitsFilter' 'All' $main
  SetComboExact $payment 'comboGroupBy' 'None' $main
+ $script:odStage='Delete All Splits của draft'
  Click (ById $payment 'butClear') $main
  Start-Sleep -Milliseconds 300
  $payment=WaitOnly $main 'FormPayment'
@@ -131,7 +133,9 @@ function AllocatePayment($payment,$draft,$main){
   Click (ById $payment 'checkShowAll') $main
   Start-Sleep -Milliseconds 300
  }
+ $script:odStage='Chọn dịch vụ Outstanding Charges'
  $targets=@(SelectChargeRows $grid $draft $main)
+ $script:odStage='Add Partials'
  Click (ById $payment 'butCreatePartial') $main
  foreach($target in $targets){
   # OD iterates the selected grid rows in display order. Verify every amount dialog's code.

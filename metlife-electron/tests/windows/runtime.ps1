@@ -19,6 +19,7 @@ try{
  . (Join-Path $windows 'window-actions.ps1')
  if($script:odProvider.backend -cne 'UIA3-COM'){throw 'Wrong backend'}
  [IO.File]::WriteAllText($exe+'.config','<configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" /></startup></configuration>')
+ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/payment-type-r5.png') -Destination (Join-Path $out 'payment-type-r5.png')
  $fixture=Start-Process -FilePath $exe -PassThru
  $handle=[IntPtr]::Zero
  for($i=0;$i -lt 200;$i++){
@@ -68,6 +69,20 @@ try{
  . (Join-Path $windows 'ocr.ps1')
  . (Join-Path $windows 'workflow.ps1')
  function Elements($element){@($element.FindAll($TS::Descendants,$TC))}
+ # Regression from the user's real OD Payment Type crop (labels only, no patient data).
+ $captured=[Drawing.Bitmap]::new((Join-Path $PSScriptRoot 'fixtures/payment-type-r5.png'))
+ try{
+  $bands=@([OdNative]::SelectionBands($captured))
+  if($bands.Count -ne 1 -or $bands[0].Top -ne 112 -or $bands[0].Bottom -ne 134){throw ('Real R5 highlight segmentation failed: '+($bands|ConvertTo-Json -Compress))}
+ }finally{$captured.Dispose()}
+ if((ListKey (SelectedText (FindControl 'listCapturedPayType') $main)) -cne 'INSURANCE PAID'){throw 'Real R5 highlighted Payment Type OCR failed'}
+ $multiple=[Drawing.Bitmap]::new(200,100);$paint=[Drawing.Graphics]::FromImage($multiple)
+ try{
+  $paint.Clear([Drawing.Color]::White)
+  $brush=[Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(175,195,215))
+  try{$paint.FillRectangle($brush,1,15,198,20);$paint.FillRectangle($brush,1,60,198,20)}finally{$brush.Dispose()}
+  if(@([OdNative]::SelectionBands($multiple)).Count -ne 2){throw 'Two genuinely separate selections were merged'}
+ }finally{$paint.Dispose();$multiple.Dispose()}
  $painted=FindControl 'listCustomPayType'
  if(@(Elements $painted|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::ListItem}).Count -ne 0){throw 'Painted fixture unexpectedly exposes standard ListItems'}
  SetListExact $painted 'Insurance Paid' $main

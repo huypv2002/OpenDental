@@ -121,6 +121,9 @@ public class Fixture : Form {
   var types=new ListBox {Name="listPayType",Location=new Point(20,180),Size=new Size(200,80)};
   types.Items.AddRange(new object[]{"Credit Card","Insurance Paid"});account.Controls.Add(types);
   var painted=new PaintedChoices {Name="listCustomPayType",Location=new Point(400,30),Size=new Size(260,134)};account.Controls.Add(painted);
+  var capturedImage=Image.FromFile(System.IO.Path.Combine(Application.StartupPath,"payment-type-r5.png"));
+  var capturedList=new PictureBox{Name="listCapturedPayType",Image=capturedImage,Location=new Point(680,25),Size=capturedImage.Size};account.Controls.Add(capturedList);
+  FormClosed+=(sender,e)=>capturedImage.Dispose();
   var selection=new TextBox {Name="textPaintedSelection",ReadOnly=true,Location=new Point(400,180),Width=260};account.Controls.Add(selection);
   var timer=new Timer {Interval=50};timer.Tick+=(sender,e)=>{selection.Text=painted.SelectedLabel;};timer.Start();
   var accountGrid=new AccountGrid {Name="gridAccount",Location=new Point(5,350),Size=new Size(850,180)};account.Controls.Add(accountGrid);
