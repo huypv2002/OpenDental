@@ -14,13 +14,13 @@ function AwaitWinRT($operation,[Type]$resultType){
  if(-not $task.Wait(10000)){throw 'Windows OCR timed out'}
  return $task.GetAwaiter().GetResult()
 }
-function OcrControl($element,$main,$cropRect=$null){
+function OcrControl($element,$main,$cropRect=$null,[bool]$normalize=$true){
  AssertFocus $main
  $r=if($cropRect){$cropRect}else{$element.Current.BoundingRectangle}
  if($r.Width -le 2 -or $r.Height -le 2 -or $element.Current.IsOffscreen){throw 'OCR target not visible'}
  $file=Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString()+'.png')
  $bitmap=[System.Drawing.Bitmap]::new([int]$r.Width,[int]$r.Height);$g=[System.Drawing.Graphics]::FromImage($bitmap)
- $scaleLimit=if($cropRect -and $r.Height -lt 150){6}else{3}
+ $scaleLimit=if($cropRect -and $normalize -and $r.Height -lt 150){6}else{3}
  $scale=[Math]::Max(1,[Math]::Min($scaleLimit,[Math]::Floor(4000/[Math]::Max($r.Width,$r.Height))))
  $padding=if($cropRect){4}else{0}
  $prepared=$null;$pg=$null
@@ -28,7 +28,7 @@ function OcrControl($element,$main,$cropRect=$null){
   $g.CopyFromScreen([int]$r.Left,[int]$r.Top,0,0,$bitmap.Size)
   # OD's grey/blue selection can make Windows OCR omit the selected label entirely.
   # Normalize light backgrounds while preserving dark glyphs, then enlarge small text.
-  if($cropRect){[OdNative]::NormalizeOcr($bitmap)}
+  if($cropRect -and $normalize){[OdNative]::NormalizeOcr($bitmap)}
   $prepared=[Drawing.Bitmap]::new([int](($bitmap.Width+2*$padding)*$scale),[int](($bitmap.Height+2*$padding)*$scale))
   $pg=[Drawing.Graphics]::FromImage($prepared)
   $pg.InterpolationMode=[Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
@@ -86,15 +86,25 @@ function SelectedText($control,$main){
   $margin=[Math]::Max(2,[Math]::Round($selectedBand.Height*0.12))
   $top=[Math]::Max(0,$selectedBand.Top-$margin);$bottom=[Math]::Min($r.Height,$selectedBand.Bottom+$margin)
   $band=[pscustomobject]@{Left=$r.Left;Top=$r.Top+$top;Width=$r.Width;Height=$bottom-$top}
-  $selected=@(OcrRows $control $main $band)
+  # Remote-display antialiasing can lose glyphs when thresholded. Prefer raw
+  # colour OCR; normalize only if necessary, then try the full-list row at the
+  # independently verified highlight position. Every path must identify one row.
+  $selected=@(OcrRows $control $main $band $false)
+  if($selected.Count -ne 1){$selected=@(OcrRows $control $main $band)}
+  if($selected.Count -ne 1){
+   $selected=@(OcrRows $control $main|Where-Object{
+    $cy=$_.y+$_.height/2
+    $cy -ge $r.Top+$selectedBand.Top -and $cy -le $r.Top+$selectedBand.Bottom
+   })
+  }
   if($selected.Count -ne 1){throw ('Selection highlight does not identify one OCR line: '+(@{rows=$selected;highlightBands=$bands}|ConvertTo-Json -Depth 6 -Compress))}
   return [string]$selected[0].text
  }finally{$g.Dispose();$b.Dispose()}
 }
 
-function OcrRows($element,$main,$cropRect=$null){
+function OcrRows($element,$main,$cropRect=$null,[bool]$normalize=$true){
  # OCR may split a table row into one line per column. Merge by vertical alignment.
- $lines=@(OcrControl $element $main $cropRect|Sort-Object { [double]$_.y },{ [double]$_.x });$rows=[Collections.Generic.List[object]]::new()
+ $lines=@(OcrControl $element $main $cropRect $normalize|Sort-Object { [double]$_.y },{ [double]$_.x });$rows=[Collections.Generic.List[object]]::new()
  foreach($line in $lines){
   $cy=$line.y+$line.height/2;$match=$null
   foreach($row in $rows){if([Math]::Abs($row.cy-$cy) -le [Math]::Max(3,$line.height*0.35)){$match=$row;break}}
