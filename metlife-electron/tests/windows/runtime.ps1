@@ -23,7 +23,7 @@ try{
   $fixture.Refresh();$handle=$fixture.MainWindowHandle
   if($handle -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 100
  }
- if($handle -eq [IntPtr]::Zero){throw 'Fixture did not create a native window'}
+ if($handle -eq [IntPtr]::Zero){$details=if(Test-Path ($exe+'.error.txt')){Get-Content -Raw ($exe+'.error.txt')}else{'No fixture exception log'};throw ('Fixture did not create a native window: '+$details)}
  $AE=[System.Windows.Automation.AutomationElement]
  $TS=[System.Windows.Automation.TreeScope]
  $TC=[System.Windows.Automation.Condition]::TrueCondition

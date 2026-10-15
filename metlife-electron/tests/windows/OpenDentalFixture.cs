@@ -41,5 +41,9 @@ public class Fixture : Form {
    child.ShowDialog(this);
   }};account.Controls.Add(popup);
  }
- [STAThread] public static void Main(){Application.EnableVisualStyles();Application.Run(new Fixture());}
+ [STAThread] public static void Main(){
+  Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+  try{Application.EnableVisualStyles();Application.Run(new Fixture());}
+  catch(Exception error){System.IO.File.WriteAllText(Application.ExecutablePath+".error.txt",error.ToString());Environment.Exit(1);}
+ }
 }
