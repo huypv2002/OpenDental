@@ -1,4 +1,4 @@
-# Build only the newly opened Payment draft using Outstanding Charges / Add Partials.
+﻿# Build only the newly opened Payment draft using Outstanding Charges / Add Partials.
 function ControlText($control,$main){
  try{$value=(ReadValue $control).Trim();if($value){return $value}}catch{}
  $raw=@(OcrRows $control $main)
