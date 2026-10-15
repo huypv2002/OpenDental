@@ -5,6 +5,7 @@ $windows=Join-Path $root 'windows'
 $out=Join-Path $env:TEMP ('metlife-uia-test-'+[Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($out)
 $fixture=$null
+$second=$null
 try{
  $exe=Join-Path $out ('OpenDentalFixture'+$FixtureArchitecture+'.exe')
  $compiler=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
@@ -62,13 +63,23 @@ try{
  $popup.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
  Start-Sleep -Milliseconds 200
  # Execute the same full adapter and child PowerShell process used by Electron.
- $powershell=[Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
- $raw='{"action":"inspect"}'|& $powershell -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File (Join-Path $windows 'od-automation.ps1')
+ $invoke=Join-Path $PSScriptRoot 'invoke-adapter.cjs'
+ $raw=& node $invoke $out
  if($LASTEXITCODE -ne 0){throw ('Real adapter inspection failed: '+($raw -join "`n"))}
  $inspection=($raw -join "`n")|ConvertFrom-Json
  if(-not $inspection.ok -or $inspection.patNum -cne '99' -or -not $inspection.accountVisible){throw ('Bad adapter result: '+($raw -join "`n"))}
- Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production modal click and full OD adapter inspect."
+ $second=Start-Process -FilePath $exe -PassThru
+ for($i=0;$i -lt 80;$i++){
+  $second.Refresh();if($second.MainWindowHandle -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 100
+ }
+ if($second.MainWindowHandle -eq [IntPtr]::Zero){throw 'Second fixture did not start'}
+ $raw=& node $invoke $out
+ if($LASTEXITCODE -ne 1){throw 'Adapter did not refuse two OD main windows'}
+ $ambiguous=($raw -join "`n")|ConvertFrom-Json
+ if($ambiguous.ok -or $ambiguous.error -notlike '*2*' -or -not (Test-Path (Join-Path $ambiguous.diagnosticFolder 'window-discovery.json'))){throw ('Bad ambiguity/diagnostics response: '+($raw -join "`n"))}
+ Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production modal click and full Node-to-PowerShell OD adapter inspect, two-window refusal and saved diagnostics."
 }finally{
+ if($second -and -not $second.HasExited){Stop-Process -Id $second.Id -Force}
  if($fixture -and -not $fixture.HasExited){Stop-Process -Id $fixture.Id -Force}
  Remove-Item -LiteralPath $out -Recurse -Force -ErrorAction SilentlyContinue
 }
