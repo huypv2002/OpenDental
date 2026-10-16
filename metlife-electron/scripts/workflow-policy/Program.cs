@@ -19,6 +19,25 @@ $splitBody=@{text='DOC 00120 00120 Proc 86.40';y=40;words=@(
  @{text='DOC';x=0;width=28},@{text='00120';x=70;width=45},@{text='00120';x=240;width=40},@{text='Proc';x=320;width=35},@{text='86.40';x=470;width=45})}
 $normalized=@(NormalizeSplitCodes @($splitHeader,$splitBody))
 if($normalized[1].text -cne 'DOC 00120 D0120 Proc 86.40'){throw 'Split OCR correction escaped the Code column'}
+# Exact OCR evidence may come from two renderings, but must remain in one cell/row.
+$script:odOutstandingRead=@{}
+$evidenceRow=@{date='09/20/2026';patient='TEST, RYAN';provider='ooc';code='D0120';tooth='';y=600;height=10;x=1180}
+$rawColumns=@{};$normalizedColumns=@{}
+foreach($name in @('Date','Patient','Prov','Code','Tooth')){
+ $rawValue=@{Date='09/20/2026';Patient='TEST, RYAN';Prov='ooc';Code='00120';Tooth=''}[$name]
+ $normalValue=@{Date='09/20/2026';Patient='TEST: RYAN';Prov='DOC';Code=')0120';Tooth=''}[$name]
+ $rawColumns[$name]=if($rawValue){@(@{text=$rawValue;y=600;height=10})}else{@()}
+ $normalizedColumns[$name]=if($normalValue){@(@{text=$normalValue;y=600;height=10})}else{@()}
+}
+$evidenceDraft=@{splitPatientName='TEST, RYAN';splits=@(@{code='D0120';date='2026-09-20';providerAbbr='DOC';tooth=''})}
+$attempts=@(@{columns=$rawColumns},@{columns=$normalizedColumns})
+if(@(MatchChargeEvidence @($evidenceRow) $attempts $evidenceDraft).Count -ne 1){throw 'Same-cell exact OCR evidence was lost'}
+$normalizedColumns.Prov=@(@{text='DOC';y=620;height=10})
+$caught=$false;try{MatchChargeEvidence @($evidenceRow) $attempts $evidenceDraft}catch{$caught=$true}
+if(-not $caught){throw 'Provider from another physical row was accepted'}
+$normalizedColumns.Prov=@(@{text='OOC';y=600;height=10})
+$caught=$false;try{MatchChargeEvidence @($evidenceRow) $attempts $evidenceDraft}catch{$caught=$true}
+if(-not $caught){throw 'Provider spelling was guessed'}
 $same=@{handle=100;processId=20;id='FormOpenDental';element='correct'}
 if((SelectOdMain @($same,$same)) -cne 'correct'){throw 'Duplicate native/UIA handle was not deduplicated'}
 $cases=@(
