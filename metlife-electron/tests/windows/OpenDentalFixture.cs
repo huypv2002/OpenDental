@@ -33,6 +33,13 @@ public class AccountGrid : Control {
  public string Selection {get{return string.Join(",",selected);}}
  public int[] SelectedRows {get{var result=new int[selected.Count];selected.CopyTo(result);return result;}}
  public string CodeAt(int row){return rows[row][3];}
+ public void UseR5Rows(){
+  string[] codes={"D0330","D0274","D1110","D1208","D0120","D0220","D0210","D0230"};
+  string[] teeth={"","","","","","8","","24"};
+  string[] amounts={"0.00","0.00","108.00","45.00","86.40","0.00","199.80","0.00"};
+  rows=new string[codes.Length][];
+  for(int i=0;i<codes.Length;i++)rows[i]=new[]{"09/20/2026","TEST, RYAN","DOC",codes[i],teeth[i],"Proc",amounts[i]};
+ }
  public bool ShowAll=true,NoDividers=false,Compact=false;bool chargesMode;
  int RowTop {get{return Compact?18:30;}} int RowHeight {get{return Compact?14:32;}}
  public AccountGrid(bool charges=false){chargesMode=charges;if(charges){x=new[]{4,130,315,385,465,515,780};foreach(var row in rows)row[1]=row[1]=="RYAN"?"TEST, RYAN":"TEST, OTHER";}SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);TabStop=true;Font=new Font("Segoe UI",10);}
@@ -120,11 +127,11 @@ public class AllocationPayment : Form {
   Controls.Add(new PaintedCombo(new[]{"All","DOC"},"DOC"){Name="comboProviderPaySplitsFilter",Location=new Point(180,20),Size=new Size(160,25)});
   Controls.Add(new PaintedCombo(new[]{"None","Patient"},"Patient"){Name="comboGroupBy",Location=new Point(740,20),Size=new Size(180,25)});
   var all=new PaintedCheck{Checked=warn,Name="checkShowAll",Location=new Point(550,60),Size=new Size(200,24)};Controls.Add(all);
-  var grid=new AccountGrid(true){Compact=compact,NoDividers=warn,ShowAll=warn,Name="gridCharges",Location=new Point(5,120),Size=new Size(compact?598:970,180)};Controls.Add(grid);if(compact)grid.Font=new Font("Arial",8,FontStyle.Regular,GraphicsUnit.Point);
+  var grid=new AccountGrid(true){Compact=compact,NoDividers=warn,ShowAll=warn,Name="gridCharges",Location=new Point(5,120),Size=new Size(compact?598:970,180)};Controls.Add(grid);if(compact){grid.Font=new Font("Arial",8,FontStyle.Regular,GraphicsUnit.Point);grid.UseR5Rows();}
   var clicks=new TextBox{Name="textShowAllClicks",Text="0",Location=new Point(650,440)};Controls.Add(clicks);
   all.Changed+=()=>{clicks.Text=(int.Parse(clicks.Text)+1).ToString();grid.ShowAll=all.Checked;grid.Invalidate();};
   var splits=new SplitGrid{Name="gridSplits",Location=new Point(10,330),Size=new Size(600,180)};Controls.Add(splits);
-  Controls.Add(new TextBox{Name="textAmount",Text="236.40",Location=new Point(650,480)});
+  Controls.Add(new TextBox{Name="textAmount",Text=compact?"439.20":"236.40",Location=new Point(650,480)});
   Controls.Add(new TextBox{Name="textDate",Text="09/24/2026",Location=new Point(650,510)});
   Controls.Add(new TextBox{Name="textCheckNum",Text="SYNTHETIC",Location=new Point(760,510)});
   Controls.Add(new TextBox{Name="textNote",Text="group number :TEST",Location=new Point(650,580)});
