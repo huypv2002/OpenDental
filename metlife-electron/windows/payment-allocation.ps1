@@ -240,6 +240,44 @@ function ReadChargeCells($grid,$main,[bool]$normalize=$false){
  $script:odOutstandingRead.columnRows=$rows
  return $rows
 }
+function MatchChargeEvidence($rows,$attempts,$draft){
+ $targets=@();$evidence=@()
+ foreach($split in $draft.splits){
+  $found=@()
+  foreach($row in $rows){
+   $cy=$row.y+$row.height/2;$values=@{};$verified=$true
+   $expected=@{Date=[string]$split.date;Patient=[string]$draft.splitPatientName;Prov=[string]$split.providerAbbr;Code=[string]$split.code;Tooth=[string]$split.tooth}
+   foreach($name in @('Date','Patient','Prov','Code','Tooth')){
+    $observed=@()
+    foreach($attempt in $attempts){
+     $parts=@($attempt.columns[$name]|Where-Object{[Math]::Abs(($_.y+$_.height/2)-$cy) -le 3})
+     if($parts.Count -eq 0 -and $name -ceq 'Tooth'){$observed+=,''}
+     elseif($parts.Count -eq 1){$observed+=[string]$parts[0].text.Trim()}
+    }
+    $exact=@($observed|Where-Object{
+     $value=$_
+     if($name -ceq 'Code' -and $value -cmatch '^0[0-9]{4}$'){$value='D'+$value.Substring(1)}
+     if($name -ceq 'Date'){DateEquals $value $expected[$name]}
+     else{(ListKey $value) -ceq (ListKey $expected[$name])}
+    })
+    $values[$name]=$observed
+    if($exact.Count -eq 0){$verified=$false}
+   }
+   $evidence+=@{y=$row.y;expected=$expected;observed=$values;matched=$verified}
+   if($verified){
+    # Every field must have an exact OCR observation in this same physical cell.
+    # No spelling substitution (e.g. ooc -> DOC), cross-row join, or dropped check.
+    $confirmed=$row.Clone();$confirmed.patient=$expected.Patient;$confirmed.provider=$expected.Prov;$confirmed.code=$expected.Code;$confirmed.tooth=$expected.Tooth
+    $found+=@{row=$confirmed;split=$split}
+   }
+  }
+  if($found.Count -ne 1){$script:odOutstandingRead.cellEvidence=$evidence;throw ('Outstanding procedure missing or ambiguous: '+$split.code+' / '+$split.date+' / tooth '+$split.tooth+'. Exact same-cell OCR verification failed; inspect outstanding-read.json.')}
+  if(@($targets|Where-Object{$_.row.y -eq $found[0].row.y}).Count){throw 'Two PDF procedures map to one Outstanding row'}
+  $targets+=$found[0]
+ }
+ $script:odOutstandingRead.cellEvidence=$evidence
+ return @($targets|Sort-Object { [double]$_.row.y })
+}
 function ResolveChargeTargets($grid,$draft,$main){
  $rows=@(ReadChargeRows $grid $main)
  try{$targets=@(MatchChargeRows $rows $draft)}catch{
@@ -251,7 +289,10 @@ function ResolveChargeTargets($grid,$draft,$main){
    try{$targets=@(MatchChargeRows $rows $draft);$matched=$true;break}catch{$lastError=$_}
   }
   $script:odOutstandingRead.columnAttempts=$attempts
-  if(-not $matched){throw $lastError}
+  if(-not $matched){
+   $rows=@($attempts[0].rows)
+   $targets=@(MatchChargeEvidence $rows $attempts $draft)
+  }
  }
  return @{rows=$rows;targets=$targets}
 }
