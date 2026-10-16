@@ -135,9 +135,34 @@ function AssertPayment($payment,$draft,$main){
  if([decimal](ReadValue (ById $payment 'textSplitTotal')) -ne [decimal]$draft.amount){throw 'Split total changed before Save'}
  if((SelectedText (ById $payment 'listPayType') $main ([string]$draft.paymentType)).Trim() -ine ([string]$draft.paymentType).Trim()){throw 'Payment Type readback mismatch before Save'}
 }
+function NormalizeSplitCodes($lines){
+ # Windows OCR reads D as 0 in small OD code cells. Normalize only a complete
+ # five-character CDT token inside the uniquely identified Code column.
+ $headers=@($lines|Where-Object{$_.text -match '\bProv\b' -and $_.text -match '\bPatient\b' -and $_.text -match '\bCode\b' -and $_.text -match '\bAmount\b'})
+ if($headers.Count -ne 1){return $lines}
+ $anchors=@{}
+ foreach($name in @('Patient','Code','Type')){
+  $words=@($headers[0].words|Where-Object{$_.text -ceq $name})
+  if($words.Count -ne 1){return $lines}
+  $anchors[$name]=$words[0].x+$words[0].width/2
+ }
+ if($anchors.Patient -ge $anchors.Code -or $anchors.Code -ge $anchors.Type){return $lines}
+ $left=($anchors.Patient+$anchors.Code)/2;$right=($anchors.Code+$anchors.Type)/2
+ return @($lines|ForEach-Object{
+  $line=$_
+  if($line.y -gt $headers[0].y){
+   $codes=@($line.words|Where-Object{$_.text -cmatch '^0[0-9]{4}$' -and $_.x+$_.width/2 -gt $left -and $_.x+$_.width/2 -lt $right})
+   if($codes.Count -eq 1){
+    $line=$line.Clone();$word=$codes[0]
+    $line.text=(@($line.words|ForEach-Object{if([object]::ReferenceEquals($_,$word)){'D'+$_.text.Substring(1)}else{$_.text}}) -join ' ')
+   }
+  }
+  $line
+ })
+}
 function VerifySplits($payment,$draft,$main){
  $grid=ById $payment 'gridSplits'
- $all=@(OcrRows $grid $main)
+ $all=@(NormalizeSplitCodes @(OcrRows $grid $main))
  $rows=@($all|Where-Object{$_.text -match '(?<![A-Z0-9])D\d{4}(?![A-Z0-9])'})
  # No guessed scrolling in the final verification: all planned rows must be visible.
  if(@($all|Where-Object{$_.text -match '\b(Prepayment|Unearned)\b'}).Count -gt 0){throw 'OD generated Prepayment/Unearned. Splits were kept unchanged; review allocation manually.'}

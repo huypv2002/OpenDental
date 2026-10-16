@@ -102,7 +102,15 @@ public class SplitGrid : Control {
   }
   base.OnMouseDoubleClick(e);
  }
- protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(Color.White);e.Graphics.DrawString("Prov Patient Code Type Amount",Font,Brushes.Black,3,3);for(int i=0;i<Rows.Count;i++)e.Graphics.DrawString(Rows[i],Font,Brushes.Black,3,30+i*25);}
+ protected override void OnPaint(PaintEventArgs e){
+  e.Graphics.Clear(Color.White);int[] x={3,70,240,320,470};string[] header={"Prov","Patient","Code","Type","Amount"};
+  for(int c=0;c<header.Length;c++)e.Graphics.DrawString(header[c],Font,Brushes.Black,x[c],3);
+  for(int i=0;i<Rows.Count;i++){
+   string code=System.Text.RegularExpressions.Regex.Match(Rows[i],@"D\d{4}").Value;
+   string[] cells={"DOC","TEST, RYAN",code,code.Length==0?"Prepayment":"Proc",Rows[i].Substring(Rows[i].LastIndexOf(' ')+1)};
+   for(int c=0;c<cells.Length;c++)e.Graphics.DrawString(cells[c],Font,Brushes.Black,x[c],30+i*25);
+  }
+ }
 }
 public class AllocationPayment : Form {
  public AllocationPayment(bool warn,bool compact=false){
