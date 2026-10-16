@@ -46,7 +46,7 @@ public class AccountGrid : Control {
   e.Graphics.Clear(Color.White);
   string[] header={"Date","Patient","Prov","Code","Tth","Description","Charges"};
   if(chargesMode&&Compact){
-   using(var header=Image.FromFile(System.IO.Path.Combine(Application.StartupPath,"outstanding-header-r5.png")))e.Graphics.DrawImage(header,new Rectangle(0,0,598,18));
+   using(var headerImage=Image.FromFile(System.IO.Path.Combine(Application.StartupPath,"outstanding-header-r5.png")))e.Graphics.DrawImage(headerImage,new Rectangle(0,0,598,18));
   }else if(chargesMode){
    int[] edges={0,120,310,380,460,510,775,850,970};
    // Reproduce an outer frame inside the UIA grid bounds: it is not a data column.
