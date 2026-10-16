@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.14
+# LUK MetLife Assistant 0.3.15
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -156,3 +156,17 @@ Log R5 mới đọc `ITthl` thay vì `Tth`: vạch dọc ở hai mép ô bị gh
 Policy tái hiện đúng tọa độ/chiều rộng `ITthl` trong log và edges chỉ có hai mép ngoài; vẫn phải chọn đúng răng trong hai dòng cùng code. Ca tiêu đề sai, trùng hoặc nằm ngoài vị trí bị từ chối. Fixture Windows bỏ đường chia và vẽ nhãn ITthl để kiểm tra tiếp luồng chọn các dòng rồi Add Partials. Show All Charges vẫn bắt buộc On; cảnh báo số dư âm vẫn dừng và Payment không tự đóng/Save.
 
 Kiểm chứng 0.3.14: [Windows CI 38897129212](https://github.com/huypv2002/OpenDental/actions/runs/38897129212) pass cả x86/x64, 20 app tests mỗi job, fixture ITthl thiếu đường chia chạy qua chọn dòng và Add Partials, giữ nguyên cảnh báo số dư âm. Policy dùng đúng header/tọa độ mới từ log R5 và các ca từ chối đã pass. Chưa chạy lại trên OD thật tại R5.
+
+## Bản 0.3.15 — lấy dữ liệu dòng thực tế, chưa khẳng định sửa lỗi D0120
+
+Thông báo missing/ambiguous trước đây không ghi ô nào lệch. Driver mới lưu `outstanding-read.json` khi lỗi, gồm OCR thô, từng word và tọa độ, các dòng đã tách, danh tính kỳ vọng và kết quả so sánh từng trường code/date/patient/provider/tooth. Đây là dữ liệu hồ sơ cục bộ; không tự gửi lên mạng.
+
+Để lấy dữ liệu ngay tại Payment đang dừng, giữ cửa sổ Payment mở, không Save và không chạy Fill lại. Từ thư mục repo:
+
+```bat
+npm --prefix metlife-electron run diagnose:outstanding
+```
+
+Lệnh đưa Payment lên trước để đọc rồi xuất JSON vào thư mục LUK-MetLife-diagnostics dưới TEMP, in đường dẫn đầy đủ ra console. Nó không bấm checkbox, không đổi filter, không chọn dòng, không xóa Splits, không Add Partials, không Save/Close. File gồm version/time, trạng thái checkbox, Amount/Split Total, raw/parsed rows và lỗi parse nếu có. Cần dữ liệu thật này để xác định D0120 đang sai ở trường nào; bản này không thay đổi điều kiện khớp hoặc sửa parser theo phỏng đoán.
+
+Kiểm chứng chẩn đoán: [Windows CI 38899484849](https://github.com/huypv2002/OpenDental/actions/runs/38899484849) pass x86/x64. Gọi chính CLI Node → PowerShell trên Payment fixture đang mở, kiểm tra raw/parsed rows được xuất và Amount/Splits/checkbox/số lần Save không thay đổi. 20 app tests mỗi job và policy/cú pháp tại máy phát triển pass. Chưa có OCR dòng D0120 thực tế từ R5 để chốt nguyên nhân hoặc khẳng định đã sửa lỗi khớp procedure.

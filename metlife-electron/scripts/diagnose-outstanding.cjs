@@ -8,6 +8,6 @@ const {runWindows}=require('../lib/windows.cjs');
  const result=await runWindows(path.join(__dirname,'../windows'),{action:'inspect-outstanding'});
  if(result.readOnly!==true||result.saveInvoked!==false)throw new Error('Unexpected diagnostic response');
  await fs.mkdir(path.dirname(output),{recursive:true});
- await fs.writeFile(output,JSON.stringify(result,null,2),'utf8');
+ await fs.writeFile(output,JSON.stringify({...result,sourceVersion:require('../package.json').version,capturedAt:new Date().toISOString()},null,2),'utf8');
  process.stdout.write(output+'\n');
 })().catch(error=>{process.stderr.write(error.message+'\n');process.exitCode=1;});
