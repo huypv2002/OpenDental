@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.13
+# LUK MetLife Assistant 0.3.14
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -148,3 +148,11 @@ Show All Charges là điều kiện bắt buộc sau Delete All, trước mọi 
 Log thực tế R5 cho biết chỉ phát hiện edges [905,1503] trong khi OCR đã đọc đầy đủ Date/Patient/Prov/Code/Tth/Type. Nếu không có đủ đường chia, bộ đọc mới chỉ dùng cách dựa trên OCR khi đủ các tiêu đề duy nhất, đúng thứ tự và không chồng lấn; đọc răng trong vùng cột đã xác minh, rồi vẫn kiểm tra toàn bộ danh tính từng procedure. Không suy đoán hoặc tự bổ sung chữ Tth nếu thiếu. Khi cả hai cách không đạt, lưu dữ liệu chẩn đoán và dừng. Policy tái hiện đúng tọa độ header từ log với các dòng giả lập cùng code khác răng để kiểm tra chọn đúng.
 
 Kiểm chứng 0.3.13: [Windows CI 38798757742](https://github.com/huypv2002/OpenDental/actions/runs/38798757742) pass x86/x64, 20 app tests mỗi job. Runtime kiểm tra ảnh checkbox R5 tích/chưa tích, idempotence (không bấm lại khi On), trạng thái lạ bị từ chối, luồng grid thiếu đường chia dùng OCR anchors và Add Partials, giữ nguyên cảnh báo số dư âm. Policy với chính tọa độ header từ log R5 đã pass tại máy phát triển. Chưa chạy lại bản này trên OD thật tại R5.
+
+## Bản 0.3.14 — tiêu đề Tth bị OCR ghép với vạch kẻ
+
+Log R5 mới đọc `ITthl` thay vì `Tth`: vạch dọc ở hai mép ô bị ghép vào cùng token. Bộ đọc chỉ chuẩn hóa nhãn header khi token chứa nguyên nhãn Tth/Th/Tooth với tối đa hai ký tự vạch I/l/| mỗi bên, nằm hoàn toàn trong khoảng giữa các nhãn Code và Type đã xác minh, và chỉ có một ứng viên. Giữ nguyên tọa độ token và raw caption trong chẩn đoán. Không chuẩn hóa số răng, tên bệnh nhân hoặc dữ liệu procedure.
+
+Policy tái hiện đúng tọa độ/chiều rộng `ITthl` trong log và edges chỉ có hai mép ngoài; vẫn phải chọn đúng răng trong hai dòng cùng code. Ca tiêu đề sai, trùng hoặc nằm ngoài vị trí bị từ chối. Fixture Windows bỏ đường chia và vẽ nhãn ITthl để kiểm tra tiếp luồng chọn các dòng rồi Add Partials. Show All Charges vẫn bắt buộc On; cảnh báo số dư âm vẫn dừng và Payment không tự đóng/Save.
+
+Kiểm chứng 0.3.14: [Windows CI 38897129212](https://github.com/huypv2002/OpenDental/actions/runs/38897129212) pass cả x86/x64, 20 app tests mỗi job, fixture ITthl thiếu đường chia chạy qua chọn dòng và Add Partials, giữ nguyên cảnh báo số dư âm. Policy dùng đúng header/tọa độ mới từ log R5 và các ca từ chối đã pass. Chưa chạy lại trên OD thật tại R5.
