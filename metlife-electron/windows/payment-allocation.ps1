@@ -82,7 +82,7 @@ function ChargeRowsFromBorders($lines,$edges){
  if($cells.Patient -ne $cells.Date+1 -or $cells.Prov -ne $cells.Patient+1 -or $cells.Code -ne $cells.Prov+1 -or $cells.Type -ne $cells.Code+2){
   throw ('Unsupported Outstanding column geometry: '+($script:odChargeGeometry|ConvertTo-Json -Depth 6 -Compress))
  }
- $cells.Tooth=$cells.Code+1;$rows=@()
+ $cells.Tooth=$cells.Code+1;$script:odChargeGeometry.cells=$cells.Clone();$rows=@()
  foreach($line in $lines){
   if($line.y -le $header.y){continue}
   $values=@{}
