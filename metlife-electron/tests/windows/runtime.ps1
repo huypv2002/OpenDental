@@ -147,9 +147,9 @@ try{
  function Modals($scope){@(Elements $scope|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and -not $_.Current.IsOffscreen})}
  function ReadValue($element){return [string]$element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}
  function SetValue($scope,$id,$text,$owner){$field=ById $scope $id;$field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($text);if((ReadValue $field) -cne $text){throw 'Amount readback failed'}}
- $allocationDraft=[pscustomobject]@{patNum='99';patientName='TEST, RYAN';splitPatientName='TEST, RYAN';amount='236.40';splits=@(
-  [pscustomobject]@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC';amountCents=15000},
-  [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC';amountCents=8640}
+ $allocationDraft=[pscustomobject]@{patNum='99';patientName='TEST, RYAN';splitPatientName='TEST, RYAN';amount='236.40';date='2026-09-24';checkNum='SYNTHETIC';note='group number :TEST';paymentType='Insurance Paid';splits=@(
+  [pscustomobject]@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC';description='Synthetic service';amountCents=15000},
+  [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC';description='Synthetic service';amountCents=8640}
  )}
  foreach($case in @('normal','warning','compact')){
   $warningCase=$case -ceq 'warning'
@@ -182,6 +182,11 @@ try{
     if(@(MatchChargeRows $cellRows $allocationDraft).Count -ne 2){throw 'Isolated small R5 column OCR did not match exact rows'}
    }
    if((ReadValue (ById $payment 'textAllocationState')) -cne '1|2|0'){throw 'Wrong clear/prompt/save counts'}
+   function CloseWindow($window){$window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()}
+   VerifySplits $payment $allocationDraft $main
+   $payment=WaitOnly $main 'FormPayment'
+   AssertPayment $payment $allocationDraft $main
+   Write-Output ('Full allocation/readback passed: '+$case+'; Payment remains open, Save count zero')
    $readPath=Join-Path $out 'current-outstanding-read.json'
    & node (Join-Path $root 'scripts/diagnose-outstanding.cjs') $readPath
    if($LASTEXITCODE -ne 0){throw 'Read-only diagnostic command failed'}

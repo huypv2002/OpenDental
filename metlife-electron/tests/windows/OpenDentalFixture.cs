@@ -88,6 +88,20 @@ public class PaintedCheck : Control {
 public class SplitGrid : Control {
  public readonly System.Collections.Generic.List<string> Rows=new System.Collections.Generic.List<string>{"DOC TEST, RYAN Prepayment 236.40"};
  public SplitGrid(){Font=new Font("Segoe UI",10);}
+ protected override void OnMouseDoubleClick(MouseEventArgs e){
+  int index=(e.Y-30)/25;if(e.Y<30||index<0||index>=Rows.Count)return;
+  var code=System.Text.RegularExpressions.Regex.Match(Rows[index],@"D\d{4}").Value;
+  var amount=Rows[index].Substring(Rows[index].LastIndexOf(' ')+1);
+  using(var edit=new Form{Name="FormPaySplitEdit",Text="Synthetic Split Details",ClientSize=new Size(400,300),StartPosition=FormStartPosition.CenterParent}){
+   string[] ids={"textDatePay","textAmount","textProcDate","textProcDescription","textProcTooth","textProcProv"};
+   string[] values={"09/24/2026",amount,"09/20/2026","Synthetic service",code=="D2392"?"14":"","DOC"};
+   for(int i=0;i<ids.Length;i++)edit.Controls.Add(new TextBox{Name=ids[i],Text=values[i],Location=new Point(20,10+i*30),Width=240});
+   var patient=new ListBox{Name="listPatient",Location=new Point(20,195),Size=new Size(220,35)};patient.Items.Add("TEST, RYAN");patient.SelectedIndex=0;edit.Controls.Add(patient);
+   edit.Controls.Add(new Label{Name="comboUnearnedTypes",Text="None",Location=new Point(20,245),Size=new Size(160,25),Font=new Font("Segoe UI",10)});
+   edit.ShowDialog(FindForm());
+  }
+  base.OnMouseDoubleClick(e);
+ }
  protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(Color.White);e.Graphics.DrawString("Prov Patient Code Type Amount",Font,Brushes.Black,3,3);for(int i=0;i<Rows.Count;i++)e.Graphics.DrawString(Rows[i],Font,Brushes.Black,3,30+i*25);}
 }
 public class AllocationPayment : Form {
@@ -103,6 +117,10 @@ public class AllocationPayment : Form {
   all.Changed+=()=>{clicks.Text=(int.Parse(clicks.Text)+1).ToString();grid.ShowAll=all.Checked;grid.Invalidate();};
   var splits=new SplitGrid{Name="gridSplits",Location=new Point(10,330),Size=new Size(600,180)};Controls.Add(splits);
   Controls.Add(new TextBox{Name="textAmount",Text="236.40",Location=new Point(650,480)});
+  Controls.Add(new TextBox{Name="textDate",Text="09/24/2026",Location=new Point(650,510)});
+  Controls.Add(new TextBox{Name="textCheckNum",Text="SYNTHETIC",Location=new Point(760,510)});
+  Controls.Add(new TextBox{Name="textNote",Text="group number :TEST",Location=new Point(650,580)});
+  var paymentType=new ListBox{Name="listPayType",Location=new Point(10,55),Size=new Size(180,40)};paymentType.Items.Add("Insurance Paid");paymentType.SelectedIndex=0;Controls.Add(paymentType);
   var total=new TextBox{Name="textSplitTotal",Text="236.40",Location=new Point(650,350)};Controls.Add(total);
   var state=new TextBox{Name="textAllocationState",Text="0|0|0",Location=new Point(650,400),Width=320};Controls.Add(state);
   int cleared=0,prompts=0,saves=0;decimal sum=0;
