@@ -357,7 +357,7 @@ function ConfirmOverpaidWarning($warning,$main){
  $buttons=@($elements|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen})
  $ok=@($buttons|Where-Object{($_.Current.Name -replace '&','').Trim() -ceq 'OK'})
  $cancel=@($buttons|Where-Object{($_.Current.Name -replace '&','').Trim() -ceq 'Cancel'})
- if($ok.Count -ne 1 -or $cancel.Count -ne 1 -or $buttons.Count -ne 2){throw 'Unrecognized Overpaid Charge Warning buttons; popup was left open'}
+ if($ok.Count -ne 1 -or $cancel.Count -ne 1){throw 'Unrecognized Overpaid Charge Warning buttons; popup was left open'}
  Click $ok[0] $main
 }
 function WaitAfterPartial($main,[string]$nextId){
