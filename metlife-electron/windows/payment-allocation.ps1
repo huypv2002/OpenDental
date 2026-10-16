@@ -184,19 +184,28 @@ function ReadChargeRows($grid,$main,$lines=$null){
  $script:odOutstandingRead.geometry=$script:odChargeGeometry
  return $rows
 }
+function ChargePatientEquals([string]$observed,[string]$expected){
+ if((ListKey $observed) -ceq (ListKey $expected)){return $true}
+ # R5 OCR renders OD's surname/first-name comma as a dot. Permit only that
+ # delimiter at its expected position; every letter and initial must still match.
+ $parts=$expected -split ',',2
+ if($parts.Count -ne 2 -or -not $parts[0].Trim() -or -not $parts[1].Trim()){return $false}
+ $pattern='^'+[regex]::Escape($parts[0].Trim())+'\s*[,.]\s*'+[regex]::Escape($parts[1].Trim())+'$'
+ return $observed.Trim() -imatch $pattern
+}
 function MatchChargeRows($rows,$draft){
  if(-not $draft.splitPatientName -or @($draft.splits).Count -eq 0){throw 'Missing verified Outstanding Charges plan'}
  $targets=@()
  foreach($split in $draft.splits){
   $found=@($rows|Where-Object{
    $_.code -ceq [string]$split.code -and (DateEquals $_.date ([string]$split.date)) -and
-   (ListKey $_.patient) -ceq (ListKey ([string]$draft.splitPatientName)) -and
+   (ChargePatientEquals ([string]$_.patient) ([string]$draft.splitPatientName)) -and
    (ListKey $_.provider) -ceq (ListKey ([string]$split.providerAbbr)) -and $_.tooth -ceq [string]$split.tooth
   })
   if($found.Count -ne 1){
    $expected=@{code=$split.code;date=$split.date;patient=$draft.splitPatientName;provider=$split.providerAbbr;tooth=$split.tooth}
    $comparisons=@($rows|ForEach-Object{@{row=$_;matches=@{
-    code=($_.code -ceq [string]$split.code);date=(DateEquals $_.date ([string]$split.date));patient=((ListKey $_.patient) -ceq (ListKey ([string]$draft.splitPatientName)));provider=((ListKey $_.provider) -ceq (ListKey ([string]$split.providerAbbr)));tooth=($_.tooth -ceq [string]$split.tooth)
+    code=($_.code -ceq [string]$split.code);date=(DateEquals $_.date ([string]$split.date));patient=((ChargePatientEquals ([string]$_.patient) ([string]$draft.splitPatientName)));provider=((ListKey $_.provider) -ceq (ListKey ([string]$split.providerAbbr)));tooth=($_.tooth -ceq [string]$split.tooth)
    }}})
    if($script:odOutstandingRead){$script:odOutstandingRead.expected=$expected;$script:odOutstandingRead.comparisons=$comparisons}
    throw ('Outstanding procedure missing or ambiguous: '+$split.code+' / '+$split.date+' / tooth '+$split.tooth+'. Inspect outstanding-read.json; no guessed selection was made.')
@@ -258,6 +267,7 @@ function MatchChargeEvidence($rows,$attempts,$draft){
      $value=$_
      if($name -ceq 'Code' -and $value -cmatch '^0[0-9]{4}$'){$value='D'+$value.Substring(1)}
      if($name -ceq 'Date'){DateEquals $value $expected[$name]}
+     elseif($name -ceq 'Patient'){ChargePatientEquals $value $expected[$name]}
      else{(ListKey $value) -ceq (ListKey $expected[$name])}
     })
     $values[$name]=$observed
@@ -279,7 +289,7 @@ function MatchChargeEvidence($rows,$attempts,$draft){
  return @($targets|Sort-Object { [double]$_.row.y })
 }
 function ResolveChargeTargets($grid,$draft,$main){
- $rows=@(ReadChargeRows $grid $main)
+ $rows=@(ReadChargeRows $grid $main);$initialRows=$rows
  try{$targets=@(MatchChargeRows $rows $draft)}catch{
   if($_.Exception.Message -notlike 'Outstanding procedure missing or ambiguous:*'){throw}
   $attempts=@();$matched=$false;$lastError=$_
@@ -290,7 +300,17 @@ function ResolveChargeTargets($grid,$draft,$main){
   }
   $script:odOutstandingRead.columnAttempts=$attempts
   if(-not $matched){
-   $rows=@($attempts[0].rows)
+   # The full-grid read already located the visible rows. Do not discard them
+   # because isolated Date OCR degrades (the R5 capture lost six of eight dates).
+   $columns=@{}
+   foreach($name in @('Date','Patient','Prov','Code','Tooth')){
+    $field=@{Date='date';Patient='patient';Prov='provider';Code='code';Tooth='tooth'}[$name]
+    $columns[$name]=@($initialRows|ForEach-Object{
+     if([string]$_[$field]){@{text=[string]$_[$field];y=$_.y;height=$_.height}}
+    })
+   }
+   $rows=@($initialRows);$attempts+=@{source='verified-full-grid-cells';columns=$columns;rows=$rows}
+   $script:odOutstandingRead.columnAttempts=$attempts
    $targets=@(MatchChargeEvidence $rows $attempts $draft)
   }
  }

@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.16
+# LUK MetLife Assistant 0.3.17
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -176,3 +176,9 @@ Kiểm chứng chẩn đoán: [Windows CI 38899484849](https://github.com/huypv2
 Capture `gridCharges` trên R5 rộng 598 px, chữ khoảng 10 px; bài kiểm tra cũ dùng bảng 970 px/chữ lớn nên chưa đủ đại diện. Vùng lấy đường kẻ nay nằm trong hàng tiêu đề, tránh phần đệm làm mất đường kẻ. Khi OCR cả bảng ghép chữ tiêu đề, adapter đọc lại riêng header bằng ảnh màu trước; khi định danh dòng chưa khớp, đọc riêng Date/Patient/Prov/Code/Tooth theo đường kẻ vật lý đã xác minh. Vẫn yêu cầu đúng và duy nhất code/ngày/bệnh nhân/provider/răng, không tự bỏ điều kiện để chọn dòng.
 
 Đọc lại Current Payment Splits xử lý trường hợp Windows OCR nhận `D0120` thành `00120` chỉ trong cột Code được xác định, rồi mở từng split để kiểm tra chi tiết. Bộ kiểm tra Windows bao gồm bảng 598 px với header thật đã có trong capture, dữ liệu bệnh nhân giả, cùng luồng chọn patient → Delete All → Show All Charges → chọn dòng → Add Partials → tổng tiền → chi tiết splits → Payment vẫn mở, không Save. Cảnh báo Outstanding âm vẫn dừng để người dùng tự kiểm tra. Đây là kiểm thử Windows với fixture dựa trên capture, chưa phải xác minh chạy trên R5 của phòng khám.
+
+## Bản 0.3.17 — sửa theo outstanding-read.json thực tế trên R5
+
+Trong log R5, OCR cả bảng đọc đúng cả 8 code/ngày/provider/răng nhưng đọc dấu phẩy ngăn họ/tên thành dấu chấm. Cho phép dấu chấm thay cho đúng dấu phẩy phân cách họ/tên; mọi chữ, tên đệm và răng/provider/ngày/code vẫn phải khớp, không chấp nhận mất họ hoặc khác tên.
+
+Lượt OCR tách cột còn làm hỏng 6 ngày và không đọc được đầy đủ tên, khiến fallback bỏ mất dòng D0120. Fallback nay giữ vị trí/dữ liệu các ô đã đọc đúng trong lượt cả bảng, đối chiếu thêm từng ô ở đúng dòng vật lý. Fixture replay đã đổi tên bệnh nhân, giữ hình dạng lỗi/vị trí OCR của capture thực, kiểm tra 8 dòng/4 splits $439.20, fallback khi ngày tách cột hỏng, và từ chối bệnh nhân khác. Capture/ảnh hồ sơ gốc không được đưa vào Git. Draft vẫn mở và cảnh báo âm vẫn để người dùng kiểm tra.

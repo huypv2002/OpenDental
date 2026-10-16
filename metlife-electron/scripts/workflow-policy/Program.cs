@@ -1,7 +1,7 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.IO;
-var initial=InitialSessionState.CreateDefault2();initial.Commands.Add(new SessionStateCmdletEntry("Sort-Object",typeof(Microsoft.PowerShell.Commands.SortObjectCommand),null));initial.Commands.Add(new SessionStateCmdletEntry("Measure-Object",typeof(Microsoft.PowerShell.Commands.MeasureObjectCommand),null));initial.Commands.Add(new SessionStateCmdletEntry("ConvertTo-Json",typeof(Microsoft.PowerShell.Commands.ConvertToJsonCommand),null));using var runspace=RunspaceFactory.CreateRunspace(initial);runspace.Open();using var ps=PowerShell.Create();ps.Runspace=runspace;
+var initial=InitialSessionState.CreateDefault2();initial.Commands.Add(new SessionStateCmdletEntry("Sort-Object",typeof(Microsoft.PowerShell.Commands.SortObjectCommand),null));initial.Commands.Add(new SessionStateCmdletEntry("Measure-Object",typeof(Microsoft.PowerShell.Commands.MeasureObjectCommand),null));initial.Commands.Add(new SessionStateCmdletEntry("ConvertTo-Json",typeof(Microsoft.PowerShell.Commands.ConvertToJsonCommand),null));initial.Commands.Add(new SessionStateCmdletEntry("ConvertFrom-Json",typeof(Microsoft.PowerShell.Commands.ConvertFromJsonCommand),null));using var runspace=RunspaceFactory.CreateRunspace(initial);runspace.Open();using var ps=PowerShell.Create();ps.Runspace=runspace;
 foreach(var file in Directory.GetFiles(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,"*.ps1")) {
  System.Management.Automation.Language.Parser.ParseFile(file,out var tokens,out var errors);
  if(errors.Length>0)throw new Exception(file+": "+string.Join("; ",errors.Select(e=>e.ToString())));
@@ -170,4 +170,4 @@ foreach($case in @(
  if(-not $caught){throw 'Invalid generated allocation was accepted'}
 }
 'Workflow policy executed: Account column/identity mapping, different teeth/patients, duplicate/missing rows and rejected OD-generated Prepayment/wrong allocations passed.'
-""");var results=ps.Invoke();if(ps.InvocationStateInfo.State==PSInvocationState.Failed||ps.Streams.Error.Count>0)throw new Exception(ps.InvocationStateInfo.Reason?.Message+"\n"+string.Join("\n",ps.Streams.Error.Select(e=>e.Exception.Message+" at "+e.ScriptStackTrace)));foreach(var r in results)Console.WriteLine(r);
+""");var replayRoot=Path.GetFullPath(Path.Combine(Path.GetDirectoryName(args[1])!,"../tests/windows"));ps.AddScript("$ReplayPath='"+Path.Combine(replayRoot,"fixtures/outstanding-read-replay.json").Replace("'","''")+"'\n"+File.ReadAllText(Path.Combine(replayRoot,"outstanding-replay.ps1")));var results=ps.Invoke();if(ps.InvocationStateInfo.State==PSInvocationState.Failed||ps.Streams.Error.Count>0)throw new Exception(ps.InvocationStateInfo.Reason?.Message+"\n"+string.Join("\n",ps.Streams.Error.Select(e=>e.Exception.Message+" at "+e.ScriptStackTrace)));foreach(var r in results)Console.WriteLine(r);

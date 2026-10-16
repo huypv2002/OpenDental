@@ -139,6 +139,7 @@ try{
  if($selection -cne '0,1'){throw ('Wrong adjacent Account selection: '+$selection)}
  # Execute the actual Outstanding/Add Partials workflow on real painted controls and modals.
  . (Join-Path $windows 'payment-allocation.ps1')
+ . (Join-Path $PSScriptRoot 'outstanding-replay.ps1')
  $realHeader=ChargeHeader @(OcrRows (FindControl 'headerCapturedCharges') $main)
  foreach($caption in @('Date','Patient','Prov','Code','Type')){
   if(@($realHeader.words|Where-Object{$_.text -ieq $caption}).Count -ne 1){throw ('Real R5 charge header OCR failed: '+$caption+' / '+($realHeader|ConvertTo-Json -Depth 5 -Compress))}
