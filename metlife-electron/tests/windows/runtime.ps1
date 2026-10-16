@@ -152,10 +152,12 @@ try{
   [pscustomobject]@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC';description='Synthetic service';amountCents=15000},
   [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC';description='Synthetic service';amountCents=8640}
  )}
- foreach($case in @('normal','warning','compact')){
-  $warningCase=$case -ceq 'warning'
+ foreach($case in @('normal','warning','compact','compact-warning','unknown-warning')){
+  $warningCase=$case -in @('warning','compact-warning','unknown-warning')
+  $blockedCase=$case -ceq 'unknown-warning'
+  $compactCase=$case -in @('compact','compact-warning')
   $caseDraft=$allocationDraft
-  if($case -ceq 'compact'){
+  if($compactCase){
    $caseDraft=[pscustomobject]@{patNum='99';patientName='TEST, RYAN';splitPatientName='TEST, RYAN';amount='439.20';date='2026-09-24';checkNum='SYNTHETIC';note='group number :TEST';paymentType='Insurance Paid';splits=@(
     [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC';description='Synthetic service';amountCents=8640},
     [pscustomobject]@{code='D1208';date='2026-09-20';tooth='';providerAbbr='DOC';description='Synthetic service';amountCents=4500},
@@ -164,8 +166,8 @@ try{
    )}
   }
   $expectedState='1|'+$caseDraft.splits.Count+'|0'
-  $expectedRows=if($case -ceq 'compact'){8}else{4}
-  $button=if($case -ceq 'compact'){'butAllocationCompact'}elseif($warningCase){'butAllocationWarning'}else{'butAllocation'}
+  $expectedRows=if($compactCase){8}else{4}
+  $button=if($blockedCase){'butAllocationUnknownWarning'}elseif($case -ceq 'compact-warning'){'butAllocationCompactWarning'}elseif($compactCase){'butAllocationCompact'}elseif($warningCase){'butAllocationWarning'}else{'butAllocation'}
   Click (FindControl $button) $main
   $payment=WaitOnly $main 'FormPayment'
   EnsureShowAllCharges $payment $main
@@ -174,21 +176,21 @@ try{
   if((ReadValue (ById $payment 'textShowAllClicks')) -cne $wantedClicks){throw 'Show All Charges was toggled off or clicked twice'}
   $stopped=$false
   try{AllocatePayment $payment $caseDraft $main}catch{
-   if(-not $warningCase -or $_.Exception.Message -notlike '*Unexpected dialog*Overpaid Charge Warning*'){Write-Output ('OUTSTANDING SYNTHETIC READ: '+($script:odOutstandingRead|ConvertTo-Json -Depth 12 -Compress));throw}
+   if(-not $blockedCase -or $_.Exception.Message -notlike '*Unrecognized Overpaid Charge Warning message*'){Write-Output ('OUTSTANDING SYNTHETIC READ: '+($script:odOutstandingRead|ConvertTo-Json -Depth 12 -Compress));throw}
    $stopped=$true
   }
-  if($warningCase){
+  if($blockedCase){
    if($script:odChargeGeometry.method -cne 'verified-ocr-headers'){throw 'Missing-dividers fallback was not exercised'}
-   if(-not $stopped){throw 'Overpaid Charge Warning was accepted automatically'}
+   if(-not $stopped){throw 'Unknown warning was accepted automatically'}
    $warnings=@(Modals $main|Where-Object{$_.Current.Name -ceq 'Overpaid Charge Warning'})
    if($warnings.Count -ne 1){throw 'Warning was not preserved on screen'}
    if((ReadValue (ById $payment 'textAllocationState')) -cne '1|1|0'){throw 'Workflow continued or saved after warning'}
-   # Test teardown only. Production leaves the warning and Payment untouched.
+   # Test teardown only. An unrecognized warning remains untouched in production.
    $warnings[0].GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
    Start-Sleep -Milliseconds 200
   }else{
    if((ReadValue (ById $payment 'textSplitTotal')) -cne $caseDraft.amount){throw 'Wrong allocation total'}
-   if($case -ceq 'compact'){
+   if($compactCase){
     if($script:odChargeGeometry.method -ceq 'verified-ocr-headers'){throw 'Real-size R5 header still lost physical dividers'}
     $resolved=ResolveChargeTargets (ById $payment 'gridCharges') $caseDraft $main
     if($resolved.targets.Count -ne $caseDraft.splits.Count){throw 'Small R5 same-cell OCR did not match exact rows'}
@@ -205,7 +207,7 @@ try{
    $read=Get-Content -Raw -LiteralPath $readPath|ConvertFrom-Json
    if(-not $read.readOnly -or $read.saveInvoked -or $read.rawLines.Count -eq 0 -or $read.parsedRows.Count -ne $expectedRows -or $read.parseError){throw 'Diagnostic did not capture current raw/parsed Outstanding rows'}
    $payment=WaitOnly $main 'FormPayment'
-   if((ReadValue (ById $payment 'textAllocationState')) -cne $expectedState -or (ReadValue (ById $payment 'textSplitTotal')) -cne $caseDraft.amount -or (ReadValue (ById $payment 'textShowAllClicks')) -cne '1'){throw 'Read-only diagnostic changed the draft'}
+   if((ReadValue (ById $payment 'textAllocationState')) -cne $expectedState -or (ReadValue (ById $payment 'textSplitTotal')) -cne $caseDraft.amount -or (ReadValue (ById $payment 'textShowAllClicks')) -cne $wantedClicks){throw 'Read-only diagnostic changed the draft'}
 
   }
   $payment.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()

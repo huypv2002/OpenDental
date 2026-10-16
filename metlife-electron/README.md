@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.17
+# LUK MetLife Assistant 0.3.18
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -182,3 +182,9 @@ Capture `gridCharges` trên R5 rộng 598 px, chữ khoảng 10 px; bài kiểm 
 Trong log R5, OCR cả bảng đọc đúng cả 8 code/ngày/provider/răng nhưng đọc dấu phẩy ngăn họ/tên thành dấu chấm. Cho phép dấu chấm thay cho đúng dấu phẩy phân cách họ/tên; mọi chữ, tên đệm và răng/provider/ngày/code vẫn phải khớp, không chấp nhận mất họ hoặc khác tên.
 
 Lượt OCR tách cột còn làm hỏng 6 ngày và không đọc được đầy đủ tên, khiến fallback bỏ mất dòng D0120. Fallback nay giữ vị trí/dữ liệu các ô đã đọc đúng trong lượt cả bảng, đối chiếu thêm từng ô ở đúng dòng vật lý. Fixture replay đã đổi tên bệnh nhân, giữ hình dạng lỗi/vị trí OCR của capture thực, kiểm tra 8 dòng/4 splits $439.20, fallback khi ngày tách cột hỏng, và từ chối bệnh nhân khác. Capture/ảnh hồ sơ gốc không được đưa vào Git. Draft vẫn mở và cảnh báo âm vẫn để người dùng kiểm tra.
+
+## Bản 0.3.18 — xác nhận Overpaid Charge Warning rồi tiếp tục Add Partials
+
+Sau mỗi lần nhập amount, tool nhận diện đúng popup `Overpaid Charge Warning` trong cùng tiến trình OD, kiểm tra nguyên nội dung `One or more Outstanding Charges will be negative. Continue?` và hai nút OK/Cancel, bấm OK một lần rồi đợi đúng Amount của dòng tiếp theo hoặc Payment sau dòng cuối. Cảnh báo này có thể xuất hiện ở từng dòng; tool tiếp tục nhập toàn bộ số tiền theo PDF và kiểm tra tổng/chi tiết splits. Popup khác hoặc cùng tiêu đề nhưng khác nội dung vẫn được giữ để kiểm tra.
+
+Fill draft vẫn không Save hoặc đóng Payment. Khi cập nhật từ bản cũ đã dừng ở popup, lượt chạy cũ đã kết thúc; việc pull/restart source không nối tiếp lượt cũ. Hoàn tất hoặc hủy draft đang mở trước khi bắt đầu lại từ app.

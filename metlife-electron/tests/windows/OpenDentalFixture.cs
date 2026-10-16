@@ -120,7 +120,7 @@ public class SplitGrid : Control {
  }
 }
 public class AllocationPayment : Form {
- public AllocationPayment(bool warn,bool compact=false){
+ public AllocationPayment(bool warn,bool compact=false,bool badWarning=false){
   Name="FormPayment";Text="Fixture Payment Allocation";ClientSize=new Size(1000,620);StartPosition=FormStartPosition.CenterScreen;
   var patient=new PaintedCombo(new[]{"All","OTHER","RYAN"},"All"){Name="comboPatientOutstandingFilter",Location=new Point(550,20),Size=new Size(180,25)};Controls.Add(patient);
   Controls.Add(new PaintedCombo(new[]{"All","RYAN"},"RYAN"){Name="comboPatientPaySplitsFilter",Location=new Point(10,20),Size=new Size(160,25)});
@@ -151,7 +151,7 @@ public class AllocationPayment : Form {
      ok.Click+=(a,b)=>{prompt.DialogResult=DialogResult.OK;};
      if(prompt.ShowDialog(this)!=DialogResult.OK)return;
      prompts++;state.Text=cleared+"|"+prompts+"|"+saves;
-     if(warn){if(MessageBox.Show(this,"One or more Outstanding Charges will be negative.  Continue?","Overpaid Charge Warning",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;}
+     if(warn){if(MessageBox.Show(this,badWarning?"A different warning must not be accepted.":"One or more Outstanding Charges will be negative.  Continue?","Overpaid Charge Warning",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;}
      decimal value=decimal.Parse(amount.Text,System.Globalization.CultureInfo.InvariantCulture);sum+=value;
      splits.Rows.Add("DOC TEST, RYAN "+grid.CodeAt(row)+" "+value.ToString("F2",System.Globalization.CultureInfo.InvariantCulture));splits.Invalidate();total.Text=sum.ToString("F2",System.Globalization.CultureInfo.InvariantCulture);
     }
@@ -187,6 +187,10 @@ public class Fixture : Form {
   allocation.Click+=(sender,e)=>{using(var payment=new AllocationPayment(false))payment.ShowDialog(this);};
   var compact=new Button{Name="butAllocationCompact",Text="R5 compact",Location=new Point(680,550),Width=160};account.Controls.Add(compact);
   compact.Click+=(sender,e)=>{using(var payment=new AllocationPayment(false,true))payment.ShowDialog(this);};
+  var compactWarning=new Button{Name="butAllocationCompactWarning",Text="Compact warning",Location=new Point(680,315),Width=160};account.Controls.Add(compactWarning);
+  compactWarning.Click+=(sender,e)=>{using(var payment=new AllocationPayment(true,true))payment.ShowDialog(this);};
+  var unknownWarning=new Button{Name="butAllocationUnknownWarning",Text="Unknown warning",Location=new Point(20,325),Width=160};account.Controls.Add(unknownWarning);
+  unknownWarning.Click+=(sender,e)=>{using(var payment=new AllocationPayment(true,false,true))payment.ShowDialog(this);};
   var warning=new Button{Name="butAllocationWarning",Text="Warning fixture",Location=new Point(200,550),Width=160};account.Controls.Add(warning);
   warning.Click+=(sender,e)=>{using(var payment=new AllocationPayment(true))payment.ShowDialog(this);};
   var popup=new Button {Name="butPopup",Text="Open fixture popup",Location=new Point(20,290),Size=new Size(200,35)};

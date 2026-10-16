@@ -348,6 +348,38 @@ function AssertAllocationPlan($draft){
  }
  if($total -ne [decimal]$draft.amount*100){throw 'PDF split amounts do not equal Payment Amount'}
 }
+function ConfirmOverpaidWarning($warning,$main){
+ if($warning.Current.Name -cne 'Overpaid Charge Warning' -or $warning.Current.ProcessId -ne $main.Current.ProcessId){throw 'Unrecognized Overpaid Charge Warning window'}
+ $expected='One or more Outstanding Charges will be negative. Continue?'
+ $elements=@(Elements $warning)
+ $message=@($elements|Where-Object{(($_.Current.Name -replace '\s+',' ').Trim()) -ceq $expected})
+ if($message.Count -ne 1){throw 'Unrecognized Overpaid Charge Warning message; popup was left open'}
+ $buttons=@($elements|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen})
+ $ok=@($buttons|Where-Object{($_.Current.Name -replace '&','').Trim() -ceq 'OK'})
+ $cancel=@($buttons|Where-Object{($_.Current.Name -replace '&','').Trim() -ceq 'Cancel'})
+ if($ok.Count -ne 1 -or $cancel.Count -ne 1 -or $buttons.Count -ne 2){throw 'Unrecognized Overpaid Charge Warning buttons; popup was left open'}
+ Click $ok[0] $main
+}
+function WaitAfterPartial($main,[string]$nextId){
+ $acceptedHandle=$null
+ for($i=0;$i -lt 50;$i++){
+  AssertFocus $main
+  $active=@(Modals $main|Where-Object{$_.Current.IsEnabled})
+  if($active.Count -eq 1){
+   $window=$active[0]
+   if($window.Current.AutomationId -ceq $nextId){return $window}
+   if($window.Current.Name -ceq 'Overpaid Charge Warning'){
+    $handle=[string]$window.Current.NativeWindowHandle
+    if($null -eq $acceptedHandle){ConfirmOverpaidWarning $window $main;$acceptedHandle=$handle}
+    elseif($acceptedHandle -cne $handle){throw 'Repeated Overpaid Charge Warning after one amount; popup was left open'}
+    Start-Sleep -Milliseconds 100;continue
+   }
+  }
+  if($active.Count -gt 0){throw ('Unexpected dialog after Add Partials: '+(($active|ForEach-Object{$_.Current.Name}) -join ', '))}
+  Start-Sleep -Milliseconds 100
+ }
+ throw ('Add Partials did not advance to '+$nextId)
+}
 function AllocatePayment($payment,$draft,$main){
  AssertAllocationPlan $draft
  $firstName=([string]$draft.patientName -split ',',2)[-1].Trim()
@@ -371,7 +403,8 @@ function AllocatePayment($payment,$draft,$main){
  $targets=@(SelectChargeRows $grid $draft $main)
  $script:odStage='Add Partials'
  Click (ById $payment 'butCreatePartial') $main
- foreach($target in $targets){
+ for($index=0;$index -lt $targets.Count;$index++){
+  $target=$targets[$index]
   # OD iterates the selected grid rows in display order. Verify every amount dialog's code.
   $prompt=WaitOnly $main 'FormAmountEdit'
   $label=(ById $prompt 'labelText').Current.Name.Trim()
@@ -380,7 +413,10 @@ function AllocatePayment($payment,$draft,$main){
   SetValue $prompt 'textAmount' $amount $main
   Click (ById $prompt 'butOK') $main
   Start-Sleep -Milliseconds 150
-  # Any overpaid-charge warning is deliberately left for the user. WaitOnly refuses it.
+  # The user authorized this specific OD overpayment confirmation. Confirm once
+  # per submitted amount, including the final row, then verify the expected form.
+  $nextId=if($index+1 -lt $targets.Count){'FormAmountEdit'}else{'FormPayment'}
+  $null=WaitAfterPartial $main $nextId
  }
  $payment=WaitOnly $main 'FormPayment'
  if([decimal](ReadValue (ById $payment 'textSplitTotal')) -ne [decimal]$draft.amount){throw 'Add Partials total does not equal PDF Payment Amount'}
