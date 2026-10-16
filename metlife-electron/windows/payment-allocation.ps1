@@ -100,14 +100,28 @@ function ChargeRowsFromBorders($lines,$edges){
 }
 function ChargeRowsFromHeader($lines){
  $header=ChargeHeader $lines
- $tooth=@($header.words|Where-Object{$_.text -match '^(Tth|Th|Tooth)$'})
  $type=@($header.words|Where-Object{$_.text -ieq 'Type'})
  $code=@($header.words|Where-Object{$_.text -ieq 'Code'})
- if($tooth.Count -ne 1 -or $type.Count -ne 1 -or $code.Count -ne 1){throw 'Missing unique Code/Tooth/Type OCR anchors'}
+ if($type.Count -ne 1 -or $code.Count -ne 1){throw 'Missing unique Code/Type OCR anchors'}
+ # OCR may join the two vertical separators to the narrow Tth caption, e.g.
+ # ITthl. Accept only a complete known caption plus at most two border glyphs
+ # on either side, wholly inside the verified Code-to-Type header gap.
+ $tooth=@($header.words|Where-Object{
+  $_.text -match '^[Il|]{0,2}(Tth|Th|Tooth)[Il|]{0,2}$' -and
+  $_.x -gt $code[0].x+$code[0].width -and $_.x+$_.width -lt $type[0].x
+ })
+ if($tooth.Count -ne 1){throw 'Missing unique Code/Tooth/Type OCR anchors'}
  $tc=$tooth[0].x+$tooth[0].width/2;$cc=$code[0].x+$code[0].width/2
  if($cc -ge $tc -or $type[0].x -le $tc+($tc-$cc)/2){throw 'Overlapping Code/Tooth/Type OCR anchors'}
- $rows=@(AccountRows $lines)
+ $normalizedHeader=$header.Clone()
+ $normalizedHeader.words=@($header.words|ForEach-Object{
+  if([object]::ReferenceEquals($_,$tooth[0])){$word=$_.Clone();$word.text='Tth';$word}else{$_}
+ })
+ $normalizedHeader.text=($normalizedHeader.words|ForEach-Object{$_.text}) -join ' '
+ $normalizedLines=@($lines|ForEach-Object{if([object]::ReferenceEquals($_,$header)){$normalizedHeader}else{$_}})
+ $rows=@(AccountRows $normalizedLines)
  $script:odChargeGeometry.method='verified-ocr-headers'
+ $script:odChargeGeometry.toothCaption=@{raw=$tooth[0].text;normalized='Tth';x=$tooth[0].x;width=$tooth[0].width}
  return $rows
 }
 function ChargeRowsFromLines($lines,$edges){

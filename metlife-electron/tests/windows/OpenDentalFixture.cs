@@ -48,7 +48,7 @@ public class AccountGrid : Control {
    int[] edges={0,120,310,380,460,510,775,850,970};
    // Reproduce an outer frame inside the UIA grid bounds: it is not a data column.
    if(!NoDividers)e.Graphics.DrawLine(Pens.Gray,3,0,3,28);
-   string[] captions={"Date","Patient","Prov","Code",NoDividers?"Tth":"","Type","AmtOrig","AmtEnd"};
+   string[] captions={"Date","Patient","Prov","Code",NoDividers?"ITthl":"","Type","AmtOrig","AmtEnd"};
    for(int c=0;c<captions.Length;c++){
     float center=(edges[c]+edges[c+1])/2f;
     e.Graphics.DrawString(captions[c],Font,Brushes.Black,center-e.Graphics.MeasureString(captions[c],Font).Width/2,5);

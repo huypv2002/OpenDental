@@ -105,6 +105,29 @@ if($liveRows.Count -ne 2 -or $liveRows[0].tooth -cne '13' -or $liveRows[1].tooth
 $liveDraft=@{splitPatientName='TEST, RYAN';splits=@(@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC'})}
 $liveTargets=@(MatchChargeRows $liveRows $liveDraft)
 if($liveTargets.Count -ne 1 -or $liveTargets[0].row.y -ne 620){throw 'Header fallback selected the wrong tooth'}
+# Exact new R5 log: the border strokes are merged with Tth into ITthl.
+foreach($caption in @('ITthl','|Tth|','lThI','Tth')){
+ $mergedHeader=$liveHeader.Clone()
+ $mergedHeader.words=@($liveHeader.words|Where-Object{$_.text -cne 'I'}|ForEach-Object{
+  if($_.text -ceq 'Tth'){@{text=$caption;x=1213.6667;width=26.3333}}else{$_}
+ })
+ $mergedHeader.text='Date Patient Prov Code '+$caption+' Type AmtOrig AmtEnd'
+ $mergedRows=@(ChargeRowsFromLines @($mergedHeader,(LiveChargeLine 600 '13'),(LiveChargeLine 620 '14')) @(905,1503))
+ $mergedTargets=@(MatchChargeRows $mergedRows $liveDraft)
+ if($mergedTargets.Count -ne 1 -or $mergedTargets[0].row.y -ne 620 -or $script:odChargeGeometry.toothCaption.raw -cne $caption){throw ('Merged tooth caption regression failed: '+$caption)}
+}
+foreach($caption in @('Amount','ITthAmount','Ttx')){
+ $badHeader=$mergedHeader.Clone();$badHeader.words=@($mergedHeader.words|ForEach-Object{if($_.text -ceq 'Tth'){@{text=$caption;x=1213.6667;width=26.3333}}else{$_}})
+ $caught=$false;try{ChargeRowsFromLines @($badHeader,(LiveChargeLine 620 '14')) @(905,1503)}catch{$caught=$true}
+ if(-not $caught){throw ('Unknown tooth caption accepted: '+$caption)}
+}
+foreach($badKind in @('duplicate','outside')){
+ $badHeader=$mergedHeader.Clone()
+ if($badKind -ceq 'duplicate'){$badHeader.words=@($mergedHeader.words)+@(@{text='ITthl';x=1245;width=20})}
+ else{$badHeader.words=@($mergedHeader.words|ForEach-Object{if($_.text -ceq 'Tth'){@{text='ITthl';x=910;width=20}}else{$_}})}
+ $caught=$false;try{ChargeRowsFromLines @($badHeader,(LiveChargeLine 620 '14')) @(905,1503)}catch{$caught=$true}
+ if(-not $caught){throw ('Unsafe tooth anchor accepted: '+$badKind)}
+}
 # Invalid OD-generated allocations must stop without opening/editing a split.
 function OcrRows($element,$main){return $script:generatedRows}
 $draft=[pscustomobject]@{splits=@([pscustomobject]@{code='D0120';providerAbbr='DOC';amountCents=8640})}
