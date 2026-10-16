@@ -176,6 +176,14 @@ try{
   }else{
    if((ReadValue (ById $payment 'textSplitTotal')) -cne '236.40'){throw 'Wrong allocation total'}
    if((ReadValue (ById $payment 'textAllocationState')) -cne '1|2|0'){throw 'Wrong clear/prompt/save counts'}
+   $readPath=Join-Path $out 'current-outstanding-read.json'
+   & node (Join-Path $root 'scripts/diagnose-outstanding.cjs') $readPath
+   if($LASTEXITCODE -ne 0){throw 'Read-only diagnostic command failed'}
+   $read=Get-Content -Raw -LiteralPath $readPath|ConvertFrom-Json
+   if(-not $read.readOnly -or $read.saveInvoked -or $read.rawLines.Count -eq 0 -or $read.parsedRows.Count -ne 4 -or $read.parseError){throw 'Diagnostic did not capture current raw/parsed Outstanding rows'}
+   $payment=WaitOnly $main 'FormPayment'
+   if((ReadValue (ById $payment 'textAllocationState')) -cne '1|2|0' -or (ReadValue (ById $payment 'textSplitTotal')) -cne '236.40' -or (ReadValue (ById $payment 'textShowAllClicks')) -cne '1'){throw 'Read-only diagnostic changed the draft'}
+
   }
   $payment.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
   Start-Sleep -Milliseconds 200

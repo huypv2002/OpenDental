@@ -99,6 +99,7 @@ public class AllocationPayment : Form {
   var clicks=new TextBox{Name="textShowAllClicks",Text="0",Location=new Point(650,440)};Controls.Add(clicks);
   all.Changed+=()=>{clicks.Text=(int.Parse(clicks.Text)+1).ToString();grid.ShowAll=all.Checked;grid.Invalidate();};
   var splits=new SplitGrid{Name="gridSplits",Location=new Point(10,330),Size=new Size(600,180)};Controls.Add(splits);
+  Controls.Add(new TextBox{Name="textAmount",Text="236.40",Location=new Point(650,480)});
   var total=new TextBox{Name="textSplitTotal",Text="236.40",Location=new Point(650,350)};Controls.Add(total);
   var state=new TextBox{Name="textAllocationState",Text="0|0|0",Location=new Point(650,400),Width=320};Controls.Add(state);
   int cleared=0,prompts=0,saves=0;decimal sum=0;

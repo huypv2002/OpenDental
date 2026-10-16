@@ -151,8 +151,10 @@ function EnsureShowAllCharges($payment,$main){
  if($state -eq 0){Click $control $main;Start-Sleep -Milliseconds 250}
  if((ShowAllState (ById $payment 'checkShowAll') $main) -ne 1){throw 'Show All Charges did not remain checked'}
 }
-function ReadChargeRows($grid,$main){
- $lines=@(OcrRows $grid $main);$header=ChargeHeader $lines
+function ReadChargeRows($grid,$main,$lines=$null){
+ if($null -eq $lines){$lines=@(OcrRows $grid $main)}
+ $script:odOutstandingRead=@{rawLines=@($lines);gridRect=$grid.Current.BoundingRectangle.ToString()}
+ $header=ChargeHeader $lines
  $r=$grid.Current.BoundingRectangle
  $top=[int][Math]::Max($r.Top,$header.y-4)
  $height=[int][Math]::Ceiling($header.height+8)
@@ -161,7 +163,10 @@ function ReadChargeRows($grid,$main){
   AssertFocus $main;$graphics.CopyFromScreen([int]$r.Left,$top,0,0,$bitmap.Size)
   $edges=@([OdNative]::HeaderDividers($bitmap)|ForEach-Object{$r.Left+$_})
  }finally{$graphics.Dispose();$bitmap.Dispose()}
- return @(ChargeRowsFromLines $lines $edges)
+ $rows=@(ChargeRowsFromLines $lines $edges)
+ $script:odOutstandingRead.parsedRows=$rows
+ $script:odOutstandingRead.geometry=$script:odChargeGeometry
+ return $rows
 }
 function MatchChargeRows($rows,$draft){
  if(-not $draft.splitPatientName -or @($draft.splits).Count -eq 0){throw 'Missing verified Outstanding Charges plan'}
@@ -172,7 +177,14 @@ function MatchChargeRows($rows,$draft){
    (ListKey $_.patient) -ceq (ListKey ([string]$draft.splitPatientName)) -and
    (ListKey $_.provider) -ceq (ListKey ([string]$split.providerAbbr)) -and $_.tooth -ceq [string]$split.tooth
   })
-  if($found.Count -ne 1){throw ('Outstanding procedure missing or ambiguous: '+$split.code+' / '+$split.date+' / tooth '+$split.tooth+'. Bring the service rows into view; no guessed selection was made.')}
+  if($found.Count -ne 1){
+   $expected=@{code=$split.code;date=$split.date;patient=$draft.splitPatientName;provider=$split.providerAbbr;tooth=$split.tooth}
+   $comparisons=@($rows|ForEach-Object{@{row=$_;matches=@{
+    code=($_.code -ceq [string]$split.code);date=(DateEquals $_.date ([string]$split.date));patient=((ListKey $_.patient) -ceq (ListKey ([string]$draft.splitPatientName)));provider=((ListKey $_.provider) -ceq (ListKey ([string]$split.providerAbbr)));tooth=($_.tooth -ceq [string]$split.tooth)
+   }}})
+   if($script:odOutstandingRead){$script:odOutstandingRead.expected=$expected;$script:odOutstandingRead.comparisons=$comparisons}
+   throw ('Outstanding procedure missing or ambiguous: '+$split.code+' / '+$split.date+' / tooth '+$split.tooth+'. Inspect outstanding-read.json; no guessed selection was made.')
+  }
   if(@($targets|Where-Object{$_.row.y -eq $found[0].y}).Count){throw 'Two PDF procedures map to one Outstanding row'}
   $targets+=@{row=$found[0];split=$split}
  }

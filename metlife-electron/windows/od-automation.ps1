@@ -79,6 +79,17 @@ try{
   exit 0
  }
  . (Join-Path $PSScriptRoot 'ocr.ps1')
+ if($request.action -eq 'inspect-outstanding'){
+  $script:odStage='Chẩn đoán Outstanding (chỉ đọc)'
+  $payment=WaitOnly $main 'FormPayment'
+  [void][OdNative]::SetForegroundWindow([IntPtr]$payment.Current.NativeWindowHandle)
+  Start-Sleep -Milliseconds 200;AssertFocus $main
+  $grid=ById $payment 'gridCharges'
+  $rawLines=@(OcrRows $grid $main);$rows=@();$parseError=$null
+  try{$rows=@(ReadChargeRows $grid $main $rawLines)}catch{$parseError=$_.Exception.Message}
+  @{ok=$true;readOnly=$true;saveInvoked=$false;windowHandle=[string]$payment.Current.NativeWindowHandle;gridRect=$grid.Current.BoundingRectangle.ToString();showAllState=(ShowAllState (ById $payment 'checkShowAll') $main);amount=(ReadValue (ById $payment 'textAmount'));splitTotal=(ReadValue (ById $payment 'textSplitTotal'));rawLines=$rawLines;parsedRows=$rows;parseError=$parseError;geometry=$script:odChargeGeometry}|ConvertTo-Json -Depth 12 -Compress
+  exit 0
+ }
  if($request.action -notin @('fill-preview','save-preview','close-preview')){throw 'Unknown action'}
  if($request.action -eq 'close-preview' -and $pat -cne [string]$request.draft.patNum){throw 'Selected OD patient does not match verified PatNum.'}
  if($request.action -eq 'close-preview'){
@@ -179,6 +190,7 @@ try{
    $diagnosticFolder=Join-Path ([string]$request.diagnosticDir) ([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N'))
    [void][IO.Directory]::CreateDirectory($diagnosticFolder)
    if($script:odChargeGeometry){$script:odChargeGeometry|ConvertTo-Json -Depth 7|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'outstanding-columns.json') -Encoding UTF8}
+   if($script:odOutstandingRead){$script:odOutstandingRead|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'outstanding-read.json') -Encoding UTF8}
    @{error=$message;provider=$script:odProvider;discovery=$script:odDiscovery}|ConvertTo-Json -Depth 7|Set-Content -LiteralPath (Join-Path $diagnosticFolder 'window-discovery.json') -Encoding UTF8
   }
   if($diagnosticFolder -and $main){

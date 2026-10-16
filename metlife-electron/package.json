@@ -13,7 +13,8 @@
     "pack:mac": "electron-builder --mac dir --arm64",
     "test:patients": "node scripts/patient-ui-test.cjs",
     "test:save": "node scripts/save-ui-test.cjs",
-    "test:connect": "node scripts/local-ui-test.cjs"
+    "test:connect": "node scripts/local-ui-test.cjs",
+    "diagnose:outstanding": "node scripts/diagnose-outstanding.cjs"
   },
   "dependencies": {
     "pdfjs-dist": "6.4.299"
