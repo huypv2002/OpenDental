@@ -156,6 +156,15 @@ function ReadChargeRows($grid,$main,$lines=$null){
  $script:odOutstandingRead=@{rawLines=@($lines);gridRect=$grid.Current.BoundingRectangle.ToString()}
  $header=ChargeHeader $lines
  $r=$grid.Current.BoundingRectangle
+ $missing=@(@('Date','Patient','Prov','Code','Type')|Where-Object{$name=$_;@($header.words|Where-Object{$_.text -ieq $name}).Count -ne 1})
+ if($missing.Count){
+  $crop=[pscustomobject]@{Left=$r.Left;Top=[Math]::Max($r.Top,$header.y-2);Width=$r.Width;Height=$header.height+4}
+  $headerLines=@(OcrRows $grid $main $crop)
+  $refined=ChargeHeader $headerLines
+  $script:odOutstandingRead.headerLines=$headerLines
+  $lines=@($lines|ForEach-Object{if([object]::ReferenceEquals($_,$header)){$refined}else{$_}})
+  $header=$refined
+ }
  $top=[int][Math]::Ceiling([Math]::Max($r.Top,$header.y))
  # Extra title/body padding previously diluted the divider pixels below the
  # detector threshold on the real 10px R5 header. Sample within the caption band.
