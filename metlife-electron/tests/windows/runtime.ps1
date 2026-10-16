@@ -162,7 +162,7 @@ try{
   if((ReadValue (ById $payment 'textShowAllClicks')) -cne $wantedClicks){throw 'Show All Charges was toggled off or clicked twice'}
   $stopped=$false
   try{AllocatePayment $payment $allocationDraft $main}catch{
-   if(-not $warningCase -or $_.Exception.Message -notlike '*Unexpected dialog*Overpaid Charge Warning*'){throw}
+   if(-not $warningCase -or $_.Exception.Message -notlike '*Unexpected dialog*Overpaid Charge Warning*'){Write-Output ('OUTSTANDING SYNTHETIC READ: '+($script:odOutstandingRead|ConvertTo-Json -Depth 12 -Compress));throw}
    $stopped=$true
   }
   if($warningCase){
