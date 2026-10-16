@@ -178,7 +178,7 @@ try{
    if((ReadValue (ById $payment 'textSplitTotal')) -cne '236.40'){throw 'Wrong allocation total'}
    if($case -ceq 'compact'){
     if($script:odChargeGeometry.method -ceq 'verified-ocr-headers'){throw 'Real-size R5 header still lost physical dividers'}
-    $cellRows=@(ReadChargeCells (ById $payment 'gridCharges') $main)
+    $cellRows=@(ReadChargeCells (ById $payment 'gridCharges') $main $true)
     if(@(MatchChargeRows $cellRows $allocationDraft).Count -ne 2){throw 'Isolated small R5 column OCR did not match exact rows'}
    }
    if((ReadValue (ById $payment 'textAllocationState')) -cne '1|2|0'){throw 'Wrong clear/prompt/save counts'}

@@ -20,7 +20,7 @@ function OcrControl($element,$main,$cropRect=$null,[bool]$normalize=$true){
  if($r.Width -le 2 -or $r.Height -le 2 -or $element.Current.IsOffscreen){throw 'OCR target not visible'}
  $file=Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString()+'.png')
  $bitmap=[System.Drawing.Bitmap]::new([int]$r.Width,[int]$r.Height);$g=[System.Drawing.Graphics]::FromImage($bitmap)
- $scaleLimit=if($cropRect -and $normalize -and $r.Height -lt 150){6}else{3}
+ $scaleLimit=if($cropRect -and $normalize -and ($r.Height -lt 150 -or $r.Width -lt 150)){6}else{3}
  $scale=[Math]::Max(1,[Math]::Min($scaleLimit,[Math]::Floor(4000/[Math]::Max($r.Width,$r.Height))))
  $padding=if($cropRect){4}else{0}
  $prepared=$null;$pg=$null

@@ -208,7 +208,7 @@ function MatchChargeRows($rows,$draft){
 }
 # Read each identity column separately when whole-grid OCR merges text across cells.
 # Only verified physical borders are used; a failed exact match never becomes fuzzy.
-function ReadChargeCells($grid,$main){
+function ReadChargeCells($grid,$main,[bool]$normalize=$false){
  $geometry=$script:odChargeGeometry
  if($geometry.method -ceq 'verified-ocr-headers'){throw 'Cannot isolate Outstanding cells without physical column borders'}
  $header=$geometry.header;$r=$grid.Current.BoundingRectangle
@@ -220,7 +220,7 @@ function ReadChargeCells($grid,$main){
   if($crop.Width -lt 5 -or $crop.Height -lt 5){throw ('Invalid verified Outstanding column crop: '+$name)}
   # Raw colour preserves fine remote-display glyphs. Column isolation prevents
   # OCR from joining Date/Patient or Code/Tooth into one word.
-  $columns[$name]=@(OcrRows $grid $main $crop $false)
+  $columns[$name]=@(OcrRows $grid $main $crop $normalize)
   $lines+=$columns[$name]
  }
  $rows=@()
@@ -244,8 +244,14 @@ function ResolveChargeTargets($grid,$draft,$main){
  $rows=@(ReadChargeRows $grid $main)
  try{$targets=@(MatchChargeRows $rows $draft)}catch{
   if($_.Exception.Message -notlike 'Outstanding procedure missing or ambiguous:*'){throw}
-  $rows=@(ReadChargeCells $grid $main)
-  $targets=@(MatchChargeRows $rows $draft)
+  $attempts=@();$matched=$false;$lastError=$_
+  foreach($normalize in @($false,$true)){
+   $rows=@(ReadChargeCells $grid $main $normalize)
+   $attempts+=@{normalized=$normalize;rows=$rows;columns=$script:odOutstandingRead.columnLines}
+   try{$targets=@(MatchChargeRows $rows $draft);$matched=$true;break}catch{$lastError=$_}
+  }
+  $script:odOutstandingRead.columnAttempts=$attempts
+  if(-not $matched){throw $lastError}
  }
  return @{rows=$rows;targets=$targets}
 }
