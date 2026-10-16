@@ -97,7 +97,7 @@ public class SplitGrid : Control {
    string[] values={"09/24/2026",amount,"09/20/2026","Synthetic service",code=="D2392"?"14":"","DOC"};
    for(int i=0;i<ids.Length;i++)edit.Controls.Add(new TextBox{Name=ids[i],Text=values[i],Location=new Point(20,10+i*30),Width=240});
    var patient=new ListBox{Name="listPatient",Location=new Point(20,195),Size=new Size(220,35)};patient.Items.Add("TEST, RYAN");patient.SelectedIndex=0;edit.Controls.Add(patient);
-   edit.Controls.Add(new Label{Name="comboUnearnedTypes",Text="None",Location=new Point(20,245),Size=new Size(160,25),Font=new Font("Segoe UI",10)});
+   edit.Controls.Add(new PaintedCombo(new[]{"None"},"None"){Name="comboUnearnedTypes",Location=new Point(20,245),Size=new Size(160,25)});
    edit.ShowDialog(FindForm());
   }
   base.OnMouseDoubleClick(e);

@@ -180,8 +180,8 @@ function VerifySplits($payment,$draft,$main){
   if((ReadValue (ById $edit 'textProcTooth')).Trim() -ine ([string]$split.tooth).Trim()){throw 'Split tooth changed'}
   if((ReadValue (ById $edit 'textProcProv')).Trim() -ine ([string]$split.providerAbbr).Trim()){throw 'Split provider changed'}
   if((ListKey (SelectedText (ById $edit 'listPatient') $main)) -cne (ListKey ([string]$draft.splitPatientName))){throw 'Split patient changed'}
-  $unearned=@(OcrControl (ById $edit 'comboUnearnedTypes') $main)
-  if((($unearned|ForEach-Object{$_.text}) -join ' ') -notmatch '^\s*(None|\(none\))\s*$'){throw 'Split Unearned Type changed'}
+  $unearned=ControlText (ById $edit 'comboUnearnedTypes') $main
+  if($unearned -notmatch '^\s*(None|\(none\))\s*$'){throw ('Split Unearned Type changed or unreadable: '+$unearned)}
   CloseWindow $edit
   $payment=WaitOnly $main 'FormPayment'
  }

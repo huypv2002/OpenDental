@@ -13,6 +13,12 @@ var ocr=File.ReadAllText(args[0]);var workflow=File.ReadAllText(args[1]);
 // Load only the pure OCR row aggregation; WinRT hardware calls remain untested here.
 ocr=ocr[ocr.IndexOf("function OcrRows(")..];
 ps.AddScript("$ErrorActionPreference='Stop'\n"+workflow+"\n"+discovery+"\n"+account+"\n"+allocation+"\n"+ocr+"\n"+"""
+$splitHeader=@{text='Prov Patient Code Type Amount';y=10;words=@(
+ @{text='Prov';x=0;width=30},@{text='Patient';x=70;width=50},@{text='Code';x=240;width=35},@{text='Type';x=320;width=35},@{text='Amount';x=470;width=50})}
+$splitBody=@{text='DOC 00120 00120 Proc 86.40';y=40;words=@(
+ @{text='DOC';x=0;width=28},@{text='00120';x=70;width=45},@{text='00120';x=240;width=40},@{text='Proc';x=320;width=35},@{text='86.40';x=470;width=45})}
+$normalized=@(NormalizeSplitCodes @($splitHeader,$splitBody))
+if($normalized[1].text -cne 'DOC 00120 D0120 Proc 86.40'){throw 'Split OCR correction escaped the Code column'}
 $same=@{handle=100;processId=20;id='FormOpenDental';element='correct'}
 if((SelectOdMain @($same,$same)) -cne 'correct'){throw 'Duplicate native/UIA handle was not deduplicated'}
 $cases=@(
