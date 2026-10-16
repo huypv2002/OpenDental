@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.15
+# LUK MetLife Assistant 0.3.16
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -170,3 +170,9 @@ npm --prefix metlife-electron run diagnose:outstanding
 Lệnh đưa Payment lên trước để đọc rồi xuất JSON vào thư mục LUK-MetLife-diagnostics dưới TEMP, in đường dẫn đầy đủ ra console. Nó không bấm checkbox, không đổi filter, không chọn dòng, không xóa Splits, không Add Partials, không Save/Close. File gồm version/time, trạng thái checkbox, Amount/Split Total, raw/parsed rows và lỗi parse nếu có. Cần dữ liệu thật này để xác định D0120 đang sai ở trường nào; bản này không thay đổi điều kiện khớp hoặc sửa parser theo phỏng đoán.
 
 Kiểm chứng chẩn đoán: [Windows CI 38899484849](https://github.com/huypv2002/OpenDental/actions/runs/38899484849) pass x86/x64. Gọi chính CLI Node → PowerShell trên Payment fixture đang mở, kiểm tra raw/parsed rows được xuất và Amount/Splits/checkbox/số lần Save không thay đổi. 20 app tests mỗi job và policy/cú pháp tại máy phát triển pass. Chưa có OCR dòng D0120 thực tế từ R5 để chốt nguyên nhân hoặc khẳng định đã sửa lỗi khớp procedure.
+
+## Bản 0.3.16 — đọc bảng nhỏ theo capture R5 và kiểm tra tới cuối draft
+
+Capture `gridCharges` trên R5 rộng 598 px, chữ khoảng 10 px; bài kiểm tra cũ dùng bảng 970 px/chữ lớn nên chưa đủ đại diện. Vùng lấy đường kẻ nay nằm trong hàng tiêu đề, tránh phần đệm làm mất đường kẻ. Khi OCR cả bảng ghép chữ tiêu đề, adapter đọc lại riêng header bằng ảnh màu trước; khi định danh dòng chưa khớp, đọc riêng Date/Patient/Prov/Code/Tooth theo đường kẻ vật lý đã xác minh. Vẫn yêu cầu đúng và duy nhất code/ngày/bệnh nhân/provider/răng, không tự bỏ điều kiện để chọn dòng.
+
+Đọc lại Current Payment Splits xử lý trường hợp Windows OCR nhận `D0120` thành `00120` chỉ trong cột Code được xác định, rồi mở từng split để kiểm tra chi tiết. Bộ kiểm tra Windows bao gồm bảng 598 px với header thật đã có trong capture, dữ liệu bệnh nhân giả, cùng luồng chọn patient → Delete All → Show All Charges → chọn dòng → Add Partials → tổng tiền → chi tiết splits → Payment vẫn mở, không Save. Cảnh báo Outstanding âm vẫn dừng để người dùng tự kiểm tra. Đây là kiểm thử Windows với fixture dựa trên capture, chưa phải xác minh chạy trên R5 của phòng khám.
