@@ -33,10 +33,11 @@ public class AccountGrid : Control {
  public string Selection {get{return string.Join(",",selected);}}
  public int[] SelectedRows {get{var result=new int[selected.Count];selected.CopyTo(result);return result;}}
  public string CodeAt(int row){return rows[row][3];}
- public bool ShowAll=true,NoDividers=false;bool chargesMode;
+ public bool ShowAll=true,NoDividers=false,Compact=false;bool chargesMode;
+ int RowTop {get{return Compact?18:30;}} int RowHeight {get{return Compact?14:32;}}
  public AccountGrid(bool charges=false){chargesMode=charges;if(charges){x=new[]{4,130,315,385,465,515,780};foreach(var row in rows)row[1]=row[1]=="RYAN"?"TEST, RYAN":"TEST, OTHER";}SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);TabStop=true;Font=new Font("Segoe UI",10);}
  protected override void OnMouseDown(MouseEventArgs e){
-  Focus();int row=(e.Y-30)/32;if(e.Y<30||row<0||row>=rows.Length)return;
+  Focus();int row=(e.Y-RowTop)/RowHeight;if(e.Y<RowTop||row<0||row>=rows.Length)return;
   if((ModifierKeys&Keys.Control)==0){selected.Clear();selected.Add(row);}
   else if(!selected.Remove(row))selected.Add(row);
   Invalidate();base.OnMouseDown(e);
@@ -44,7 +45,9 @@ public class AccountGrid : Control {
  protected override void OnPaint(PaintEventArgs e){
   e.Graphics.Clear(Color.White);
   string[] header={"Date","Patient","Prov","Code","Tth","Description","Charges"};
-  if(chargesMode){
+  if(chargesMode&&Compact){
+   using(var header=Image.FromFile(System.IO.Path.Combine(Application.StartupPath,"outstanding-header-r5.png")))e.Graphics.DrawImage(header,new Rectangle(0,0,598,18));
+  }else if(chargesMode){
    int[] edges={0,120,310,380,460,510,775,850,970};
    // Reproduce an outer frame inside the UIA grid bounds: it is not a data column.
    if(!NoDividers)e.Graphics.DrawLine(Pens.Gray,3,0,3,28);
@@ -57,10 +60,10 @@ public class AccountGrid : Control {
   }else{for(int c=0;c<header.Length;c++)e.Graphics.DrawString(header[c],Font,Brushes.Black,new PointF(x[c],5));}
   for(int r=0;r<rows.Length;r++){
    if(chargesMode&&!ShowAll&&(r==0||r==2))continue;
-   int y=30+r*32;
-   if(selected.Contains(r)){using(var brush=new SolidBrush(Color.FromArgb(200,220,235)))e.Graphics.FillRectangle(brush,1,y,Width-2,32);}
-   for(int c=0;c<rows[r].Length;c++)e.Graphics.DrawString(rows[r][c],Font,Brushes.Black,new PointF(x[c],y+7));
-   e.Graphics.DrawLine(Pens.LightGray,0,y+31,Width,y+31);
+   int y=RowTop+r*RowHeight;
+   if(selected.Contains(r)){using(var brush=new SolidBrush(Color.FromArgb(200,220,235)))e.Graphics.FillRectangle(brush,1,y,Width-2,RowHeight);}
+   for(int c=0;c<rows[r].Length;c++)e.Graphics.DrawString(rows[r][c],Font,Brushes.Black,new PointF(Compact?new[]{3,67,190,250,312,337,459}[c]:x[c],y+(Compact?0:7)));
+   e.Graphics.DrawLine(Pens.LightGray,0,y+RowHeight-1,Width,y+RowHeight-1);
   }
  }
 }
@@ -88,14 +91,14 @@ public class SplitGrid : Control {
  protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(Color.White);e.Graphics.DrawString("Prov Patient Code Type Amount",Font,Brushes.Black,3,3);for(int i=0;i<Rows.Count;i++)e.Graphics.DrawString(Rows[i],Font,Brushes.Black,3,30+i*25);}
 }
 public class AllocationPayment : Form {
- public AllocationPayment(bool warn){
+ public AllocationPayment(bool warn,bool compact=false){
   Name="FormPayment";Text="Fixture Payment Allocation";ClientSize=new Size(1000,620);StartPosition=FormStartPosition.CenterScreen;
   var patient=new PaintedCombo(new[]{"All","OTHER","RYAN"},"All"){Name="comboPatientOutstandingFilter",Location=new Point(550,20),Size=new Size(180,25)};Controls.Add(patient);
   Controls.Add(new PaintedCombo(new[]{"All","RYAN"},"RYAN"){Name="comboPatientPaySplitsFilter",Location=new Point(10,20),Size=new Size(160,25)});
   Controls.Add(new PaintedCombo(new[]{"All","DOC"},"DOC"){Name="comboProviderPaySplitsFilter",Location=new Point(180,20),Size=new Size(160,25)});
   Controls.Add(new PaintedCombo(new[]{"None","Patient"},"Patient"){Name="comboGroupBy",Location=new Point(740,20),Size=new Size(180,25)});
   var all=new PaintedCheck{Checked=warn,Name="checkShowAll",Location=new Point(550,60),Size=new Size(200,24)};Controls.Add(all);
-  var grid=new AccountGrid(true){NoDividers=warn,ShowAll=warn,Name="gridCharges",Location=new Point(5,120),Size=new Size(970,180)};Controls.Add(grid);
+  var grid=new AccountGrid(true){Compact=compact,NoDividers=warn,ShowAll=warn,Name="gridCharges",Location=new Point(5,120),Size=new Size(compact?598:970,180)};Controls.Add(grid);if(compact)grid.Font=new Font("Arial",8,FontStyle.Regular,GraphicsUnit.Point);
   var clicks=new TextBox{Name="textShowAllClicks",Text="0",Location=new Point(650,440)};Controls.Add(clicks);
   all.Changed+=()=>{clicks.Text=(int.Parse(clicks.Text)+1).ToString();grid.ShowAll=all.Checked;grid.Invalidate();};
   var splits=new SplitGrid{Name="gridSplits",Location=new Point(10,330),Size=new Size(600,180)};Controls.Add(splits);
@@ -149,6 +152,8 @@ public class Fixture : Form {
   action.Click+=(sender,e)=>{amount.Text="77.00";};account.Controls.Add(action);
   var allocation=new Button{Name="butAllocation",Text="Allocation fixture",Location=new Point(20,550),Width=160};account.Controls.Add(allocation);
   allocation.Click+=(sender,e)=>{using(var payment=new AllocationPayment(false))payment.ShowDialog(this);};
+  var compact=new Button{Name="butAllocationCompact",Text="R5 compact",Location=new Point(680,550),Width=160};account.Controls.Add(compact);
+  compact.Click+=(sender,e)=>{using(var payment=new AllocationPayment(false,true))payment.ShowDialog(this);};
   var warning=new Button{Name="butAllocationWarning",Text="Warning fixture",Location=new Point(200,550),Width=160};account.Controls.Add(warning);
   warning.Click+=(sender,e)=>{using(var payment=new AllocationPayment(true))payment.ShowDialog(this);};
   var popup=new Button {Name="butPopup",Text="Open fixture popup",Location=new Point(20,290),Size=new Size(200,35)};

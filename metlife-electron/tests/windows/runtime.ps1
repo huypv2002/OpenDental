@@ -1,4 +1,4 @@
-param([ValidateSet('x86','x64')][string]$FixtureArchitecture='x64')
+﻿param([ValidateSet('x86','x64')][string]$FixtureArchitecture='x64')
 $ErrorActionPreference='Stop'
 $root=(Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $windows=Join-Path $root 'windows'
@@ -151,8 +151,9 @@ try{
   [pscustomobject]@{code='D2392';date='2026-09-20';tooth='14';providerAbbr='DOC';amountCents=15000},
   [pscustomobject]@{code='D0120';date='2026-09-20';tooth='';providerAbbr='DOC';amountCents=8640}
  )}
- foreach($warningCase in @($false,$true)){
-  $button=if($warningCase){'butAllocationWarning'}else{'butAllocation'}
+ foreach($case in @('normal','warning','compact')){
+  $warningCase=$case -ceq 'warning'
+  $button=if($case -ceq 'compact'){'butAllocationCompact'}elseif($warningCase){'butAllocationWarning'}else{'butAllocation'}
   Click (FindControl $button) $main
   $payment=WaitOnly $main 'FormPayment'
   EnsureShowAllCharges $payment $main
@@ -175,6 +176,11 @@ try{
    Start-Sleep -Milliseconds 200
   }else{
    if((ReadValue (ById $payment 'textSplitTotal')) -cne '236.40'){throw 'Wrong allocation total'}
+   if($case -ceq 'compact'){
+    if($script:odChargeGeometry.method -ceq 'verified-ocr-headers'){throw 'Real-size R5 header still lost physical dividers'}
+    $cellRows=@(ReadChargeCells (ById $payment 'gridCharges') $main)
+    if(@(MatchChargeRows $cellRows $allocationDraft).Count -ne 2){throw 'Isolated small R5 column OCR did not match exact rows'}
+   }
    if((ReadValue (ById $payment 'textAllocationState')) -cne '1|2|0'){throw 'Wrong clear/prompt/save counts'}
    $readPath=Join-Path $out 'current-outstanding-read.json'
    & node (Join-Path $root 'scripts/diagnose-outstanding.cjs') $readPath

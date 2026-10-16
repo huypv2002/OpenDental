@@ -156,8 +156,10 @@ function ReadChargeRows($grid,$main,$lines=$null){
  $script:odOutstandingRead=@{rawLines=@($lines);gridRect=$grid.Current.BoundingRectangle.ToString()}
  $header=ChargeHeader $lines
  $r=$grid.Current.BoundingRectangle
- $top=[int][Math]::Max($r.Top,$header.y-4)
- $height=[int][Math]::Ceiling($header.height+8)
+ $top=[int][Math]::Ceiling([Math]::Max($r.Top,$header.y))
+ # Extra title/body padding previously diluted the divider pixels below the
+ # detector threshold on the real 10px R5 header. Sample within the caption band.
+ $height=[int][Math]::Max(6,[Math]::Floor($header.y+$header.height)-$top)
  $bitmap=[Drawing.Bitmap]::new([int]$r.Width,$height);$graphics=[Drawing.Graphics]::FromImage($bitmap)
  try{
   AssertFocus $main;$graphics.CopyFromScreen([int]$r.Left,$top,0,0,$bitmap.Size)
@@ -190,9 +192,52 @@ function MatchChargeRows($rows,$draft){
  }
  return @($targets|Sort-Object { [double]$_.row.y })
 }
-function SelectChargeRows($grid,$draft,$main){
+# Read each identity column separately when whole-grid OCR merges text across cells.
+# Only verified physical borders are used; a failed exact match never becomes fuzzy.
+function ReadChargeCells($grid,$main){
+ $geometry=$script:odChargeGeometry
+ if($geometry.method -ceq 'verified-ocr-headers'){throw 'Cannot isolate Outstanding cells without physical column borders'}
+ $header=$geometry.header;$r=$grid.Current.BoundingRectangle
+ $top=[Math]::Ceiling($header.y+$header.height+1)
+ $lines=@();$columns=@{}
+ foreach($name in @('Date','Patient','Prov','Code','Tooth')){
+  $index=$geometry.cells[$name];$left=$geometry.edges[$index]+2;$right=$geometry.edges[$index+1]-2
+  $crop=[pscustomobject]@{Left=$left;Top=$top;Width=$right-$left;Height=$r.Bottom-$top}
+  if($crop.Width -lt 5 -or $crop.Height -lt 5){throw ('Invalid verified Outstanding column crop: '+$name)}
+  # Raw colour preserves fine remote-display glyphs. Column isolation prevents
+  # OCR from joining Date/Patient or Code/Tooth into one word.
+  $columns[$name]=@(OcrRows $grid $main $crop $false)
+  $lines+=$columns[$name]
+ }
+ $rows=@()
+ foreach($date in $columns.Date){
+  if($date.text -notmatch '^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$'){continue}
+  $cy=$date.y+$date.height/2;$values=@{Date=$date.text};$valid=$true
+  foreach($name in @('Patient','Prov','Code','Tooth')){
+   $parts=@($columns[$name]|Where-Object{[Math]::Abs(($_.y+$_.height/2)-$cy) -le [Math]::Max(3,$date.height*0.4)})
+   if($parts.Count -gt 1){$valid=$false;break}
+   $values[$name]=if($parts.Count){$parts[0].text.Trim()}else{''}
+  }
+  if(-not $valid){continue}
+  $code=$values.Code.ToUpperInvariant();if($code -cmatch '^0[0-9]{4}$'){$code='D'+$code.Substring(1)}
+  $rows+=@{date=$values.Date;patient=$values.Patient;provider=$values.Prov;code=$code;rawCode=$values.Code;tooth=$values.Tooth;x=($geometry.edges[$geometry.cells.Code]+$geometry.edges[$geometry.cells.Code+1])/2;y=$date.y;height=$date.height}
+ }
+ $script:odOutstandingRead.columnLines=$columns
+ $script:odOutstandingRead.columnRows=$rows
+ return $rows
+}
+function ResolveChargeTargets($grid,$draft,$main){
  $rows=@(ReadChargeRows $grid $main)
- $targets=@(MatchChargeRows $rows $draft)
+ try{$targets=@(MatchChargeRows $rows $draft)}catch{
+  if($_.Exception.Message -notlike 'Outstanding procedure missing or ambiguous:*'){throw}
+  $rows=@(ReadChargeCells $grid $main)
+  $targets=@(MatchChargeRows $rows $draft)
+ }
+ return @{rows=$rows;targets=$targets}
+}
+function SelectChargeRows($grid,$draft,$main){
+ $resolved=ResolveChargeTargets $grid $draft $main
+ $rows=@($resolved.rows);$targets=@($resolved.targets)
  PointClick $targets[0].row.x ($targets[0].row.y+$targets[0].row.height/2) $main
  if($targets.Count -gt 1){
   AssertFocus $main;[OdNative]::keybd_event(17,0,0,[UIntPtr]::Zero)
@@ -200,7 +245,8 @@ function SelectChargeRows($grid,$draft,$main){
   finally{[OdNative]::keybd_event(17,0,2,[UIntPtr]::Zero)}
  }
  Start-Sleep -Milliseconds 200
- $after=@(ReadChargeRows $grid $main);$confirmed=@(MatchChargeRows $after $draft)
+ $resolved=ResolveChargeTargets $grid $draft $main
+ $after=@($resolved.rows);$confirmed=@($resolved.targets)
  $rect=$grid.Current.BoundingRectangle;$selected=@{}
  foreach($row in $after){
   $center=[int]($row.y+$row.height/2)
