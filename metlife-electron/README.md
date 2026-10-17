@@ -1,4 +1,4 @@
-# LUK MetLife Assistant 0.3.18
+# LUK MetLife Assistant 0.3.19
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
 
@@ -188,3 +188,9 @@ Lượt OCR tách cột còn làm hỏng 6 ngày và không đọc được đ�
 Sau mỗi lần nhập amount, tool nhận diện đúng popup `Overpaid Charge Warning` trong cùng tiến trình OD, kiểm tra nguyên nội dung `One or more Outstanding Charges will be negative. Continue?` và hai nút OK/Cancel, bấm OK một lần rồi đợi đúng Amount của dòng tiếp theo hoặc Payment sau dòng cuối. Cảnh báo này có thể xuất hiện ở từng dòng; tool tiếp tục nhập toàn bộ số tiền theo PDF và kiểm tra tổng/chi tiết splits. Popup khác hoặc cùng tiêu đề nhưng khác nội dung vẫn được giữ để kiểm tra.
 
 Fill draft vẫn không Save hoặc đóng Payment. Khi cập nhật từ bản cũ đã dừng ở popup, lượt chạy cũ đã kết thúc; việc pull/restart source không nối tiếp lượt cũ. Hoàn tất hoặc hủy draft đang mở trước khi bắt đầu lại từ app.
+
+## Bản 0.3.19 — tự chọn bệnh nhân và mở Account trước Payment
+
+Fill draft mở Account trước khi tìm bệnh nhân. Khi cần đổi bệnh nhân, tool xóa bộ lọc cũ, tìm theo PatNum đã đối chiếu, bấm Search, chọn đúng dòng PatNum rồi tự bấm OK và xác minh PatNum trên tiêu đề OD. Bảng tìm kiếm tự vẽ không có UIA Text vẫn được đọc bằng OCR đúng cột PatNum; không chọn ID xuất hiện ở cột tên/điện thoại hoặc một phần của ID khác.
+
+Sau khi chọn bệnh nhân, tool luôn bấm Account lần nữa và chờ đúng ControlAccount/gridAccount/thanh Payment hiển thị trước khi mở Payment. Không chỉ dựa vào IsOffscreen của ControlAccount, vì module có thể còn nằm trong cây UIA khi đang ở Chart/Family. Kiểm thử Windows dựng ca bắt đầu ở Chart, chọn bệnh nhân qua bảng tự vẽ rồi lại ở Chart, và ca đã đúng bệnh nhân nhưng ở Chart; cả hai phải hoàn tất bước chuẩn bị bằng một lần gọi, không cần bấm Account hoặc Fill draft lần hai.
