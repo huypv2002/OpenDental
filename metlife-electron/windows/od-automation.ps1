@@ -125,27 +125,8 @@ try{
  [void][OdNative]::SetForegroundWindow([IntPtr]$main.Current.NativeWindowHandle)
  Start-Sleep -Milliseconds 200;AssertFocus $main
  $automationStarted=$true
- EnsurePatient $main $request.draft
+ $account=PreparePaymentAccount $main $request.draft
  $pat=[regex]::Match($main.Current.Name,'-\s*(\d+)\s*$').Groups[1].Value
- $visibleAccount=@(Elements $main|Where-Object{$_.Current.AutomationId -ceq 'ControlAccount' -and -not $_.Current.IsOffscreen})
- if($visibleAccount.Count -eq 0){
-  $mr=$main.Current.BoundingRectangle
-  $rail=[System.Drawing.Bitmap]::new([int][Math]::Min(100,$mr.Width),[int][Math]::Min(650,$mr.Height))
-  $rg=[System.Drawing.Graphics]::FromImage($rail);$point=$null
-  try{
-   $rg.CopyFromScreen([int]$mr.Left,[int]$mr.Top,0,0,$rail.Size)
-   foreach($name in @('account-r5-family-state.png','account-r5-account-state.png')){
-    $tpl=[System.Drawing.Bitmap]::new((Join-Path $PSScriptRoot $name))
-    try{$point=[OdNative]::Locate($rail,$tpl);break}catch{}finally{$tpl.Dispose()}
-   }
-  }finally{$rg.Dispose();$rail.Dispose()}
-  if($null -eq $point){throw 'Account navigation image not recognized; no click was made.'}
-  AssertFocus $main
-  [void][OdNative]::SetCursorPos([int]$mr.Left+$point.X,[int]$mr.Top+$point.Y)
-  [OdNative]::mouse_event(2,0,0,0,[UIntPtr]::Zero);[OdNative]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
-  Start-Sleep -Milliseconds 350
- }
- $account=ById $main 'ControlAccount'
  # Payment toolbar is owner-drawn. Search only its visible account toolbar rectangle.
  $toolbar=ById $account 'ToolBarMain';$r=$toolbar.Current.BoundingRectangle
  $bitmap=[System.Drawing.Bitmap]::new([int]$r.Width,[int]$r.Height)

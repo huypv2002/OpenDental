@@ -38,6 +38,13 @@ if(-not $caught){throw 'Provider from another physical row was accepted'}
 $normalizedColumns.Prov=@(@{text='OOC';y=600;height=10})
 $caught=$false;try{MatchChargeEvidence @($evidenceRow) $attempts $evidenceDraft}catch{$caught=$true}
 if(-not $caught){throw 'Provider spelling was guessed'}
+$patientHeader=@{text='PatNum LastName FirstName';y=10;words=@(@{text='PatNum';x=10;width=45},@{text='LastName';x=75;width=60},@{text='FirstName';x=155;width=60})}
+$patientRow=@{text='99 TEST PERSON';y=40;height=12;words=@(@{text='99';x=11;width=15},@{text='TEST';x=75;width=35},@{text='PERSON';x=155;width=50})}
+if(@(PatientSearchHits @($patientHeader,$patientRow) '99').Count -ne 1){throw 'Owner-drawn exact PatNum row was not found'}
+if(@(PatientSearchHits @($patientHeader,$patientRow) '9').Count -ne 0){throw 'PatNum substring selected'}
+$otherRow=@{text='98 TEST 99';y=60;height=12;words=@(@{text='98';x=11;width=15},@{text='TEST';x=75;width=35},@{text='99';x=155;width=15})}
+if(@(PatientSearchHits @($patientHeader,$otherRow) '99').Count -ne 0){throw 'Number outside PatNum column selected'}
+if(@(PatientSearchHits @($patientHeader,$patientRow,$patientRow) '99').Count -ne 2){throw 'Duplicate PatNum OCR matches concealed'}
 $same=@{handle=100;processId=20;id='FormOpenDental';element='correct'}
 if((SelectOdMain @($same,$same)) -cne 'correct'){throw 'Duplicate native/UIA handle was not deduplicated'}
 $cases=@(

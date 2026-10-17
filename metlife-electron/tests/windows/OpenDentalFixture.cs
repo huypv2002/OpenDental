@@ -160,6 +160,56 @@ public class AllocationPayment : Form {
   var save=new Button{Name="butSave",Text="Save",Location=new Point(850,550)};Controls.Add(save);save.Click+=(sender,e)=>{saves++;state.Text=cleared+"|"+prompts+"|"+saves;};
  }
 }
+public class PatientResultsGrid : Control {
+ public bool HasResult=false,Selected=false;public event Action Picked;
+ public PatientResultsGrid(){Font=new Font("Segoe UI",10);SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint,true);TabStop=true;}
+ protected override void OnPaint(PaintEventArgs e){
+  e.Graphics.Clear(Color.White);string[] labels={"PatNum","LastName","FirstName"};int[] x={4,100,260};
+  for(int i=0;i<labels.Length;i++)e.Graphics.DrawString(labels[i],Font,Brushes.Black,x[i],5);
+  if(HasResult){if(Selected)e.Graphics.FillRectangle(Brushes.LightBlue,0,30,Width,30);e.Graphics.DrawString("99",Font,Brushes.Black,4,35);e.Graphics.DrawString("TEST",Font,Brushes.Black,100,35);e.Graphics.DrawString("PERSON",Font,Brushes.Black,260,35);}
+ }
+ protected override void OnMouseDown(MouseEventArgs e){if(HasResult&&e.Y>=30&&e.Y<60){Selected=true;Invalidate();if(Picked!=null)Picked();}base.OnMouseDown(e);}
+}
+public class NavigationRail : Control {
+ public event Action AccountClicked;
+ public NavigationRail(){Font=new Font("Segoe UI",10);}
+ protected override void OnPaint(PaintEventArgs e){e.Graphics.Clear(Color.White);e.Graphics.DrawString("Account",Font,Brushes.Black,2,220);}
+ protected override void OnMouseDown(MouseEventArgs e){if(e.Y>=215&&e.Y<250&&AccountClicked!=null)AccountClicked();base.OnMouseDown(e);}
+}
+public class NavigationFixture : Form {
+ public NavigationFixture(){
+  Name="FormOpenDental";Text="Open Dental {Fixture} - OTHER - 98";ClientSize=new Size(1000,620);StartPosition=FormStartPosition.CenterScreen;
+  var account=new Panel{Name="ControlAccount",Location=new Point(60,40),Size=new Size(650,520)};Controls.Add(account);
+  var paymentBar=new Panel{Name="ToolBarMain",Location=new Point(0,0),Size=new Size(650,25)};account.Controls.Add(paymentBar);
+  var payImage=Image.FromFile(System.IO.Path.Combine(Application.StartupPath,"new-payment-r5.png"));
+  paymentBar.Controls.Add(new PictureBox{Image=payImage,Location=new Point(0,0),Size=payImage.Size});
+  account.Controls.Add(new AccountGrid{Name="gridAccount",Location=new Point(0,30),Size=new Size(650,180)});
+  // The covered Account remains present. The module must be clicked, regardless
+  // of whether UIA reports its cached control as visible.
+  var chart=new Panel{Name="ControlChart",Location=new Point(60,40),Size=new Size(930,520),BackColor=Color.WhiteSmoke};chart.Controls.Add(new Label{Text="Chart module",Location=new Point(15,10),Width=200});Controls.Add(chart);chart.BringToFront();
+  int accountClicks=0,searches=0;
+  var state=new TextBox{Name="textNavigationState",Text="0|0",Location=new Point(750,570),Width=180,ReadOnly=true};Controls.Add(state);state.BringToFront();
+  var reset=new Button{Name="butChart",Text="Chart",Location=new Point(750,530)};Controls.Add(reset);reset.BringToFront();reset.Click+=(a,b)=>{chart.BringToFront();reset.BringToFront();state.BringToFront();};
+  var rail=new NavigationRail{Name="moduleRail",Location=new Point(0,0),Size=new Size(60,560)};Controls.Add(rail);rail.BringToFront();
+  rail.AccountClicked+=()=>{accountClicks++;account.BringToFront();state.Text=accountClicks+"|"+searches;};
+  var toolbar=new Panel{Name="ToolBarMain",Location=new Point(60,0),Size=new Size(930,25)};Controls.Add(toolbar);toolbar.BringToFront();
+  var selectImage=Image.FromFile(System.IO.Path.Combine(Application.StartupPath,"select-patient-r5.png"));
+  var select=new PictureBox{Image=selectImage,Location=new Point(4,1),Size=selectImage.Size};toolbar.Controls.Add(select);
+  select.Click+=(a,b)=>{
+   using(var picker=new Form{Name="FormPatientSelect",Text="Select Patient",ClientSize=new Size(700,360),StartPosition=FormStartPosition.CenterParent}){
+    var grid=new PatientResultsGrid{Name="gridMain",Location=new Point(5,10),Size=new Size(440,280)};picker.Controls.Add(grid);
+    var idPanel=new Panel{Name="textPatNum",Location=new Point(490,20),Size=new Size(150,25)};var id=new TextBox{Dock=DockStyle.Fill};idPanel.Controls.Add(id);picker.Controls.Add(idPanel);
+    var residual=new TextBox{Name="textLName",Text="STALE FILTER",Location=new Point(490,60)};picker.Controls.Add(residual);
+    var search=new Button{Name="butSearch",Text="Search",Location=new Point(490,105)};picker.Controls.Add(search);
+    var ok=new Button{Name="butOK",Text="OK",Enabled=false,Location=new Point(490,280)};picker.Controls.Add(ok);
+    search.Click+=(c,d)=>{searches++;state.Text=accountClicks+"|"+searches;grid.HasResult=id.Text=="99"&&residual.Text=="";grid.Invalidate();};
+    grid.Picked+=()=>{ok.Enabled=true;};ok.Click+=(c,d)=>{if(!grid.Selected)throw new Exception("Unverified patient selected");picker.DialogResult=DialogResult.OK;};
+    if(picker.ShowDialog(this)==DialogResult.OK){Text="Open Dental {Fixture} - TEST, PERSON - 99";chart.BringToFront();reset.BringToFront();state.BringToFront();}
+   }
+  };
+  FormClosed+=(a,b)=>{selectImage.Dispose();payImage.Dispose();};
+ }
+}
 public class Fixture : Form {
  public Fixture() {
   Name="FormOpenDental"; Text="Open Dental {Fixture} - TEST , PERSON - 99";
@@ -193,6 +243,8 @@ public class Fixture : Form {
   unknownWarning.Click+=(sender,e)=>{using(var payment=new AllocationPayment(true,false,true))payment.ShowDialog(this);};
   var warning=new Button{Name="butAllocationWarning",Text="Warning fixture",Location=new Point(200,550),Width=160};account.Controls.Add(warning);
   warning.Click+=(sender,e)=>{using(var payment=new AllocationPayment(true))payment.ShowDialog(this);};
+  var navigation=new Button{Name="butNavigationFixture",Text="Navigation fixture",Location=new Point(460,290),Width=160};account.Controls.Add(navigation);
+  navigation.Click+=(a,b)=>{using(var form=new NavigationFixture())form.ShowDialog(this);};
   var popup=new Button {Name="butPopup",Text="Open fixture popup",Location=new Point(20,290),Size=new Size(200,35)};
   popup.Click+=(sender,e)=>{using(var child=new Form {Name="FormPayment",Text="Fixture Payment",Size=new Size(400,250)}){
    child.Controls.Add(new TextBox {Name="textCheckNum",Text="FIXTURE",Location=new Point(20,30)});

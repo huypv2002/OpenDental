@@ -22,7 +22,67 @@ function WaitOnly($main,[string]$id){
   Start-Sleep -Milliseconds 100
  };throw "Dialog did not become active: $id"
 }
+function PatientSearchHits($lines,[string]$wanted){
+ $headers=@($lines|Where-Object{@($_.words|Where-Object{$_.text -ieq 'PatNum'}).Count -eq 1})
+ if($headers.Count -ne 1){return @()}
+ $header=$headers[0];$idWord=@($header.words|Where-Object{$_.text -ieq 'PatNum'})[0]
+ $next=@($header.words|Where-Object{$_.x -gt $idWord.x+$idWord.width}|Sort-Object { [double]$_.x })
+ if($next.Count -eq 0){return @()}
+ $hits=@()
+ foreach($line in $lines){
+  if($line.y -le $header.y){continue}
+  $ids=@($line.words|Where-Object{$_.text -ceq $wanted -and $_.x+$_.width/2 -ge $idWord.x-8 -and $_.x+$_.width/2 -lt $next[0].x})
+  if($ids.Count -eq 1){$hits+=@{x=$ids[0].x+$ids[0].width/2;y=$line.y+$line.height/2}}
+ }
+ return $hits
+}
+function EnsureAccount($main,[string]$patNum=''){
+ $script:odStage='Mở tab Account'
+ AssertFocus $main
+ if(@(Modals $main).Count){throw 'Close existing OD dialogs before opening Account'}
+ $mr=$main.Current.BoundingRectangle;$desktop=[System.Windows.Forms.SystemInformation]::VirtualScreen
+ $rail=[pscustomobject]@{Left=[Math]::Max($mr.Left,$desktop.Left);Top=[Math]::Max($mr.Top,$desktop.Top);Width=[Math]::Min(100,$mr.Width);Height=[Math]::Min(650,$mr.Height)}
+ $labels=@(OcrRows $main $main $rail $false|Where-Object{$_.text.Trim() -ieq 'Account'})
+ if($labels.Count -eq 1){PointClick ($labels[0].x+$labels[0].width/2) ($labels[0].y+$labels[0].height/2) $main}
+ else{
+  # Native OD's module rail is owner-drawn. Use the captured Account icon only
+  # when its exact label cannot be read; never infer the active module from UIA.
+  $bitmap=[Drawing.Bitmap]::new([int]$rail.Width,[int]$rail.Height);$g=[Drawing.Graphics]::FromImage($bitmap);$point=$null
+  try{
+   $g.CopyFromScreen([int]$rail.Left,[int]$rail.Top,0,0,$bitmap.Size)
+   foreach($name in @('account-r5-family-state.png','account-r5-account-state.png')){
+    $template=[Drawing.Bitmap]::new((Join-Path $PSScriptRoot $name))
+    try{$point=[OdNative]::Locate($bitmap,$template);break}catch{}finally{$template.Dispose()}
+   }
+  }finally{$g.Dispose();$bitmap.Dispose()}
+  if($null -eq $point){throw 'Account navigation image/label not recognized; no click was made'}
+  PointClick ($rail.Left+$point.X) ($rail.Top+$point.Y) $main
+ }
+ for($i=0;$i -lt 30;$i++){
+  AssertFocus $main
+  if($patNum -and [regex]::Match($main.Current.Name,'-\s*(\d+)\s*$').Groups[1].Value -cne $patNum){throw 'Wrong patient while opening Account'}
+  $accounts=@(Elements $main|Where-Object{$_.Current.AutomationId -ceq 'ControlAccount' -and -not $_.Current.IsOffscreen})
+  if($accounts.Count -eq 1){
+   $bars=@(Elements $accounts[0]|Where-Object{$_.Current.AutomationId -ceq 'ToolBarMain' -and -not $_.Current.IsOffscreen})
+   $grids=@(Elements $accounts[0]|Where-Object{$_.Current.AutomationId -ceq 'gridAccount' -and -not $_.Current.IsOffscreen})
+   if($bars.Count -eq 1 -and $grids.Count -eq 1 -and $bars[0].Current.BoundingRectangle.Width -gt 20){
+    $r=$bars[0].Current.BoundingRectangle
+    $crop=[pscustomobject]@{Left=$r.Left;Top=$r.Top;Width=[Math]::Min(160,$r.Width);Height=$r.Height}
+    $words=@(OcrRows $bars[0] $main $crop $false|ForEach-Object{$_.words}|Where-Object{$_.text -ieq 'Payment'})
+    if($words.Count -eq 1){return $accounts[0]}
+   }
+  }
+  Start-Sleep -Milliseconds 150
+ }
+ throw 'Account did not become ready with a visible Payment toolbar; no Payment was opened'
+}
+function PreparePaymentAccount($main,$draft){
+ $null=EnsureAccount $main
+ EnsurePatient $main $draft
+ return EnsureAccount $main ([string]$draft.patNum)
+}
 function EnsurePatient($main,$draft){
+ $script:odStage='Chọn bệnh nhân trong OD'
  $wanted=[string]$draft.patNum
  if([regex]::Match($main.Current.Name,'-\s*(\d+)\s*$').Groups[1].Value -ceq $wanted){return}
  if(@(Modals $main).Count -gt 0){throw 'Close existing OD dialogs before selecting patient'}
@@ -35,13 +95,19 @@ function EnsurePatient($main,$draft){
  foreach($input in $inputs){$input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('')}
  $field=NestedEdit $select 'textPatNum';$field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($wanted)
  if((ReadValue $field) -cne $wanted){throw 'Patient ID field readback failed'}
+ Click (ById $select 'butSearch') $main
  $grid=ById $select 'gridMain';$hit=$null
  for($i=0;$i -lt 40;$i++){
   $cells=@(Elements $grid|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text -and $_.Current.Name -ceq $wanted -and -not $_.Current.IsOffscreen})
-  if($cells.Count -eq 1){$hit=$cells[0];break};Start-Sleep -Milliseconds 150
+  if($cells.Count -gt 1){throw 'Exact PatNum row is ambiguous in patient search'}
+  if($cells.Count -eq 1){$r=$cells[0].Current.BoundingRectangle;$hit=@{x=$r.Left+$r.Width/2;y=$r.Top+$r.Height/2};break}
+  $hits=@(PatientSearchHits @(OcrRows $grid $main) $wanted)
+  if($hits.Count -gt 1){throw 'Exact PatNum OCR row is ambiguous in patient search'}
+  if($hits.Count -eq 1){$hit=$hits[0];break}
+  Start-Sleep -Milliseconds 150
  }
  if($null -eq $hit){throw 'Exact PatNum row not uniquely exposed in patient search'}
- $r=$hit.Current.BoundingRectangle;PointClick ($r.Left+$r.Width/2) ($r.Top+$r.Height/2) $main
+ PointClick $hit.x $hit.y $main
  Click (ById $select 'butOK') $main
  for($i=0;$i -lt 40;$i++){
   if(@(Modals $main).Count -eq 0 -and [regex]::Match($main.Current.Name,'-\s*(\d+)\s*$').Groups[1].Value -ceq $wanted){return}

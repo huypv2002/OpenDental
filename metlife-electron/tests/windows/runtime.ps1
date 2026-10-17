@@ -21,6 +21,7 @@ try{
  [IO.File]::WriteAllText($exe+'.config','<configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" /></startup></configuration>')
  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/payment-type-r5.png') -Destination (Join-Path $out 'payment-type-r5.png')
  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/outstanding-header-r5.png') -Destination (Join-Path $out 'outstanding-header-r5.png')
+ foreach($imageName in @('select-patient-r5.png','new-payment-r5.png')){Copy-Item -LiteralPath (Join-Path $windows $imageName) -Destination (Join-Path $out $imageName)}
  $fixture=Start-Process -FilePath $exe -PassThru
  $handle=[IntPtr]::Zero
  for($i=0;$i -lt 200;$i++){
@@ -213,6 +214,20 @@ try{
   $payment.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
   Start-Sleep -Milliseconds 200
  }
+ # A patient search result is owner-drawn, and selecting it leaves OD in Chart.
+ # Execute the production preparation in one call without any manual selection.
+ Click (FindControl 'butNavigationFixture') $main
+ $navigation=WaitOnly $main 'FormOpenDental'
+ $draftPatient=[pscustomobject]@{patNum='99'}
+ $preparedAccount=PreparePaymentAccount $navigation $draftPatient
+ if($preparedAccount.Current.AutomationId -cne 'ControlAccount' -or $navigation.Current.Name -notmatch '- 99$'){throw 'Patient/Account preparation did not finish'}
+ if((ReadValue (ById $navigation 'textNavigationState')) -cne '2|1'){throw 'Account was not opened before and after patient selection, or Search was skipped'}
+ Click (ById $navigation 'butChart') $navigation
+ $preparedAccount=PreparePaymentAccount $navigation $draftPatient
+ if((ReadValue (ById $navigation 'textNavigationState')) -cne '4|1'){throw 'Already-selected patient in Chart required another user click or extra search'}
+ Write-Output 'Patient search/Account preparation passed: exact owner-drawn PatNum selected and confirmed; Chart switched to Account in the same run.'
+ $navigation.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+ Start-Sleep -Milliseconds 200
  # Exercise the production click helper: a modal-opening Invoke can block the caller.
  Click (FindControl 'butPopup') $main
  $popup=$null
@@ -238,7 +253,7 @@ try{
  if($LASTEXITCODE -ne 1){throw 'Adapter did not refuse two OD main windows'}
  $ambiguous=($raw -join "`n")|ConvertFrom-Json
  if($ambiguous.ok -or $ambiguous.error -notlike '*2*' -or -not (Test-Path (Join-Path $ambiguous.diagnosticFolder 'window-discovery.json'))){throw ('Bad ambiguity/diagnostics response: '+($raw -join "`n"))}
- Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production OCR selection of offscreen painted list items in both directions, missing-item refusal, exact Account Ctrl-selection, family combo popup, clearing draft splits, Outstanding Ctrl-selection, per-procedure Add Partials with exact total/no Save, preserved overpaid warning, modal click and full Node-to-PowerShell OD adapter inspect, two-window refusal and saved diagnostics."
+ Write-Output "PASS UIA3 client $([IntPtr]::Size*8)-bit / WinForms $FixtureArchitecture`: native COM startup, exact form/control IDs, descendant search, Value/Text/Selection/Invoke/Window patterns, production OCR selection of offscreen painted list items in both directions, missing-item refusal, exact Account Ctrl-selection, family combo popup, clearing draft splits, Outstanding Ctrl-selection, per-procedure Add Partials with exact total/no Save, confirmed authorized overpaid warnings, preserved unknown warning, patient search/Account preparation, modal click and full Node-to-PowerShell OD adapter inspect, two-window refusal and saved diagnostics."
 }catch{
  if($fixture -and -not $fixture.HasExited){
   try{
