@@ -22,6 +22,7 @@ try{
  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/payment-type-r5.png') -Destination (Join-Path $out 'payment-type-r5.png')
  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/outstanding-header-r5.png') -Destination (Join-Path $out 'outstanding-header-r5.png')
  foreach($imageName in @('select-patient-r5.png','new-payment-r5.png')){Copy-Item -LiteralPath (Join-Path $windows $imageName) -Destination (Join-Path $out $imageName)}
+ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/patient-search-header-r5.png') -Destination (Join-Path $out 'patient-search-header-r5.png')
  $fixture=Start-Process -FilePath $exe -PassThru
  $handle=[IntPtr]::Zero
  for($i=0;$i -lt 200;$i++){

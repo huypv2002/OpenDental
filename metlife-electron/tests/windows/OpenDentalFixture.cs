@@ -164,8 +164,8 @@ public class PatientResultsGrid : Control {
  public bool HasResult=false,Selected=false;public event Action Picked;
  public PatientResultsGrid(){Font=new Font("Segoe UI",10);SetStyle(ControlStyles.Selectable|ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint,true);TabStop=true;}
  protected override void OnPaint(PaintEventArgs e){
-  e.Graphics.Clear(Color.White);string[] labels={"PatNum","LastName","FirstName"};int[] x={4,100,260};
-  for(int i=0;i<labels.Length;i++)e.Graphics.DrawString(labels[i],Font,Brushes.Black,x[i],5);
+  e.Graphics.Clear(Color.White);
+  using(var header=Image.FromFile(System.IO.Path.Combine(Application.StartupPath,"patient-search-header-r5.png")))e.Graphics.DrawImageUnscaled(header,0,5);
   if(HasResult){if(Selected)e.Graphics.FillRectangle(Brushes.LightBlue,0,30,Width,30);e.Graphics.DrawString("99",Font,Brushes.Black,4,35);e.Graphics.DrawString("TEST",Font,Brushes.Black,100,35);e.Graphics.DrawString("PERSON",Font,Brushes.Black,260,35);}
  }
  protected override void OnMouseDown(MouseEventArgs e){if(HasResult&&e.Y>=30&&e.Y<60){Selected=true;Invalidate();if(Picked!=null)Picked();}base.OnMouseDown(e);}

@@ -95,7 +95,9 @@ function EnsurePatient($main,$draft){
  foreach($input in $inputs){$input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('')}
  $field=NestedEdit $select 'textPatNum';$field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($wanted)
  if((ReadValue $field) -cne $wanted){throw 'Patient ID field readback failed'}
- Click (ById $select 'butSearch') $main
+ $search=ById $select 'butSearch'
+ for($i=0;$i -lt 20 -and -not $search.Current.IsEnabled;$i++){Start-Sleep -Milliseconds 100;$search=ById $select 'butSearch'}
+ Click $search $main
  $grid=ById $select 'gridMain';$hit=$null
  for($i=0;$i -lt 40;$i++){
   $cells=@(Elements $grid|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text -and $_.Current.Name -ceq $wanted -and -not $_.Current.IsOffscreen})
