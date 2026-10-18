@@ -146,9 +146,10 @@ async function call(op,arg){
    if(createHash('sha256').update(original).digest('hex')!==draft.sha256)throw new Error('Nội dung PDF không trùng tài liệu gốc trên SERVER.');
    // Revalidate a fresh snapshot and all derived values in the privileged process.
    const result=await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'fill-preview',draft});
+   if(!result.windowHandle||!result.paymentTypeApplied||!result.splitsApplied)throw new Error('Chưa điền đủ nội dung trên Open Dental. Kiểm tra cửa sổ đang mở.');
    activeDraft={...draft,windowHandle:result.windowHandle};workspace.preview={id,amount:draft.amount,paymentType:draft.paymentType,paymentTypeApplied:result.paymentTypeApplied,at:new Date().toISOString()};
    await audit('preview-filled',{hash:draft.sha256,saveInvoked:false});
-   status.message=result.paymentTypeApplied?'Đã lọc bệnh nhân, xóa Splits của draft và phân bổ bằng Add Partials; tổng khớp PDF. Giữ Payment mở để kiểm tra; chưa Save.':`Đã điền bản nháp. Chưa chọn được ${draft.paymentType} qua UI Automation; chọn Payment Type trên OD và kiểm tra Splits.`;break;
+   status.message='Đã tự điền trên Open Dental. Chưa lưu. Kiểm tra bản nháp trên OD; bạn tự quyết định lưu hoặc đóng bản nháp.';break;
   }
   case 'save-payment':{
    if(activeDraft||pendingSave)throw new Error('Còn bản nháp hoặc lượt ghi chưa xác minh. Hoàn tất lượt trước.');
@@ -161,51 +162,28 @@ async function call(op,arg){
    workspace.snapshots.set(item.remote.patNum,fresh);
    const draft=workspace.plan(id);
    if(JSON.stringify(reviewed)!==JSON.stringify(draft))throw new Error('Thông tin OD đã đổi. Kiểm tra lại bảng đối chiếu mới trước khi lưu.');
-   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft,transport:'od-ui'});
+   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft,transport:'direct-db'});
    pendingSave={operationId:prepared.operationId,serverUrl:serverClient.connection.url,itemId:id,at:new Date().toISOString(),state:'started'};
    await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
    notify();
-   let saveAuthorizationStarted=false;
-   const diagnosticDir=path.join(app.getPath('userData'),'od-diagnostics');
-   try{
-    status.message='Đang mở hồ sơ và điền khoản thanh toán trên Open Dental. Không thao tác chuột hoặc bàn phím cho đến khi hoàn tất.';notify();
-    const filled=await windows.runWindows(resources(),{diagnosticDir,action:'fill-preview',draft:prepared.plan});
-    if(!filled.windowHandle||!filled.paymentTypeApplied||!filled.splitsApplied)throw new Error('Open Dental chưa xác nhận đủ nội dung thanh toán.');
-    activeDraft={...prepared.plan,windowHandle:filled.windowHandle};
-    workspace.preview={id,amount:draft.amount,paymentType:draft.paymentType,at:new Date().toISOString()};
-    await serverClient.recheck(prepared.operationId);
-    pendingSave.state='ui-saving';
-    await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
-    saveAuthorizationStarted=true;
-    await serverClient.beginUiSave(prepared.operationId);
-    await windows.runWindows(resources(),{diagnosticDir,action:'save-preview',draft:activeDraft,operationId:prepared.operationId});
-    activeDraft=null;workspace.preview=null;
-   }catch(e){
-    // Only a confirmed empty UI before Save authorization can be abandoned.
-    // Timeout/unknown UI state always retains the durable operation for recovery.
-    if(!saveAuthorizationStarted){
-     try{
-      const inspected=await windows.runWindows(resources(),{diagnosticDir,action:'inspect'});
-      if(Array.isArray(inspected.modals)&&inspected.modals.length===0){
-       const aborted=await serverClient.abort(prepared.operationId);
-       if(aborted.released){
-        await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;activeDraft=null;workspace.preview=null;
-        await audit('client-save-aborted',{hash:draft.sha256,error:e.message});
-        status.message='Chưa lưu khoản thanh toán. Mở Open Dental, đóng các cửa sổ đang nhập và thử lại. Nếu vẫn lỗi, liên hệ hỗ trợ.';break;
-       }
-      }
-     }catch{}
+   let postError=null;
+   try{await serverClient.post(prepared.operationId);}
+   catch(e){postError=e;
+    // Release only a server-confirmed pre-write failure. Network timeouts never retry.
+    const operation=await serverClient.operation(prepared.operationId);
+    if(['prepared','failed-no-write'].includes(operation.state)){
+     const aborted=await serverClient.abort(prepared.operationId);
+     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;status.message=`Chưa ghi DB: ${e.message}`;await audit('direct-save-aborted',{hash:draft.sha256});break;}
     }
-    await audit('client-save-interrupted',{hash:draft.sha256,error:e.message,saveAuthorizationStarted});
    }
    const result=await serverClient.verify(prepared.operationId);
    workspace.snapshots.set(item.remote.patNum,validateSnapshot(await serverClient.context(item.remote.patNum)));
    if(result.verified){
-    activeDraft=null;workspace.preview=null;await audit('client-save-verified',{hash:draft.sha256,payNum:result.payNum});await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;
-    status.message=`Đã lưu và xác minh khoản thanh toán trên Open Dental.`;
+    await audit('direct-save-verified',{hash:draft.sha256,payNum:result.payNum});await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;
+    status.message=`Đã ghi và xác minh Payment #${result.payNum}, tổng ${result.amount}, ${result.splitNums.length} Splits. Refresh Account trên OD để xem.`;
    }else{
     pendingSave.state='unverified';await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
-    status.message='Chưa xác minh được kết quả lưu. Bấm Kiểm tra kết quả; không lưu lại.';
+    status.message=`Chưa xác minh transaction. ${result.reason}${postError?' '+postError.message:''} Không bấm ghi lại.`;
    }
    break;
   }
@@ -231,8 +209,16 @@ async function call(op,arg){
   case 'close-preview':{
    if(!activeDraft)throw new Error('Không có bản nháp do tool đang quản lý.');
    if(pendingSave){const operation=await serverClient.operation(pendingSave.operationId);if(operation.state!=='prepared')throw new Error('Lượt này có thể đã lưu. Kiểm tra kết quả trước khi đóng.');}
-   await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'close-preview',draft:activeDraft});
-   await audit('preview-closed',{hash:activeDraft.sha256});workspace.snapshots.delete(activeDraft.patNum);activeDraft=null;workspace.preview=null;status.message='Đã đóng bản nháp.';
+   let alreadyClosed=false;
+   try{await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'close-preview',draft:activeDraft});}
+   catch(e){
+    // The operator may already have saved or closed this preview in OD.
+    // Empty UI clears only local draft tracking; it never claims DB success.
+    const inspected=await windows.runWindows(resources(),{action:'inspect'});
+    if(!Array.isArray(inspected.modals)||inspected.modals.length!==0)throw e;
+    alreadyClosed=true;
+   }
+   await audit('preview-closed',{hash:activeDraft.sha256});workspace.snapshots.delete(activeDraft.patNum);activeDraft=null;workspace.preview=null;status.message=alreadyClosed?'Bản nháp đã được đóng trên Open Dental. Mở lại hồ sơ để đối chiếu kết quả.':'Đã đóng bản nháp.';
    if(pendingSave){const aborted=await serverClient.abort(pendingSave.operationId);if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;}}
    break;
   }

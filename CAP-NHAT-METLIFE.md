@@ -89,3 +89,9 @@ Nút **Đã đối chiếu · Lưu vào OD** hiện dùng client OD trên chính
 Triển khai: pull/restart Bridge trên SERVER để có endpoint `/operations/:id/begin-ui-save`, sau đó dùng EXE tool 0.4.1 trên R5. Mở OD trên cùng máy, giữ phiên Windows không khóa và chạy OD/tool cùng mức quyền. Trong khi tool thao tác, không dùng chuột/bàn phím. Phải nghiệm thu trên OD thật; fixture/CI không xác nhận giao diện thực của phòng khám.
 
 Sau khi đã cấp quyền Save, mất kết nối hoặc readback chưa khớp sẽ giữ lượt đang chờ; chỉ **Kiểm tra kết quả**, không tự Save lại. Lượt lỗi trước khi cấp quyền Save chỉ giải phóng khi không còn popup OD và DB tài chính chưa thay đổi. Những lượt direct-db cũ chưa xác minh vẫn được kiểm tra bằng luồng khôi phục cũ.
+
+## Bản 0.4.2: hai cách độc lập
+
+Tự điền chỉ mở và điền bản nháp trên OD, chưa Save. Lưu trực tiếp gọi request direct-db, không dùng UI. Không gộp hai thao tác hoặc tự thay đường request bằng Save trên client. Đường request vẫn bị CDT của SERVER từ chối xác minh assembly; dùng tự điền và kiểm tra/lưu thủ công trên OD trong thời gian xử lý backend.
+
+Để chạy source trên R5: đóng tool đang chạy, `git pull origin main` từ repo, `cd metlife-electron`, `npm start`; kiểm tra phiên bản 0.4.2 và hai nút riêng.

@@ -67,7 +67,7 @@ jobs:
       - run: npm run dist:win --prefix metlife-electron
       - uses: actions/upload-artifact@v4
         with:
-          name: LUK-MetLife-0.4.1-Windows
+          name: LUK-MetLife-0.4.2-Windows
           path: metlife-electron/dist/*.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4

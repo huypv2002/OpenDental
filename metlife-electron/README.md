@@ -1,3 +1,11 @@
+## Bản hiện tại 0.4.2 — tách Tự điền và Lưu trực tiếp
+
+**Tự điền trên OD · Chưa lưu** chỉ mở và điền bản nháp trên client OD, không bấm Save, không gọi endpoint post/prepare. Người dùng kiểm tra rồi tự lưu hoặc đóng trên OD.
+
+**Lưu trực tiếp** là đường request riêng đến Bridge (`direct-db`), không điều khiển OD. Không được dùng khi đang mở bản nháp để tránh nhập hai lần. Trên bộ DLL OD 24.3 của SERVER hiện tại, đường request vẫn bị chặn ở `CDT.Class1.VerifyCallingAssembly`; bản này không khắc phục hoặc bỏ qua xác minh đó. Có thể dùng đường tự điền trong khi giải quyết backend request.
+
+Chạy source tại `metlife-electron`: `npm start`. Giao diện phải hiện v0.4.2 và hai nút riêng. Những mô tả 0.4.1 bên dưới là lịch sử, không phải hành vi hiện tại.
+
 ## Bản hiện tại 0.4.1 — lưu qua client OD
 
 Giữ giao diện tìm bệnh nhân, PDF và đối chiếu. Nút Lưu tự điền trên client OD cùng máy, kiểm tra lại với Bridge rồi bấm Save; sau đó đọc lại DB để xác minh. Không dùng đường ghi SQL trực tiếp hoặc helper CDT cho thao tác Lưu. Các mục 0.4.0/direct DB bên dưới mô tả bản trước.
