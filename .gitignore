@@ -11,3 +11,5 @@ audit-trail-tool/.venv/
 metlife-r5-connection.json
 metlife-operations/
 metlife-backups/
+metlife-electron/assets/tooth-256.png
+metlife-db-diagnostics*.json

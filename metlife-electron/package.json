@@ -55,8 +55,8 @@
     },
     "win": {
       "target": "portable",
-      "icon": "assets/tooth.ico",
-      "signAndEditExecutable": false
+      "icon": "assets/tooth-256.png",
+      "signExecutable": false
     },
     "mac": {
       "category": "public.app-category.medical",

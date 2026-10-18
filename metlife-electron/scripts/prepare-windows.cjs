@@ -8,4 +8,5 @@ try{
  execFileSync('tar',['-xf',path.join(temp,pack[0].filename),'-C',temp]);
  for(const f of ['skia.win32-x64-msvc.node','package.json'])fs.copyFileSync(path.join(temp,'package',f),path.join(out,f));
  console.log('Windows canvas native prepared.');
+ execFileSync(require('electron'),[path.join(__dirname,'prepare-icon.cjs')],{stdio:'inherit'});
 }finally{fs.rmSync(temp,{recursive:true,force:true});}
