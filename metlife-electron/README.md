@@ -9,12 +9,11 @@ Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm
 
 Phạm vi giữ nguyên quy trình của tool trước: tạo `payment` có definition “Insurance Paid” và `paysplit` gắn vào procedure. Không tạo `claimpayment`, không đổi `claimproc` hay trạng thái claim. Nhật ký `luk_metlife_postings` là nhật ký tích hợp; **không phải Audit Trail/securitylog của OD**. Adapter không sinh hash hoặc giả mạo log OD, chưa xử lý aging/account balance cache và các hook/plugin khi Save bằng OD. Cần đối chiếu Account, báo cáo thu, số dư/aging và audit trên clone trước khi xem là sẵn sàng production. Nếu cần đủ các side effect này, phải dùng API hoặc lớp nghiệp vụ OD phù hợp phiên bản.
 
-SERVER mặc định chỉ đọc. Chỉ bật thử trên clone sau khi xác minh schema và tài khoản OD tích hợp:
+SERVER mặc định chỉ đọc. Chỉ bật thử trên clone sau khi xác minh schema:
 
 ```dotenv
 ENABLE_OPEN_DENTAL_WRITES=true
 METLIFE_DIRECT_DB_ENABLED=true
-METLIFE_OD_USER_NUM=<UserNum tài khoản OD dùng cho tích hợp>
 ```
 
 Writer yêu cầu các bảng liên quan dùng InnoDB, khóa AUTO_INCREMENT và schema tương thích; từ chối MyISAM, random keys, khóa ngày và các cấu hình kế toán được phát hiện mà adapter chưa hỗ trợ. Không đổi engine/schema bảng OD. Không bỏ khóa ngày hay vô hiệu hóa cấu hình OD để vượt qua lỗi. Hai cờ trên chỉ cho phép chạy adapter; không chứng minh nó tương thích mọi cấu hình OD.

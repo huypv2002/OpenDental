@@ -1,9 +1,9 @@
 import {directWritesEnabled,paymentRows} from './directPayment.js';
 
-export const postingTables=['patient','definition','procedurelog','procedurecode','provider','payment','paysplit','claimproc','claimpayment','preference','userod'];
+export const postingTables=['patient','definition','procedurelog','procedurecode','provider','payment','paysplit','claimproc','claimpayment','preference'];
 export const postingPreferences=['ProgramVersion','DataBaseVersion','RandomPrimaryKeys','AccountingSoftware','AccountingAutomaticPaymentEntry','AllowFuturePayments','DateLock','DateLockLimitDays'];
 // Metadata only: no patient/payment rows, passwords, tokens or connection strings.
-export async function databaseDiagnostics(pool,{enabled=directWritesEnabled,userNum=()=>process.env.METLIFE_OD_USER_NUM||''}={}){
+export async function databaseDiagnostics(pool,{enabled=directWritesEnabled}={}){
  const [tables]=await pool.execute(`SELECT TABLE_NAME,ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${postingTables.map(()=>'?').join(',')})`,postingTables);
  const [columns]=await pool.execute("SELECT TABLE_NAME,COLUMN_NAME,DATA_TYPE,COLUMN_DEFAULT,IS_NULLABLE,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('payment','paysplit') ORDER BY TABLE_NAME,ORDINAL_POSITION");
  const [preferences]=await pool.execute(`SELECT PrefName,ValueString FROM preference WHERE PrefName IN (${postingPreferences.map(()=>'?').join(',')})`,postingPreferences);
@@ -21,10 +21,7 @@ export async function databaseDiagnostics(pool,{enabled=directWritesEnabled,user
  for(const p of preferences){
   if(['RandomPrimaryKeys','AccountingAutomaticPaymentEntry','DateLock','DateLockLimitDays','AccountingSoftware'].includes(p.PrefName)&&!['','0','false','0001-01-01','0000-00-00'].includes(String(p.ValueString).toLowerCase()))schemaProblems.push(`Cấu hình ${p.PrefName} chưa được adapter hỗ trợ.`);
  }
- const configuredUser=/^[1-9]\d{0,17}$/.test(String(userNum()));let activeUser=false;
- if(configuredUser){const [rows]=await pool.execute('SELECT UserNum FROM userod WHERE UserNum=? AND IsHidden=0',[String(userNum())]);activeUser=rows.length===1;}
  const configurationProblems=[];
  if(!enabled())configurationProblems.push('Chưa bật ENABLE_OPEN_DENTAL_WRITES và METLIFE_DIRECT_DB_ENABLED trên SERVER.');
- if(!activeUser)configurationProblems.push('Cần METLIFE_OD_USER_NUM hợp lệ, đang hoạt động.');
  return {capturedAt:new Date().toISOString(),readOnly:true,schemaCompatible:!schemaProblems.length,writeConfigured:!configurationProblems.length,ready:!schemaProblems.length&&!configurationProblems.length,tables,columns,preferences,schemaProblems,configurationProblems,limitations:['Payment/Splits theo quy trình Insurance Paid; không đổi claim/claimproc.','Nhật ký tích hợp riêng; không tự sinh OD Audit Trail hoặc tính lại aging/balance.','Cần nghiệm thu Account/báo cáo/số dư trên clone trước khi dùng dữ liệu thật.']};
 }

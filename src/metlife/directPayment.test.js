@@ -37,12 +37,12 @@ function fixture(options={}){
  };
  const pool={query:async sql=>{calls.push(sql);},getConnection:async()=>conn};
  const readContext=async(_pool,_pat,opt)=>{assert.equal(opt.connection,conn);assert.equal(opt.forUpdate,true);const s=context();s.tables.payment=structuredClone(rows.payment);s.tables.paysplit=structuredClone(rows.paysplit);if(options.wrongReadback&&rows.paysplit.length)s.tables.paysplit[0].ProcNum='999';return s;};
- const writer=createDirectPaymentWriter(pool,{enabled:()=>true,userNum:()=>7,readContext});
+ const writer=createDirectPaymentWriter(pool,{enabled:()=>true,...(options.entryUser===undefined?{}:{userNum:()=>options.entryUser}),readContext});
  return {writer,args:{id:'11111111-1111-4111-8111-111111111111',patNum:'99',docNum:'1',plan,before},calls,rows,columns,conn};
 }
 test('direct transaction writes exact procedure split and journal before commit',async()=>{
  const f=fixture();const r=await f.writer(f.args);
- assert.equal(r.payNum,'81');assert.equal(f.rows.paysplit[0].PayNum,'81');assert.equal(f.rows.paysplit[0].SplitAmt,'35.00');assert.equal(f.rows.paysplit[0].ProcNum,'51');assert.equal(f.rows.payment[0].SecUserNumEntry,'7');
+ assert.equal(r.payNum,'81');assert.equal(f.rows.paysplit[0].PayNum,'81');assert.equal(f.rows.paysplit[0].SplitAmt,'35.00');assert.equal(f.rows.paysplit[0].ProcNum,'51');assert.equal(f.rows.payment[0].SecUserNumEntry,'0');assert.equal(f.rows.paysplit[0].SecUserNumEntry,'0');assert.ok(!f.calls.some(s=>s.includes('FROM userod')));
  assert.ok(f.calls.findIndex(s=>s.startsWith('INSERT INTO luk_metlife_postings'))<f.calls.indexOf('commit'));
  assert.equal(f.calls.at(-1),'release');
  const writes=f.calls.filter(s=>s.startsWith('INSERT')).length;assert.equal((await f.writer(f.args)).replayed,true);assert.equal(f.calls.filter(s=>s.startsWith('INSERT')).length,writes);
@@ -85,4 +85,13 @@ test('confirmed pre-write failure can release patient lock',async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-direct-abort-'));
  const c=createPostingCoordinator({repository:{context:async()=>context(),pdf:async()=>({sha256:hash}),postDirect:async()=>{throw Object.assign(new Error('disabled'),{noWrite:true});}},directory:dir});
  try{const op=await c.prepare({patNum:'99',docNum:'1',draft:draft(),transport:'direct-db'});await assert.rejects(c.post(op.operationId));assert.equal((await c.abort(op.operationId)).released,true);}finally{await fs.rm(dir,{recursive:true,force:true});}
+});
+
+test('unused OD user environment setting does not block default posting or assign an employee',async()=>{
+ const previous=process.env.METLIFE_OD_USER_NUM;process.env.METLIFE_OD_USER_NUM='<old-placeholder>';
+ try{const f=fixture();await f.writer(f.args);assert.equal(f.rows.payment[0].SecUserNumEntry,'0');assert.equal(f.rows.paysplit[0].SecUserNumEntry,'0');}
+ finally{if(previous===undefined)delete process.env.METLIFE_OD_USER_NUM;else process.env.METLIFE_OD_USER_NUM=previous;}
+});
+test('an explicit authenticated entry user is still validated when supplied by an integration',async()=>{
+ const f=fixture({entryUser:7});await f.writer(f.args);assert.equal(f.rows.payment[0].SecUserNumEntry,'7');assert.ok(f.calls.some(s=>s.includes('FROM userod')));
 });

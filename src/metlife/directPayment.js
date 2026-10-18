@@ -31,7 +31,9 @@ export async function insertFinancialRow(conn,table,row,columns){
  if(!/^[1-9]\d*$/.test(ids[0]?.id))throw new Error('Không đọc được khóa bản ghi vừa tạo.');
  return ids[0].id;
 }
-export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,userNum=()=>process.env.METLIFE_OD_USER_NUM||'',readContext=readPatientContext}={}){
+// The desktop does not authenticate an OD user. Default to the OD sentinel 0,
+// rather than attributing all entries to a fixed employee from an environment variable.
+export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,userNum=()=>0,readContext=readPatientContext}={}){
  let setup;
  async function ensureJournal(){
   if(!setup)setup=pool.query(`CREATE TABLE IF NOT EXISTS ${journal} (OperationId CHAR(36) NOT NULL PRIMARY KEY,PatNum BIGINT NOT NULL,DocNum BIGINT NOT NULL,PdfHash CHAR(64) NOT NULL,PayNum BIGINT NOT NULL,PlanJson LONGTEXT NOT NULL,CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uq_patient_pdf (PatNum,PdfHash)) ENGINE=InnoDB`).catch(e=>{setup=null;throw e;});
@@ -39,12 +41,13 @@ export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,user
  }
  return async function post({id,patNum,docNum,plan:approved,before}){
   if(!enabled())throw Object.assign(new Error('Ghi DB MetLife chưa bật trên SERVER. Cần kiểm chứng trên DB clone trước khi bật METLIFE_DIRECT_DB_ENABLED.'),{noWrite:true});
-  if(!/^[1-9]\d{0,17}$/.test(String(userNum())))throw Object.assign(new Error('Cần METLIFE_OD_USER_NUM của tài khoản OD dùng cho tích hợp.'),{noWrite:true});
+  const entryUser=String(userNum()??0);
+  if(!/^(0|[1-9]\d{0,17})$/.test(entryUser))throw Object.assign(new Error('Invalid entry user identity.'),{noWrite:true});
   try{await ensureJournal();}catch(e){e.noWrite=true;throw e;}
   const conn=await pool.getConnection();let started=false,commitAttempted=false;
   try{
    // All observed financial rows must participate in the same transaction.
-   const tables=['patient','definition','procedurelog','procedurecode','provider','payment','paysplit','claimproc','claimpayment','preference','userod',journal];
+   const tables=['patient','definition','procedurelog','procedurecode','provider','payment','paysplit','claimproc','claimpayment','preference',...(entryUser==='0'?[]:['userod']),journal];
    const [engines]=await execute(conn,`SELECT TABLE_NAME,ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${tables.map(()=>'?').join(',')})`,tables);
    if(tables.some(t=>engines.find(e=>e.TABLE_NAME===t)?.ENGINE?.toUpperCase()!=='INNODB'))throw new Error('Ghi DB cần InnoDB cho các bảng liên quan. SERVER không tự đổi engine; chưa hỗ trợ MyISAM.');
    await conn.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');await conn.beginTransaction();started=true;
@@ -53,8 +56,10 @@ export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,user
     if(old[0].PlanJson!==JSON.stringify(approved))throw new Error('Operation không khớp kế hoạch đã lưu.');
     await conn.rollback();started=false;return {payNum:old[0].PayNum,replayed:true};
    }
-   const [users]=await execute(conn,'SELECT UserNum FROM userod WHERE UserNum=? AND IsHidden=0 FOR UPDATE',[String(userNum())]);
-   if(users.length!==1)throw new Error('Tài khoản OD tích hợp không tồn tại hoặc đã ẩn.');
+   if(entryUser!=='0'){
+    const [users]=await execute(conn,'SELECT UserNum FROM userod WHERE UserNum=? AND IsHidden=0 FOR UPDATE',[entryUser]);
+    if(users.length!==1)throw new Error('Tài khoản OD tích hợp không tồn tại hoặc đã ẩn.');
+   }
    const [prefs]=await execute(conn,"SELECT PrefName,ValueString FROM preference WHERE PrefName IN ('RandomPrimaryKeys','AccountingSoftware','AccountingAutomaticPaymentEntry','AllowFuturePayments','DateLock','DateLockLimitDays') FOR UPDATE");
    if(prefs.some(p=>['RandomPrimaryKeys','AccountingAutomaticPaymentEntry'].includes(p.PrefName)&&!['','0','false'].includes(String(p.ValueString).toLowerCase())))throw new Error('Chưa hỗ trợ random keys hoặc đồng bộ kế toán tự động.');
    // Date locks/accounting integrations require OD business logic, not SQL.
@@ -66,7 +71,7 @@ export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,user
    const financial=s=>JSON.stringify({payment:s.tables.payment,paysplit:s.tables.paysplit,claimpayment:s.tables.claimpayment,claimproc:s.tables.claimproc});
    if(financial(context)!==financial(before))throw new Error('Dữ liệu tài chính đã đổi sau khi đối chiếu; tải lại hồ sơ.');
    const [columns]=await execute(conn,"SELECT TABLE_NAME,COLUMN_NAME,COLUMN_DEFAULT,IS_NULLABLE,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('payment','paysplit')");
-   const rows=paymentRows(plan,String(userNum()),String(context.tables.patient[0].ClinicNum||0));
+   const rows=paymentRows(plan,entryUser,String(context.tables.patient[0].ClinicNum||0));
    const payNum=await insertFinancialRow(conn,'payment',rows.payment,columns.filter(c=>c.TABLE_NAME==='payment'));
    for(const row of rows.splits)await insertFinancialRow(conn,'paysplit',{...row,PayNum:payNum},columns.filter(c=>c.TABLE_NAME==='paysplit'));
    const after=await readContext(pool,patNum,{connection:conn,forUpdate:true});

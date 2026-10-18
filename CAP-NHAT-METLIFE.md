@@ -39,10 +39,9 @@ Các giá trị do quản trị viên tự cấu hình trên SERVER:
 ```dotenv
 ENABLE_OPEN_DENTAL_WRITES=true
 METLIFE_DIRECT_DB_ENABLED=true
-METLIFE_OD_USER_NUM=<UserNum OD dành cho tích hợp>
 ```
 
-`METLIFE_OD_USER_NUM` cần là tài khoản OD đang hoạt động, không tự chọn tài khoản khác. Khi chưa cấu hình, app vẫn đọc/đối chiếu và báo rõ mục còn thiếu; không tự bật quyền ghi. Nếu báo MyISAM/schema không hỗ trợ, giữ nguyên DB và gửi báo cáo metadata để bổ sung adapter; không tự chuyển engine hoặc bỏ kiểm tra.
+Không cần cấu hình tài khoản OD cho tool. Các bản ghi mới dùng `SecUserNumEntry=0` (không gán một nhân viên cố định); biến `METLIFE_OD_USER_NUM` cũ không còn được đọc. Khi chưa cấu hình, app vẫn đọc/đối chiếu và báo rõ mục còn thiếu; không tự bật quyền ghi. Nếu báo MyISAM/schema không hỗ trợ, giữ nguyên DB và gửi báo cáo metadata để bổ sung adapter; không tự chuyển engine hoặc bỏ kiểm tra.
 
 R5, tại thư mục checkout cùng repo:
 
