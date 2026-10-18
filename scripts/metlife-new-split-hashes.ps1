@@ -127,7 +127,8 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
   if ($hash -eq 'BadImageFormatException') { throw (New-Object System.BadImageFormatException('An OD native dependency could not load in this process architecture.')) }
   # OD catches native library failures and returns the exception type as text.
   # Never accept that text as a valid hash, or use a blank fallback.
-  if ([string]::IsNullOrWhiteSpace($hash) -or $hash.Length -lt 16 -or $hash -match 'Exception$' -or $hash -match '\s') {
+  # OD does not impose a 16-character minimum; keep its native result verbatim.
+  if ([string]::IsNullOrWhiteSpace($hash) -or $hash.Length -gt 4096 -or $hash -match 'Exception$' -or $hash -match '\s') {
    $reason = "rejected result (length=" + $hash.Length + ", whitespace=" + [bool]($hash -match '\s') + ")"
    if ($hash -match '^[A-Za-z_][A-Za-z0-9_.]*Exception$') { $reason = "OD returned " + $hash }
    elseif ([string]::IsNullOrEmpty($hash)) { $reason = 'OD returned an empty result' }

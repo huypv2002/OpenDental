@@ -27,7 +27,7 @@ export function createMyisamWriter(pool,{readContext=readPatientContext,hashSpli
    // Native hashing happens before taking table locks: never hold clinic-wide locks
    // while launching PowerShell or loading OD/CDT assemblies.
    const hashes=await hashSplits(op.plan);
-   if(!Array.isArray(hashes)||hashes.length!==op.plan.splits.length||hashes.some(h=>typeof h!=='string'||h.length<16||/Exception$|\s/.test(h)))throw new Error('OD không trả đủ hash cho các Split mới.');
+   if(!Array.isArray(hashes)||hashes.length!==op.plan.splits.length||hashes.some(h=>typeof h!=='string'||h.length===0||h.length>4096||/Exception$|\s/.test(h)))throw new Error('OD không trả đủ hash cho các Split mới.');
    await conn.query(`CREATE TABLE IF NOT EXISTS ${myisamJournal} (OperationId CHAR(36) PRIMARY KEY,PatNum BIGINT NOT NULL,DocNum BIGINT NOT NULL,PdfHash CHAR(64) NOT NULL,PayNum BIGINT NOT NULL,State VARCHAR(32) NOT NULL,IntentJson LONGTEXT NOT NULL,CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uq_patient_pdf (PatNum,PdfHash)) ENGINE=InnoDB`);
    // SQL table locks protect writes by OD itself as well as other Bridge processes.
    // A short lock wait fails before clinical mutations; session state is restored.

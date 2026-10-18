@@ -28,7 +28,7 @@ namespace OpenDentBusiness {
     catch(Exception ex) { return ex.GetType().Name; }
    }
    if(split.SplitAmt==0.06) return "SENSITIVE_SYNTHETIC_VALUE with whitespace";
-   if(split.SplitAmt==0.07) return "short";
+   if(split.SplitAmt==0.07) return "NATIVE009";
    try { return CodeBase.SyntheticDependency.Prefix()+split.PatNum+"|"+split.SplitAmt.ToString("F2",CultureInfo.InvariantCulture)+"|"+split.DatePay.ToString("yyyy-MM-dd"); }
    catch(BadImageFormatException) { return "BadImageFormatException"; }
   }
@@ -81,15 +81,16 @@ namespace OpenDentBusiness {
  if (-not $result.ok -or $helperCode -ne 0 -or $result.hashes.Count -ne 2 -or $result.hashes[0] -cne 'SYNTHETIC|99|35.00|2026-09-24') { throw ('Native helper did not bind exact new split fields: ' + ($result | ConvertTo-Json -Compress -Depth 5)) }
  $expectedBits = if ($FixtureArchitecture -in @('x86','anycpu')) { 32 } else { 64 }
  if ($result.processBits -ne $expectedBits) { throw ('Wrong helper architecture for OD dependencies: ' + ($result | ConvertTo-Json -Compress)) }
- foreach ($amount in @('0.02','0.03','0.05','0.06','0.07','1.001')) {
+ foreach ($amount in @('0.02','0.03','0.05','0.06','1.001')) {
   $bad = RunHelper @(@{patNum='99';amount=$amount;date='2026-09-24'})
   if ($bad.ok -or $helperCode -eq 0) { throw 'Native helper accepted invalid input or a failed native hash.' }
   if ($amount -eq '0.02' -and $bad.error -notmatch 'empty result') { throw 'Empty hash result was not diagnosed.' }
   if ($amount -eq '0.03' -and $bad.error -notmatch 'OD returned DllNotFoundException') { throw 'OD returned exception type was hidden.' }
   if ($amount -eq '0.05' -and ($bad.error -notmatch 'OD returned FileNotFoundException' -or $bad.error -notmatch 'Loader trace:.*MissingDependency.dll')) { throw ('Swallowed loader failure was not traced: ' + $bad.error) }
   if ($amount -eq '0.06' -and ($bad.error -match 'SENSITIVE_SYNTHETIC_VALUE' -or $bad.error -notmatch 'whitespace=True')) { throw 'Rejected hash leaked or shape was not diagnosed.' }
-  if ($amount -eq '0.07' -and $bad.error -notmatch 'length=5') { throw 'Short hash result was not diagnosed.' }
  }
+ $short = RunHelper @(@{patNum='99';amount='0.07';date='2026-09-24'})
+ if (-not $short.ok -or $helperCode -ne 0 -or $short.hashes[0] -cne 'NATIVE009') { throw 'Native nine-character hash was rejected or modified.' }
  Rename-Item -LiteralPath (Join-Path $dir 'CodeBase.dll') -NewName 'CodeBase.dll.hidden'
  try {
   $missing = RunHelper @(@{patNum='99';amount='35.00';date='2026-09-24'})
@@ -117,6 +118,7 @@ import assert from 'node:assert/strict';
 const {nativeSplitHashes}=await import(pathToFileURL(path.resolve('src/metlife/nativeSplitHashes.js')));
 const hashes=await nativeSplitHashes({patNum:'99',date:'2026-09-24',splits:[{amountCents:3500},{amountCents:100}]});
 assert.deepEqual(hashes,['SYNTHETIC|99|35.00|2026-09-24','SYNTHETIC|99|1.00|2026-09-24']);
+assert.deepEqual(await nativeSplitHashes({patNum:'99',date:'2026-09-24',splits:[{amountCents:7}]}),['NATIVE009']);
 await assert.rejects(nativeSplitHashes({patNum:'99',date:'2026-09-24',splits:[{amountCents:3}]}),/SecurityHash/);
 console.log('Node to Windows PowerShell to synthetic OD helper passed, including architecture selection and native error rejection.');
 '@)

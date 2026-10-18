@@ -20,7 +20,7 @@ export async function nativeSplitHashes(plan){
    const result=JSON.parse(output.replace(/^\uFEFF/,''));
    if(result.retry32===true&&architecture===64&&typeof result.install==='string'){done(null,{retry32:true,install:result.install});return;}
    if(!result.ok)throw new Error(result.error||'Helper OD thất bại.');
-   if(!Array.isArray(result.hashes)||result.hashes.length!==plan.splits.length||result.hashes.some(h=>typeof h!=='string'||h.length<16||h.length>4096||/Exception$|\s/.test(h)))throw new Error('Helper OD trả SecurityHash không hợp lệ.');
+   if(!Array.isArray(result.hashes)||result.hashes.length!==plan.splits.length||result.hashes.some(h=>typeof h!=='string'||h.length===0||h.length>4096||/Exception$|\s/.test(h)))throw new Error('Helper OD trả SecurityHash không hợp lệ.');
    done(null,result.hashes);
   }catch(e){done(new Error(e instanceof SyntaxError?'Helper OD không trả kết quả hợp lệ; kiểm tra bản cài OD/CDT.dll trên SERVER.':e.message));}});
   child.stdin.end(JSON.stringify(input));

@@ -61,12 +61,13 @@ test('MariaDB MyISAM 24.3: locks, new identities, schema fields, hash readback, 
   await pool.query("ALTER TABLE paysplit ADD COLUMN SecurityHash VARCHAR(255) NOT NULL");
   await pool.query("UPDATE preference SET ValueString='24.3.61.0' WHERE PrefName='ProgramVersion'");
   await pool.query("INSERT INTO preference VALUES ('DataBaseVersion','24.3.53.0')");
-  const hashSplits=async plan=>plan.splits.map(s=>'SYNTHETIC-HASH-'+plan.patNum+'-'+s.amountCents+'-'+plan.date);
+  // Synthetic provider output with the native length observed on SERVER.
+  const hashSplits=async plan=>plan.splits.map(s=>'H'+String(s.amountCents).padStart(8,'0'));
   const writer=createDirectPaymentWriter(pool,{enabled:()=>true,hashSplits});
   const draft={patNum:'99',sha256:'a'.repeat(64),amount:'35.00',date:'2026-09-24',note:'SYNTHETIC MYISAM',checkNum:'MYISAM-A',paymentType:'Insurance Paid',splits:[{ProcNum:'51',ProvNum:'3',ClinicNum:'2',code:'D2392',date:'2026-09-13',tooth:'13',providerAbbr:'DOC',description:'Composite',amountCents:3500}]};
   const before=await readPatientContext(pool,'99'),plan=validatePostingPlan(before,draft),op={id:randomUUID(),patNum:'99',docNum:'1',before,plan};
   const result=await writer(op);assert.equal(result.storage,'myisam');assert.equal((await writer(op)).replayed,true);
-  const after=await readPatientContext(pool,'99');assert.equal(verifyPostedPayment(before,after,plan).verified,true);assert.equal(after.tables.payment.length,1);assert.equal(after.tables.paysplit[0].SecurityHash,(await hashSplits(plan))[0]);
+  const after=await readPatientContext(pool,'99');assert.equal(verifyPostedPayment(before,after,plan).verified,true);assert.equal(after.tables.payment.length,1);assert.equal(after.tables.paysplit[0].SecurityHash,(await hashSplits(plan))[0]);assert.equal(after.tables.paysplit[0].SecurityHash.length,9);
   const [[payment]]=await pool.query('SELECT ExternalId,PaymentStatus FROM payment');assert.equal(payment.ExternalId,'');assert.equal(Number(payment.PaymentStatus),0);
   const {myisamReceipt}=await import('./myisamPayment.js');assert.equal((await myisamReceipt(pool,op.id)).payNum,result.payNum);
   assert.equal((await databaseDiagnostics(pool,{enabled:()=>true,hashSplits})).ready,true);
