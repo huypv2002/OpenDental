@@ -23,6 +23,12 @@ namespace OpenDentBusiness {
   public static string HashFields(PaySplit split) {
    if(split.SplitAmt==0.02) return "";
    if(split.SplitAmt==0.03) return "DllNotFoundException";
+   if(split.SplitAmt==0.05) {
+    try { throw new System.IO.FileNotFoundException("Synthetic loader failure: MissingDependency.dll", "MissingDependency.dll"); }
+    catch(Exception ex) { return ex.GetType().Name; }
+   }
+   if(split.SplitAmt==0.06) return "SENSITIVE_SYNTHETIC_VALUE with whitespace";
+   if(split.SplitAmt==0.07) return "short";
    try { return CodeBase.SyntheticDependency.Prefix()+split.PatNum+"|"+split.SplitAmt.ToString("F2",CultureInfo.InvariantCulture)+"|"+split.DatePay.ToString("yyyy-MM-dd"); }
    catch(BadImageFormatException) { return "BadImageFormatException"; }
   }
@@ -75,9 +81,14 @@ namespace OpenDentBusiness {
  if (-not $result.ok -or $helperCode -ne 0 -or $result.hashes.Count -ne 2 -or $result.hashes[0] -cne 'SYNTHETIC|99|35.00|2026-09-24') { throw ('Native helper did not bind exact new split fields: ' + ($result | ConvertTo-Json -Compress -Depth 5)) }
  $expectedBits = if ($FixtureArchitecture -in @('x86','anycpu')) { 32 } else { 64 }
  if ($result.processBits -ne $expectedBits) { throw ('Wrong helper architecture for OD dependencies: ' + ($result | ConvertTo-Json -Compress)) }
- foreach ($amount in @('0.02','0.03','1.001')) {
+ foreach ($amount in @('0.02','0.03','0.05','0.06','0.07','1.001')) {
   $bad = RunHelper @(@{patNum='99';amount=$amount;date='2026-09-24'})
   if ($bad.ok -or $helperCode -eq 0) { throw 'Native helper accepted invalid input or a failed native hash.' }
+  if ($amount -eq '0.02' -and $bad.error -notmatch 'empty result') { throw 'Empty hash result was not diagnosed.' }
+  if ($amount -eq '0.03' -and $bad.error -notmatch 'OD returned DllNotFoundException') { throw 'OD returned exception type was hidden.' }
+  if ($amount -eq '0.05' -and ($bad.error -notmatch 'OD returned FileNotFoundException' -or $bad.error -notmatch 'Loader trace:.*MissingDependency.dll')) { throw ('Swallowed loader failure was not traced: ' + $bad.error) }
+  if ($amount -eq '0.06' -and ($bad.error -match 'SENSITIVE_SYNTHETIC_VALUE' -or $bad.error -notmatch 'whitespace=True')) { throw 'Rejected hash leaked or shape was not diagnosed.' }
+  if ($amount -eq '0.07' -and $bad.error -notmatch 'length=5') { throw 'Short hash result was not diagnosed.' }
  }
  Rename-Item -LiteralPath (Join-Path $dir 'CodeBase.dll') -NewName 'CodeBase.dll.hidden'
  try {

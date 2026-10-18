@@ -39,11 +39,38 @@ try {
 using System;
 using System.IO;
 using System.Reflection;
+using System.Collections.Generic;
+using System.Runtime.ExceptionServices;
 public sealed class MetlifeOdAssemblyResolver : IDisposable {
  private readonly string directory;
+ private readonly object traceLock=new object();
+ private readonly List<string> failures=new List<string>();
+ private volatile bool tracing;
+ [ThreadStatic] private static bool recording;
  public MetlifeOdAssemblyResolver(string directory) {
   this.directory=directory;
   AppDomain.CurrentDomain.AssemblyResolve+=Resolve;
+  AppDomain.CurrentDomain.FirstChanceException+=TraceFailure;
+ }
+ public void BeginHashTrace() {
+  lock(traceLock) { failures.Clear(); tracing=true; }
+ }
+ public string EndHashTrace() {
+  lock(traceLock) { tracing=false; return String.Join(" | ",failures); }
+ }
+ private void TraceFailure(object sender,FirstChanceExceptionEventArgs args) {
+  if(!tracing || recording) return;
+  var ex=args.Exception;
+  if(!(ex is FileNotFoundException || ex is FileLoadException || ex is BadImageFormatException
+    || ex is DllNotFoundException || ex is EntryPointNotFoundException
+    || ex is TypeLoadException || ex is TypeInitializationException)) return;
+  recording=true;
+  try {
+   // Only loader failures. Never record method inputs or returned hash values.
+   string detail=ex.GetType().Name+": "+ex.Message;
+   if(detail.Length>600) detail=detail.Substring(0,600);
+   lock(traceLock) { if(failures.Count<8 && !failures.Contains(detail)) failures.Add(detail); }
+  } finally { recording=false; }
  }
  private Assembly Resolve(object sender, ResolveEventArgs args) {
   var requested=new AssemblyName(args.Name);
@@ -56,7 +83,7 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
    throw new FileLoadException("OD dependency identity mismatch: requested "+requested.FullName+"; found "+actual.FullName,path);
   return Assembly.LoadFrom(path);
  }
- public void Dispose() { AppDomain.CurrentDomain.AssemblyResolve-=Resolve; }
+ public void Dispose() { AppDomain.CurrentDomain.AssemblyResolve-=Resolve; AppDomain.CurrentDomain.FirstChanceException-=TraceFailure; }
 }
 '@
  $resolver = New-Object MetlifeOdAssemblyResolver($install)
@@ -93,11 +120,21 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
   $splitType.GetField('PatNum').SetValue($split, [long]$row.patNum)
   $splitType.GetField('SplitAmt').SetValue($split, [double]::Parse($row.amount, [Globalization.CultureInfo]::InvariantCulture))
   $splitType.GetField('DatePay').SetValue($split, [DateTime]::ParseExact($row.date, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture))
-  $hash = [string]$method.Invoke($null, @($split))
+  $resolver.BeginHashTrace()
+  $loaderTrace = ''
+  try { $hash = [string]$method.Invoke($null, @($split)) }
+  finally { $loaderTrace = $resolver.EndHashTrace() }
   if ($hash -eq 'BadImageFormatException') { throw (New-Object System.BadImageFormatException('An OD native dependency could not load in this process architecture.')) }
   # OD catches native library failures and returns the exception type as text.
   # Never accept that text as a valid hash, or use a blank fallback.
-  if ([string]::IsNullOrWhiteSpace($hash) -or $hash.Length -lt 16 -or $hash -match 'Exception$' -or $hash -match '\s') { throw 'OD did not return a valid SecurityHash for the new split. Check CDT.dll and its dependencies on SERVER.' }
+  if ([string]::IsNullOrWhiteSpace($hash) -or $hash.Length -lt 16 -or $hash -match 'Exception$' -or $hash -match '\s') {
+   $reason = "rejected result (length=" + $hash.Length + ", whitespace=" + [bool]($hash -match '\s') + ")"
+   if ($hash -match '^[A-Za-z_][A-Za-z0-9_.]*Exception$') { $reason = "OD returned " + $hash }
+   elseif ([string]::IsNullOrEmpty($hash)) { $reason = 'OD returned an empty result' }
+   $detail = "OD did not return a valid SecurityHash: " + $reason + "."
+   if ($loaderTrace) { $detail += " Loader trace: " + $loaderTrace }
+   throw $detail
+  }
   $results += $hash
  }
  @{ok=$true;processBits=([IntPtr]::Size * 8);version=$version.ToString();culture=[Globalization.CultureInfo]::CurrentCulture.Name;hashes=@($results)} | ConvertTo-Json -Compress -Depth 5
