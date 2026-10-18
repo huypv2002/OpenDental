@@ -32,8 +32,9 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const url=`http://127.0.0.1:${server.address().port}`;
  const pairing=path.join(temp,'connection.json');fs.writeFileSync(pairing,JSON.stringify({url,token}));
  const a=await electron.launch({env:{...process.env,METLIFE_SERVER_URL:url},args:[root,`--user-data-dir=${temp}/userdata`],...(process.env.METLIFE_ELECTRON_PATH?{executablePath:process.env.METLIFE_ELECTRON_PATH}:{}),timeout:30000});
+ let page;
  try{
-  const page=await a.firstWindow();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  page=await a.firstWindow();page.setDefaultTimeout(30000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.waitForSelector('#patient-search-query');
   await page.waitForFunction(()=>document.querySelector('#server-status').textContent.startsWith('Đã kết nối'));
   await page.click('[data-tab="patients"]');await page.selectOption('#patient-search-kind','groupNumber');await page.fill('#patient-search-query',fixtureGroup);await page.click('#search-patients');
@@ -74,11 +75,11 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   // the verified draft and release only this pre-authorization operation.
   scenario='recheck-failed';const beforeActions=await a.evaluate(()=>globalThis.odTestActions.length);
   await save.click();await page.waitForFunction(()=>!document.querySelector('#pending-save-banner').hidden&&document.body.getAttribute('aria-busy')!=='true');
-  assert.deepEqual(await a.evaluate(n=>globalThis.odTestActions.slice(n),beforeActions),['fill-preview','inspect']);
+  assert.deepEqual(await a.evaluate((_electron,n)=>globalThis.odTestActions.slice(n),beforeActions),['fill-preview','inspect']);
   await page.click('[data-action="close-preview"]');await page.waitForFunction(()=>document.querySelector('#pending-save-banner').hidden);
   assert.ok(!fs.existsSync(path.join(temp,'userdata','pending-save.json')));
   assert.equal(await page.locator('[data-action="fill-preview"]').count(),0);await page.click('[data-tab="settings"]');assert.match(await page.locator('#settings').innerText(),/Hướng dẫn/);
   for(const tab of ['patients','queue','settings','activity']){await page.click(`[data-tab="${tab}"]`);assert.doesNotMatch(await page.locator('body').innerText(),/\b(DB|SQL|JSON|schema|SERVER|Bridge|ProcNum|DocNum|PlanNum|InsSubNum|InnoDB|MyISAM|snapshot|OCR|Electron)\b/i);}
   assert.deepEqual(errors,[]);console.log('Client save UI passed: synthetic PDF, detailed review, Windows fill/save actions, server recheck/authorization, zero direct post calls, verified readback, uncertain journal and retry block. Simulated SERVER; no clinic writes.');
- }finally{await a.close();await new Promise(r=>server.close(r));fs.rmSync(temp,{recursive:true,force:true});}
+ }catch(e){console.error('Synthetic save UI failure:',e.message,'Status:',page?await page.locator('#status-text').innerText().catch(()=>'?'):'no page','Calls:',calls);throw e;}finally{await a.evaluate(({app})=>app.exit(0)).catch(()=>{});await a.close();await new Promise(r=>server.close(r));fs.rmSync(temp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});
