@@ -39,6 +39,7 @@ export function createMetlifeRouter({repository=createRepository(pool),getToken=
  const json=fn=>async(req,res)=>{try{res.json({ok:true,data:await fn(req)});}catch(e){res.status(400).json({ok:false,error:e.code?'SERVER chưa đọc được dữ liệu hoặc file OD. Kiểm tra cấu hình và quyền dịch vụ.':e.message});}};
  router.post('/operations',json(req=>posting.prepare(req.body)));
  router.post('/operations/:id/recheck',json(req=>posting.recheck(req.params.id)));
+ router.post('/operations/:id/begin-ui-save',json(req=>posting.beginUiSave(req.params.id)));
  router.post('/operations/:id/post',json(req=>posting.post(req.params.id)));
  router.post('/operations/:id/verify',json(req=>posting.verify(req.params.id)));
  router.post('/operations/:id/abort',json(req=>posting.abort(req.params.id)));

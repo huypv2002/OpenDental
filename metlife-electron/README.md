@@ -1,3 +1,9 @@
+## Bản hiện tại 0.4.1 — lưu qua client OD
+
+Giữ giao diện tìm bệnh nhân, PDF và đối chiếu. Nút Lưu tự điền trên client OD cùng máy, kiểm tra lại với Bridge rồi bấm Save; sau đó đọc lại DB để xác minh. Không dùng đường ghi SQL trực tiếp hoặc helper CDT cho thao tác Lưu. Các mục 0.4.0/direct DB bên dưới mô tả bản trước.
+
+Cần cập nhật Bridge trên SERVER và dùng EXE 0.4.1 trên R5, mở OD, giữ desktop không khóa và không thao tác chuột/bàn phím trong lúc tool chạy. Lượt đã cấp quyền Save nhưng chưa xác minh sẽ giữ khóa chống ghi trùng. Phải nghiệm thu trên client OD thật.
+
 # LUK MetLife Assistant 0.4.0
 
 Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu đầy đủ → Lưu qua SERVER → xác minh Payment/Splits**. Không cần Python hoặc chuyển snapshot hằng ngày.

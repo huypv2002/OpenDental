@@ -161,47 +161,80 @@ async function call(op,arg){
    workspace.snapshots.set(item.remote.patNum,fresh);
    const draft=workspace.plan(id);
    if(JSON.stringify(reviewed)!==JSON.stringify(draft))throw new Error('Thông tin OD đã đổi. Kiểm tra lại bảng đối chiếu mới trước khi lưu.');
-   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft,transport:'direct-db'});
+   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft,transport:'od-ui'});
    pendingSave={operationId:prepared.operationId,serverUrl:serverClient.connection.url,itemId:id,at:new Date().toISOString(),state:'started'};
    await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
    notify();
-   let postError=null;
-   try{await serverClient.post(prepared.operationId);}
-   catch(e){postError=e;
-    // Release only a server-confirmed pre-write failure. Network timeouts never retry.
-    const operation=await serverClient.operation(prepared.operationId);
-    if(['prepared','failed-no-write'].includes(operation.state)){
-     const aborted=await serverClient.abort(prepared.operationId);
-     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;status.message=`Chưa ghi DB: ${e.message}`;await audit('direct-save-aborted',{hash:draft.sha256});break;}
+   let saveAuthorizationStarted=false;
+   const diagnosticDir=path.join(app.getPath('userData'),'od-diagnostics');
+   try{
+    status.message='Đang mở hồ sơ và điền khoản thanh toán trên Open Dental. Không thao tác chuột hoặc bàn phím cho đến khi hoàn tất.';notify();
+    const filled=await windows.runWindows(resources(),{diagnosticDir,action:'fill-preview',draft:prepared.plan});
+    if(!filled.windowHandle||!filled.paymentTypeApplied||!filled.splitsApplied)throw new Error('Open Dental chưa xác nhận đủ nội dung thanh toán.');
+    activeDraft={...prepared.plan,windowHandle:filled.windowHandle};
+    workspace.preview={id,amount:draft.amount,paymentType:draft.paymentType,at:new Date().toISOString()};
+    await serverClient.recheck(prepared.operationId);
+    pendingSave.state='ui-saving';
+    await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
+    saveAuthorizationStarted=true;
+    await serverClient.beginUiSave(prepared.operationId);
+    await windows.runWindows(resources(),{diagnosticDir,action:'save-preview',draft:activeDraft,operationId:prepared.operationId});
+    activeDraft=null;workspace.preview=null;
+   }catch(e){
+    // Only a confirmed empty UI before Save authorization can be abandoned.
+    // Timeout/unknown UI state always retains the durable operation for recovery.
+    if(!saveAuthorizationStarted){
+     try{
+      const inspected=await windows.runWindows(resources(),{diagnosticDir,action:'inspect'});
+      if(Array.isArray(inspected.modals)&&inspected.modals.length===0){
+       const aborted=await serverClient.abort(prepared.operationId);
+       if(aborted.released){
+        await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;activeDraft=null;workspace.preview=null;
+        await audit('client-save-aborted',{hash:draft.sha256,error:e.message});
+        status.message='Chưa lưu khoản thanh toán. Mở Open Dental, đóng các cửa sổ đang nhập và thử lại. Nếu vẫn lỗi, liên hệ hỗ trợ.';break;
+       }
+      }
+     }catch{}
     }
+    await audit('client-save-interrupted',{hash:draft.sha256,error:e.message,saveAuthorizationStarted});
    }
    const result=await serverClient.verify(prepared.operationId);
    workspace.snapshots.set(item.remote.patNum,validateSnapshot(await serverClient.context(item.remote.patNum)));
    if(result.verified){
-    await audit('direct-save-verified',{hash:draft.sha256,payNum:result.payNum});await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;
-    status.message=`Đã ghi và xác minh Payment #${result.payNum}, tổng ${result.amount}, ${result.splitNums.length} Splits. Refresh Account trên OD để xem.`;
+    activeDraft=null;workspace.preview=null;await audit('client-save-verified',{hash:draft.sha256,payNum:result.payNum});await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;
+    status.message=`Đã lưu và xác minh khoản thanh toán trên Open Dental.`;
    }else{
     pendingSave.state='unverified';await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
-    status.message=`Chưa xác minh transaction. ${result.reason}${postError?' '+postError.message:''} Không bấm ghi lại.`;
+    status.message='Chưa xác minh được kết quả lưu. Bấm Kiểm tra kết quả; không lưu lại.';
    }
    break;
   }
   case 'verify-save':{
    if(!pendingSave||!serverClient||pendingSave.serverUrl!==serverClient.connection.url)throw new Error('Kết nối đúng SERVER của lượt ghi đang chờ.');
    const operation=await serverClient.operation(pendingSave.operationId);
+   if(operation.transport==='od-ui'&&operation.state==='prepared'){
+    const inspected=await windows.runWindows(resources(),{action:'inspect'});
+    if(Array.isArray(inspected.modals)&&inspected.modals.length===0){
+     const aborted=await serverClient.abort(pendingSave.operationId);
+     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;activeDraft=null;workspace.preview=null;status.message='Lượt trước chưa lưu. Mở lại hồ sơ để đối chiếu.';break;}
+    }
+   }
    if(operation.transport==='direct-db'&&['prepared','failed-no-write','aborted-no-change'].includes(operation.state)){
     const aborted=await serverClient.abort(pendingSave.operationId);
     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;status.message='SERVER xác nhận lượt trước chưa ghi dữ liệu. Tải lại hồ sơ để đối chiếu.';break;}
    }
    const result=await serverClient.verify(pendingSave.operationId);
-   if(result.verified){await audit('save-recovered-verified',{payNum:result.payNum});pendingSave=null;await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});status.message=`Đã xác minh Payment #${result.payNum}.`;}
+   if(result.verified){activeDraft=null;workspace.preview=null;await audit('save-recovered-verified',{payNum:result.payNum});pendingSave=null;await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});status.message=`Đã xác minh Payment #${result.payNum}.`;}
    else status.message=`Chưa xác minh: ${result.reason} Giữ khóa chống nhập lại.`;
    break;
   }
   case 'close-preview':{
    if(!activeDraft)throw new Error('Không có bản nháp do tool đang quản lý.');
+   if(pendingSave){const operation=await serverClient.operation(pendingSave.operationId);if(operation.state!=='prepared')throw new Error('Lượt này có thể đã lưu. Kiểm tra kết quả trước khi đóng.');}
    await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'close-preview',draft:activeDraft});
-   await audit('preview-closed',{hash:activeDraft.sha256});workspace.snapshots.delete(activeDraft.patNum);activeDraft=null;workspace.preview=null;status.message='Đã đóng bản nháp. Chưa xác minh thay đổi DB.';break;
+   await audit('preview-closed',{hash:activeDraft.sha256});workspace.snapshots.delete(activeDraft.patNum);activeDraft=null;workspace.preview=null;status.message='Đã đóng bản nháp.';
+   if(pendingSave){const aborted=await serverClient.abort(pendingSave.operationId);if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;}}
+   break;
   }
   case 'export-plan':{
    const id=idArg(arg),item=workspace.items.get(id),result=workspace.result(item);

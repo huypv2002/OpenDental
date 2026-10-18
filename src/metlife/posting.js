@@ -71,6 +71,19 @@ export function createPostingCoordinator({repository,directory}){
    if(financial(op.before)!==financial(fresh))throw new Error('Dữ liệu tài chính thay đổi trong khi điền OD; không Save.');
    op.checkedBeforeSaveAt=new Date().toISOString();await save(op);return {ready:true,plan};
   }),
+  beginUiSave:id=>serial(async()=>{
+   const op=await read(id);
+   if(op.transport!=='od-ui'||op.state!=='prepared')throw new Error('Lượt lưu trên OD không sẵn sàng; kiểm tra kết quả trước.');
+   const fresh=await repository.context(op.patNum),pdf=await repository.pdf(op.patNum,op.docNum);
+   validatePostingPlan(fresh,op.plan);
+   if(pdf.sha256!==op.plan.sha256)throw new Error('PDF changed before Save');
+   const financial=s=>JSON.stringify({payment:s.tables.payment,paysplit:s.tables.paysplit,claimpayment:s.tables.claimpayment,claimproc:s.tables.claimproc});
+   if(financial(op.before)!==financial(fresh))throw new Error('Dữ liệu tài chính thay đổi trong khi điền OD; không Save.');
+   // Persist before authorizing the client click. A lost response must never
+   // make this operation eligible for a second click or a no-change abort.
+   op.state='ui-saving';op.checkedBeforeSaveAt=new Date().toISOString();await save(op);
+   return {ready:true,plan:op.plan};
+  }),
   post:id=>serial(async()=>{
    const op=await read(id);
    if(op.state==='verified')return op.result;
@@ -90,12 +103,13 @@ export function createPostingCoordinator({repository,directory}){
    }
    const after=await repository.context(op.patNum);let result=verifyPostedPayment(op.before,after,op.plan);
    if(result.verified&&op.receipt&&String(op.receipt.payNum)!==result.payNum)result={verified:false,reason:'PayNum khác biên nhận transaction.'};
-   op.checkedAt=new Date().toISOString();op.result=result;op.state=result.verified?'verified':'unverified';await save(op);
+   op.checkedAt=new Date().toISOString();op.result=result;op.state=result.verified?'verified':(op.transport==='od-ui'&&op.state==='prepared'?'prepared':'unverified');await save(op);
    if(result.verified)await fs.unlink(path.join(dir,'patient-'+op.patNum+'.lock')).catch(()=>{});
    return result;
   }),
   abort:id=>serial(async()=>{
    const op=await read(id);if(op.state==='aborted-no-change')return {released:true};if(op.state==='verified')return {released:false,reason:'Already verified'};
+   if(op.transport==='od-ui'&&['ui-saving','unverified'].includes(op.state))return {released:false,reason:'Đã cấp quyền Save trên OD; chỉ kiểm tra kết quả, không ghi lại.'};
    if(op.transport==='direct-db'&&!['prepared','failed-no-write'].includes(op.state))return {released:false,reason:'Transaction có thể đã commit; chỉ xác minh, không ghi lại.'};
    const after=await repository.context(op.patNum);
    // Only release a pre-save failure when financial records are byte-for-byte unchanged.

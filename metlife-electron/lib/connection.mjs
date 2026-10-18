@@ -40,6 +40,7 @@ export class MetlifeClient{
  }
  prepare(args){return this.request('/operations',false,args);}
  post(id){return this.request(`/operations/${encodeURIComponent(id)}/post`,false,{});}
+ beginUiSave(id){return this.request(`/operations/${encodeURIComponent(id)}/begin-ui-save`,false,{});}
  recheck(id){return this.request(`/operations/${encodeURIComponent(id)}/recheck`,false,{});}
  verify(id){return this.request(`/operations/${encodeURIComponent(id)}/verify`,false,{});}
  abort(id){return this.request(`/operations/${encodeURIComponent(id)}/abort`,false,{});}

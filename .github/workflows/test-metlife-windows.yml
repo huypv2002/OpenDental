@@ -2,7 +2,10 @@ name: Test MetLife Windows UI Automation
 on:
   workflow_dispatch:
   push:
-    branches: [codex/metlife-uia3]
+    branches: [main, codex/metlife-uia3]
+    paths:
+      - 'metlife-electron/**'
+      - '.github/workflows/test-metlife-windows.yml'
   pull_request:
     paths:
       - 'metlife-electron/**'

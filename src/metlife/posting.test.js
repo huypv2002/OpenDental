@@ -49,3 +49,32 @@ test('pending operation can be recovered by patient without local journal',async
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-pending-'));const c=createPostingCoordinator({repository:{context:async()=>before(),pdf:async()=>({sha256:hash})},directory:dir});
  try{assert.equal((await c.patientPending('99')).pending,false);const op=await c.prepare({patNum:'99',docNum:'1',draft:draft()});assert.equal((await c.patientPending('99')).operationId,op.operationId);}finally{await fs.rm(dir,{recursive:true,force:true});}
 });
+test('UI Save authorization survives restart, cannot be issued twice or aborted after an uncertain click',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-ui-save-'));let context=before();
+ const repository={context:async()=>context,pdf:async()=>({sha256:hash}),postDirect:async()=>{throw new Error('Direct write must not run');}};
+ try{
+  const c=createPostingCoordinator({repository,directory:dir});const op=await c.prepare({patNum:'99',docNum:'1',draft:draft(),transport:'od-ui'});
+  assert.equal((await c.recheck(op.operationId)).ready,true);
+  assert.equal((await c.beginUiSave(op.operationId)).ready,true);
+  const restarted=createPostingCoordinator({repository,directory:dir});
+  assert.equal((await restarted.status(op.operationId)).state,'ui-saving');
+  await assert.rejects(restarted.beginUiSave(op.operationId));
+  await assert.rejects(restarted.post(op.operationId));
+  assert.equal((await restarted.abort(op.operationId)).released,false);
+  assert.equal((await restarted.verify(op.operationId)).verified,false);
+  assert.equal((await restarted.abort(op.operationId)).released,false);
+  context=posted(op.plan);assert.equal((await restarted.verify(op.operationId)).verified,true);
+  await assert.rejects(fs.stat(path.join(dir,'patient-99.lock')),{code:'ENOENT'});
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+});
+test('UI Save authorization rejects financial drift and does not advance a prepared operation',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-ui-drift-'));let context=before();
+ const c=createPostingCoordinator({repository:{context:async()=>context,pdf:async()=>({sha256:hash})},directory:dir});
+ try{
+  const op=await c.prepare({patNum:'99',docNum:'1',draft:draft(),transport:'od-ui'});
+  context=before();context.tables.paysplit.push({SplitNum:'7'});
+  await assert.rejects(c.beginUiSave(op.operationId),/thay đổi/);
+  assert.equal((await c.status(op.operationId)).state,'prepared');
+  context=before();assert.equal((await c.abort(op.operationId)).released,true);
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+});

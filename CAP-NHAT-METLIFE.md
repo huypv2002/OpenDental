@@ -81,3 +81,11 @@ Helper tự tìm `OpenDentBusiness.dll` trong các thư mục cài Open Dental c
 MyISAM không có rollback. Writer khóa bảng OD liên quan trong khoảng ghi/đọc lại, ghi trước toàn bộ kế hoạch và ID mới vào `luk_metlife_myisam_jobs` (InnoDB), rồi mới INSERT Payment/Splits. Tạo hash trước khi khóa bảng để không giữ khóa trong lúc khởi động helper. Mọi cột bắt buộc được kiểm tra trước INSERT đầu tiên. Khi ghi đủ và đọc lại khớp (kể cả ID và hash), nhật ký chuyển complete. Mất phản hồi sau khi ghi đủ có thể xác minh từ ý định và dữ liệu thật. Nếu ngắt giữa các INSERT, có thể còn Payment/Splits chưa đủ: giữ khóa bệnh nhân, không rollback giả, không tự xóa hoặc tự ghi tiếp; kỹ thuật viên phải kiểm tra và xử lý trường hợp cụ thể. Khóa bảng có thể chặn thao tác OD khác trong khoảng ngắn khi ghi.
 
 Trên SERVER cập nhật rồi chạy `npm run metlife:inspect`. Báo cáo kiểm tra thêm việc thư viện OD có tạo được hash cho giá trị tổng hợp hay không, không xuất hash này ra báo cáo và không tạo hồ sơ. Bản khách hàng không hiện thông tin kỹ thuật. R5/EXE hiện có dùng cùng request; thay đổi này nằm ở backend SERVER.
+
+## Bản 0.4.1: lưu qua client Open Dental
+
+Nút **Đã đối chiếu · Lưu vào OD** hiện dùng client OD trên chính máy chạy tool: điền Payment/Splits, kiểm tra lại dữ liệu trên Bridge, ghi nhận quyền Save rồi bấm Save trong OD. Bridge đọc lại Payment/Splits để xác minh. Luồng này không gọi helper CDT và không gọi endpoint ghi SQL trực tiếp; không cần bật `METLIFE_DIRECT_DB_ENABLED` để dùng luồng client. Không đổi bảng, engine hoặc cấu hình DB.
+
+Triển khai: pull/restart Bridge trên SERVER để có endpoint `/operations/:id/begin-ui-save`, sau đó dùng EXE tool 0.4.1 trên R5. Mở OD trên cùng máy, giữ phiên Windows không khóa và chạy OD/tool cùng mức quyền. Trong khi tool thao tác, không dùng chuột/bàn phím. Phải nghiệm thu trên OD thật; fixture/CI không xác nhận giao diện thực của phòng khám.
+
+Sau khi đã cấp quyền Save, mất kết nối hoặc readback chưa khớp sẽ giữ lượt đang chờ; chỉ **Kiểm tra kết quả**, không tự Save lại. Lượt lỗi trước khi cấp quyền Save chỉ giải phóng khi không còn popup OD và DB tài chính chưa thay đổi. Những lượt direct-db cũ chưa xác minh vẫn được kiểm tra bằng luồng khôi phục cũ.

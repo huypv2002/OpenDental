@@ -5,18 +5,20 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
  const root=path.join(__dirname,'..'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'luk-patient-ui-')),token='t'.repeat(64),bytes=process.env.METLIFE_SAMPLE_PDF?fs.readFileSync(process.env.METLIFE_SAMPLE_PDF):require('./synthetic-metlife.cjs')(),filename=process.env.METLIFE_SAMPLE_PDF?path.basename(process.env.METLIFE_SAMPLE_PDF):'SYNTHETIC.pdf',calls=[];
  fs.mkdirSync(path.join(root,'test-results'),{recursive:true});
  const patient={PatNum:'99',FName:process.env.METLIFE_TEST_FIRST||'TEST',LName:process.env.METLIFE_TEST_LAST||'PERSON',Birthdate:'2000-01-01',insurance:[{SubscriberID:'TEST-001',GroupNum:fixtureGroup,CarrierName:'MetLife'}]};
- let duplicate=true,preparedPlan=null,scenario='verified';
+ let duplicate=true,preparedPlan=null,scenario='verified',operationState='prepared';
  const tables={patient:[patient],document:[{DocNum:'55',PatNum:'99',FileName:filename,DocCategory:'18'}],definition:[{DefNum:'18',ItemName:'FINISHED CLAM'}],patplan:[{PatNum:'99',InsSubNum:'1'}],inssub:[{InsSubNum:'1',PlanNum:'1',Subscriber:'99'}],insplan:[{PlanNum:'1',CarrierNum:'1',GroupNum:fixtureGroup}],carrier:[{CarrierNum:'1',CarrierName:'MetLife'}],procedurelog:[{ProcNum:'101',PatNum:'99',CodeNum:'1',ProvNum:'3',ClinicNum:'0',ProcStatus:2,ProcDate:'2026-09-13',ToothNum:'',ProcFee:'100.00'},{ProcNum:'102',PatNum:'99',CodeNum:'2',ProvNum:'3',ClinicNum:'0',ProcStatus:2,ProcDate:'2026-09-13',ToothNum:'',ProcFee:'120.00'},{ProcNum:'103',PatNum:'99',CodeNum:'3',ProvNum:'3',ClinicNum:'0',ProcStatus:2,ProcDate:'2026-09-13',ToothNum:'',ProcFee:'222.00'}],procedurecode:[{CodeNum:'1',ProcCode:'D0150',Descript:'Exam'},{CodeNum:'2',ProcCode:'D1110',Descript:'Prophy'},{CodeNum:'3',ProcCode:'D0210',Descript:'FMX'}],provider:[{ProvNum:'3',Abbr:'DOC'}],payment:[{PayNum:'99',PayAmt:'442.00',PayDate:'2026-09-17'}],paysplit:[],claim:[],claimproc:[],claimpayment:[]};
  const server=http.createServer(async(req,res)=>{
   calls.push(req.url);if(req.headers.authorization!=='Bearer '+token&&req.headers['x-luk-desktop']!=='metlife'){res.writeHead(401);return res.end('{}');}
   const url=new URL(req.url,'http://localhost');let data;
   if(url.pathname==='/api/metlife/operations'&&req.method==='POST'){
-   let body='';for await(const chunk of req)body+=chunk;const parsed=JSON.parse(body);assert.equal(parsed.transport,'direct-db');preparedPlan={...parsed.draft,paymentTypeDefNum:'10',mode:'save-authorized'};data={operationId:'11111111-1111-4111-8111-111111111111',plan:preparedPlan};
+   let body='';for await(const chunk of req)body+=chunk;const parsed=JSON.parse(body);assert.equal(parsed.transport,'od-ui');operationState='prepared';preparedPlan={...parsed.draft,paymentTypeDefNum:'10',mode:'save-authorized'};data={operationId:'11111111-1111-4111-8111-111111111111',plan:preparedPlan};
   }
-  else if(url.pathname.endsWith('/post'))data={posted:true,payNum:'777'};
+  else if(url.pathname.endsWith('/post'))throw new Error('Client save must never call direct post');
+  else if(url.pathname.endsWith('/recheck')){if(scenario==='recheck-failed'){res.writeHead(400,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:'Dữ liệu tài chính thay đổi trong khi điền OD; không Save.'}));}data={ready:true,plan:preparedPlan};}
+  else if(url.pathname.endsWith('/begin-ui-save')){operationState='ui-saving';data={ready:true,plan:preparedPlan};}
   else if(url.pathname.endsWith('/verify'))data=scenario==='verified'?{verified:true,payNum:'777',splitNums:['1','2','3'],amount:'442.00'}:{verified:false,reason:'fixture uncertain'};
-  else if(url.pathname.endsWith('/abort'))data={released:false};
-  else if(/^\/api\/metlife\/operations\/[^/]+$/.test(url.pathname))data={state:'unverified',transport:'direct-db'};
+  else if(url.pathname.endsWith('/abort'))data={released:operationState==='prepared'};
+  else if(/^\/api\/metlife\/operations\/[^/]+$/.test(url.pathname))data={state:operationState,transport:'od-ui'};
   else if(url.pathname.endsWith('/diagnostics/database'))data={readOnly:true,capturedAt:new Date().toISOString(),ready:false,schemaProblems:['payment dùng MyISAM; adapter hiện cần InnoDB.'],configurationProblems:[],tables:[{TABLE_NAME:'payment',ENGINE:'MyISAM'}],columns:[],preferences:[],limitations:[]};
   else if(url.pathname.endsWith('/health'))data={db:true};
   else if(url.pathname==='/api/metlife/patients')data={patients:[patient,{...patient,PatNum:'1279',FName:'OTHER'}],page:0,hasMore:false};
@@ -49,16 +51,18 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   duplicate=false;await page.click('[data-tab="patients"]');await page.click('[data-document="55"]');await page.waitForFunction(()=>document.body.getAttribute('aria-busy')!=='true');
   await a.evaluate(async(_electron,root)=>{
    const {createRequire}=process.getBuiltinModule('module');const require=createRequire(root+'/package.json');globalThis.odTestActions=[];
-   require('./lib/windows.cjs').runWindows=async(_resources,request)=>{globalThis.odTestActions.push(request.action);return {ok:true,windowHandle:'999',paymentTypeApplied:true,splitsApplied:true,saveInvoked:request.action==='save-preview'};};
+   require('./lib/windows.cjs').runWindows=async(_resources,request)=>{globalThis.odTestActions.push(request.action);if(request.action==='save-preview'&&(!request.operationId||request.draft.mode!=='save-authorized'||request.draft.windowHandle!=='999'))throw new Error('Missing exact UI Save authorization');return {ok:true,modals:request.action==='inspect'?['Payment']:[],windowHandle:'999',paymentTypeApplied:true,splitsApplied:true,saveInvoked:request.action==='save-preview'};};
   },root);
   const save=page.locator('[data-action="save-payment"]');
   assert.equal(await page.locator('#detail table:nth-of-type(2) tbody tr').count(),3);
   await save.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(root,'test-results/direct-db-splits.png')});
   assert.equal(await save.isEnabled(),true);await save.click();
   await page.waitForFunction(()=>document.querySelector('#status-text').textContent.includes('Đã lưu và xác minh'));
-  assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),[]);
+  assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),['fill-preview','save-preview']);
   assert.equal(preparedPlan.paymentType,'Insurance Paid');assert.equal(preparedPlan.splits.length,3);assert.equal(preparedPlan.note,`group number : ${fixtureGroup}`);
-  assert.ok(calls.findIndex(x=>x.endsWith('/post'))<calls.findIndex(x=>x.endsWith('/verify')));
+  assert.ok(calls.findIndex(x=>x.endsWith('/recheck'))<calls.findIndex(x=>x.endsWith('/begin-ui-save')));
+  assert.ok(calls.findIndex(x=>x.endsWith('/begin-ui-save'))<calls.findIndex(x=>x.endsWith('/verify')));
+  assert.ok(!calls.some(x=>x.endsWith('/post')));
   // Uncertain readback keeps a pending journal and blocks another Save.
   scenario='uncertain';assert.equal(await save.isEnabled(),true);await save.click();
   await page.waitForFunction(()=>!document.querySelector('#pending-save-banner').hidden);
@@ -66,8 +70,15 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   assert.equal(await save.isDisabled(),true);assert.match(await page.locator('#status-text').innerText(),/không lưu lại/i);
   assert.ok(fs.existsSync(path.join(temp,'userdata','pending-save.json')));
   scenario='verified';await page.click('#verify-save');await page.waitForFunction(()=>document.querySelector('#pending-save-banner').hidden).catch(async e=>{console.error('Recovery status:',await page.locator('#status-text').innerText(), 'Calls:',calls);throw e;});assert.ok(!fs.existsSync(path.join(temp,'userdata','pending-save.json')));
+  // Drift during filling must never reach the Save click. The user can close
+  // the verified draft and release only this pre-authorization operation.
+  scenario='recheck-failed';const beforeActions=await a.evaluate(()=>globalThis.odTestActions.length);
+  await save.click();await page.waitForFunction(()=>!document.querySelector('#pending-save-banner').hidden&&document.body.getAttribute('aria-busy')!=='true');
+  assert.deepEqual(await a.evaluate(n=>globalThis.odTestActions.slice(n),beforeActions),['fill-preview','inspect']);
+  await page.click('[data-action="close-preview"]');await page.waitForFunction(()=>document.querySelector('#pending-save-banner').hidden);
+  assert.ok(!fs.existsSync(path.join(temp,'userdata','pending-save.json')));
   assert.equal(await page.locator('[data-action="fill-preview"]').count(),0);await page.click('[data-tab="settings"]');assert.match(await page.locator('#settings').innerText(),/Hướng dẫn/);
   for(const tab of ['patients','queue','settings','activity']){await page.click(`[data-tab="${tab}"]`);assert.doesNotMatch(await page.locator('body').innerText(),/\b(DB|SQL|JSON|schema|SERVER|Bridge|ProcNum|DocNum|PlanNum|InsSubNum|InnoDB|MyISAM|snapshot|OCR|Electron)\b/i);}
-  assert.deepEqual(errors,[]);console.log('Direct save UI passed: synthetic PDF, detailed review, post request, zero Windows automation calls, verified readback, uncertain journal and retry block. Simulated SERVER; no clinic writes.');
+  assert.deepEqual(errors,[]);console.log('Client save UI passed: synthetic PDF, detailed review, Windows fill/save actions, server recheck/authorization, zero direct post calls, verified readback, uncertain journal and retry block. Simulated SERVER; no clinic writes.');
  }finally{await a.close();await new Promise(r=>server.close(r));fs.rmSync(temp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});
