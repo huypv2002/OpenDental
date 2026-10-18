@@ -48,7 +48,9 @@ jobs:
       - name: New split native helper binding (synthetic DLL)
         shell: powershell
         run: |
-          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1 -FixtureArchitecture x86
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1 -FixtureArchitecture x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: npm run test:save --prefix metlife-electron
       - run: npm run test:connect --prefix metlife-electron

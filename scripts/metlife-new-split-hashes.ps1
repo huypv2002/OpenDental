@@ -4,7 +4,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 try {
- $inputData = [Console]::In.ReadToEnd() | ConvertFrom-Json
+ $rawInput = [Console]::In.ReadToEnd()
+ $inputData = $rawInput | ConvertFrom-Json
  $candidates = @()
  if ($env:METLIFE_OD_INSTALL_DIR) { $candidates += $env:METLIFE_OD_INSTALL_DIR }
  $candidates += @("${env:ProgramFiles(x86)}\Open Dental", "$env:ProgramFiles\Open Dental", 'C:\Open Dental')
@@ -13,7 +14,28 @@ try {
  $install = (Resolve-Path -LiteralPath $install).Path
  [Environment]::CurrentDirectory = $install
  Set-Location -LiteralPath $install
- $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $install 'OpenDentBusiness.dll'))
+ $dll = Join-Path $install 'OpenDentBusiness.dll'
+ $architecture = [Reflection.AssemblyName]::GetAssemblyName($dll).ProcessorArchitecture.ToString()
+ if ($architecture -eq 'X86' -and [IntPtr]::Size -eq 8) {
+  $info = New-Object Diagnostics.ProcessStartInfo
+  $info.FileName = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+  $info.Arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  $info.RedirectStandardInput = $true
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  $info.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
+  $child = [Diagnostics.Process]::Start($info)
+  $child.StandardInput.Write($rawInput)
+  $child.StandardInput.Close()
+  $stdout = $child.StandardOutput.ReadToEndAsync()
+  $stderr = $child.StandardError.ReadToEndAsync()
+  if (-not $child.WaitForExit(12000)) { $child.Kill(); throw 'The 32-bit OD helper timed out.' }
+  [Console]::Write($stdout.Result)
+  exit $child.ExitCode
+ }
+ $assembly = [Reflection.Assembly]::LoadFrom($dll)
  $version = $assembly.GetName().Version
  if ($version.Major -ne 24 -or $version.Minor -ne 3) { throw 'The installed OD assembly must be version 24.3 for this adapter.' }
  $splitType = $assembly.GetType('OpenDentBusiness.PaySplit', $true)

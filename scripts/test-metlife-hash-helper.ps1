@@ -1,11 +1,12 @@
 # Synthetic DLL tests for helper loading/binding/error handling only.
 # Does not implement or distribute OD/CDT hashing, and never connects to a DB.
+param([ValidateSet('x86','x64')][string]$FixtureArchitecture='x64')
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path $env:TEMP ('luk-metlife-hash-test-' + [Guid]::NewGuid().ToString('N'))
 $old = $env:METLIFE_OD_INSTALL_DIR
 New-Item -ItemType Directory -Path $dir | Out-Null
 try {
- Add-Type -OutputAssembly (Join-Path $dir 'OpenDentBusiness.dll') -TypeDefinition @'
+ $source = @'
 using System;
 using System.Reflection;
 using System.Globalization;
@@ -21,6 +22,11 @@ namespace OpenDentBusiness {
  }
 }
 '@
+ $sourceFile = Join-Path $dir 'Synthetic.cs'
+ [IO.File]::WriteAllText($sourceFile,$source)
+ $compiler = Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+ & $compiler /nologo /target:library ('/platform:'+$FixtureArchitecture) ('/out:'+(Join-Path $dir 'OpenDentBusiness.dll')) $sourceFile
+ if ($LASTEXITCODE -ne 0) { throw 'Could not compile the synthetic helper fixture.' }
  $env:METLIFE_OD_INSTALL_DIR = $dir
  $helper = Join-Path $PSScriptRoot 'metlife-new-split-hashes.ps1'
  function RunHelper($rows) {
