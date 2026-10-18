@@ -46,14 +46,15 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
  private readonly object traceLock=new object();
  private readonly List<string> failures=new List<string>();
  private volatile bool tracing;
+ private bool syntheticProbe;
  [ThreadStatic] private static bool recording;
  public MetlifeOdAssemblyResolver(string directory) {
   this.directory=directory;
   AppDomain.CurrentDomain.AssemblyResolve+=Resolve;
   AppDomain.CurrentDomain.FirstChanceException+=TraceFailure;
  }
- public void BeginHashTrace() {
-  lock(traceLock) { failures.Clear(); tracing=true; }
+ public void BeginHashTrace(bool syntheticProbe) {
+  lock(traceLock) { failures.Clear(); this.syntheticProbe=syntheticProbe; tracing=true; }
  }
  public string EndHashTrace() {
   lock(traceLock) { tracing=false; return String.Join(" | ",failures); }
@@ -61,13 +62,15 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
  private void TraceFailure(object sender,FirstChanceExceptionEventArgs args) {
   if(!tracing || recording) return;
   var ex=args.Exception;
-  if(!(ex is FileNotFoundException || ex is FileLoadException || ex is BadImageFormatException
+  bool loaderFailure=(ex is FileNotFoundException || ex is FileLoadException || ex is BadImageFormatException
     || ex is DllNotFoundException || ex is EntryPointNotFoundException
-    || ex is TypeLoadException || ex is TypeInitializationException)) return;
+    || ex is TypeLoadException || ex is TypeInitializationException);
   recording=true;
   try {
-   // Only loader failures. Never record method inputs or returned hash values.
-   string detail=ex.GetType().Name+": "+ex.Message;
+   // Include general exception messages only for the fixed metadata probe,
+   // never for a real patient split. Never include the returned hash value.
+   string detail=ex.GetType().Name;
+   if(loaderFailure || syntheticProbe) detail+=": "+ex.Message;
    if(detail.Length>600) detail=detail.Substring(0,600);
    lock(traceLock) { if(failures.Count<8 && !failures.Contains(detail)) failures.Add(detail); }
   } finally { recording=false; }
@@ -120,7 +123,8 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
   $splitType.GetField('PatNum').SetValue($split, [long]$row.patNum)
   $splitType.GetField('SplitAmt').SetValue($split, [double]::Parse($row.amount, [Globalization.CultureInfo]::InvariantCulture))
   $splitType.GetField('DatePay').SetValue($split, [DateTime]::ParseExact($row.date, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture))
-  $resolver.BeginHashTrace()
+  $isSyntheticProbe = ([string]$row.patNum -ceq '1' -and [string]$row.amount -ceq '0.01' -and [string]$row.date -ceq '2000-01-01')
+  $resolver.BeginHashTrace($isSyntheticProbe)
   $loaderTrace = ''
   try { $hash = [string]$method.Invoke($null, @($split)) }
   finally { $loaderTrace = $resolver.EndHashTrace() }
@@ -130,7 +134,7 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
   # OD does not impose a 16-character minimum; keep its native result verbatim.
   if ([string]::IsNullOrWhiteSpace($hash) -or $hash.Length -gt 4096 -or $hash -match 'Exception$' -or $hash -match '\s') {
    $reason = "rejected result (length=" + $hash.Length + ", whitespace=" + [bool]($hash -match '\s') + ")"
-   if ($hash -match '^[A-Za-z_][A-Za-z0-9_.]*Exception$') { $reason = "OD returned " + $hash }
+   if ($hash -match '^(?:[A-Za-z_][A-Za-z0-9_.]*)?Exception$') { $reason = "OD returned " + $hash }
    elseif ([string]::IsNullOrEmpty($hash)) { $reason = 'OD returned an empty result' }
    $detail = "OD did not return a valid SecurityHash: " + $reason + "."
    if ($loaderTrace) { $detail += " Loader trace: " + $loaderTrace }

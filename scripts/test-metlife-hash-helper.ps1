@@ -21,6 +21,14 @@ namespace OpenDentBusiness {
  public class PaySplit { public long PatNum; public double SplitAmt; public DateTime DatePay; }
  public static class PaySplits {
   public static string HashFields(PaySplit split) {
+   if(split.PatNum==1 && split.SplitAmt==0.01) {
+    try { throw new Exception("Synthetic CDT general failure."); }
+    catch(Exception ex) { return ex.GetType().Name; }
+   }
+   if(split.SplitAmt==0.08) {
+    try { throw new Exception("SENSITIVE_REAL_INPUT_MESSAGE"); }
+    catch(Exception ex) { return ex.GetType().Name; }
+   }
    if(split.SplitAmt==0.02) return "";
    if(split.SplitAmt==0.03) return "DllNotFoundException";
    if(split.SplitAmt==0.05) {
@@ -91,7 +99,11 @@ namespace OpenDentBusiness {
  }
  $short = RunHelper @(@{patNum='99';amount='0.07';date='2026-09-24'})
  if (-not $short.ok -or $helperCode -ne 0 -or $short.hashes[0] -cne 'NATIVE009') { throw 'Native nine-character hash was rejected or modified.' }
- Rename-Item -LiteralPath (Join-Path $dir 'CodeBase.dll') -NewName 'CodeBase.dll.hidden'
+ $probe = RunHelper @(@{patNum='1';amount='0.01';date='2000-01-01'})
+ if ($probe.ok -or $helperCode -eq 0 -or $probe.error -notmatch 'OD returned Exception' -or $probe.error -notmatch 'Synthetic CDT general failure') { throw ('General synthetic probe failure was hidden: ' + $probe.error) }
+ $realFailure = RunHelper @(@{patNum='99';amount='0.08';date='2026-09-24'})
+ if ($realFailure.ok -or $helperCode -eq 0 -or $realFailure.error -notmatch 'OD returned Exception' -or $realFailure.error -match 'SENSITIVE_REAL_INPUT_MESSAGE') { throw 'General failure leaked a real split exception message.' }
+ Rename-Item -LiteralPath (Join-Path $dir 'CodeBase.dll') -NewName 'CodeBase.dll.hidden' 
  try {
   $missing = RunHelper @(@{patNum='99';amount='35.00';date='2026-09-24'})
   if ($missing.ok -or $helperCode -eq 0 -or $missing.error -notmatch 'Missing OD dependency:.*CodeBase.dll') { throw 'Missing dependency was not diagnosed explicitly.' }
