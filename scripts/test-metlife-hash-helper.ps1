@@ -36,7 +36,7 @@ namespace OpenDentBusiness {
   return ($out | ConvertFrom-Json)
  }
  $result = RunHelper @(@{patNum='99';amount='35.00';date='2026-09-24'},@{patNum='99';amount='1.00';date='2026-09-24'})
- if (-not $result.ok -or $helperCode -ne 0 -or $result.hashes.Count -ne 2 -or $result.hashes[0] -cne 'SYNTHETIC|99|35.00|2026-09-24') { throw 'Native helper did not bind exact new split fields.' }
+ if (-not $result.ok -or $helperCode -ne 0 -or $result.hashes.Count -ne 2 -or $result.hashes[0] -cne 'SYNTHETIC|99|35.00|2026-09-24') { throw ('Native helper did not bind exact new split fields: ' + ($result | ConvertTo-Json -Compress -Depth 5)) }
  foreach ($amount in @('0.02','0.03','1.001')) {
   $bad = RunHelper @(@{patNum='99';amount=$amount;date='2026-09-24'})
   if ($bad.ok -or $helperCode -eq 0) { throw 'Native helper accepted invalid input or a failed native hash.' }
