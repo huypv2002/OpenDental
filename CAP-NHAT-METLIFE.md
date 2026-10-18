@@ -60,3 +60,13 @@ Workflow **Validate MetLife deployment** chạy trên thay đổi MetLife ở `m
 Giới hạn vẫn giữ nguyên: adapter ghi Payment/Splits theo quy trình Insurance Paid hiện có, không thay thế nghiệp vụ nhận insurance claim, OD Audit Trail hoặc aging/balance. Nghiệm thu Account, báo cáo và số dư trên clone trước khi bật cho dữ liệu thật. CI và artifact thành công không đồng nghĩa SERVER/R5 đã pull/restart hoặc dữ liệu phòng khám đã được xác minh.
 
 Giao diện khách hàng 0.4.0 chỉ có tìm bệnh nhân, tài liệu, đối chiếu, lưu/xác minh, hướng dẫn và lịch sử thao tác. Không hiển thị URL/DB/schema, snapshot/JSON, ID nội bộ procedure/plan, OCR/driver hoặc nhật ký kỹ thuật. Dùng CLI `npm run metlife:inspect` trên SERVER cho chẩn đoán kỹ thuật.
+
+## Kết quả phát hành source 0.4.0 — 18/10/2026
+
+Code phát hành: `0e073aa`, đã có trên `origin/main`.
+
+CI: https://github.com/huypv2002/OpenDental/actions/runs/39139304638 — cả hai job MariaDB và Windows thành công. MariaDB 10.5 chạy SQL thật trên database tổng hợp dùng riêng, gồm commit/readback, ghi lặp, rollback giữa các splits, mất phản hồi commit và chặn engine không hỗ trợ. Windows chạy Electron 44.7.2, kiểm thử app, lưu/xác minh giả lập, tự kết nối, kiểm tra UI khách hàng không có nội dung kỹ thuật/menu debug; portable EXE đã build và upload.
+
+Artifact: `LUK-MetLife-0.4.0-Windows` (portable EXE). Icon răng hiện có được giữ nguyên và chuyển đổi kích thước khi đóng gói. Không nhúng `.env` hay thông tin kết nối DB vào EXE.
+
+Chưa xác minh chạy EXE trên R5, chưa restart SERVER/R5 và chưa ghi DB thật của phòng khám. Quản trị viên cấu hình `.env` trên SERVER, kiểm tra metadata bằng CLI rồi cập nhật theo các bước phía trên.
