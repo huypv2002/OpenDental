@@ -43,8 +43,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: npm ci --prefix metlife-electron
-      - run: npm test --prefix metlife-electron
       - name: New split native helper binding (synthetic DLL)
         shell: powershell
         run: |
@@ -52,6 +50,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1 -FixtureArchitecture x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: npm ci --prefix metlife-electron
+      - run: npm test --prefix metlife-electron
       - run: npm run test:save --prefix metlife-electron
       - run: npm run test:connect --prefix metlife-electron
       - run: npm run test:ui --prefix metlife-electron

@@ -33,7 +33,13 @@ namespace OpenDentBusiness {
   $request = @{splits=@($rows)} | ConvertTo-Json -Compress -Depth 5
   $out = $request | & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helper
   $script:helperCode = $LASTEXITCODE
-  return ($out | ConvertFrom-Json)
+  $parsed = $out | ConvertFrom-Json
+  if ($parsed.retry32) {
+   $out = $request | & (Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helper
+   $script:helperCode = $LASTEXITCODE
+   $parsed = $out | ConvertFrom-Json
+  }
+  return $parsed
  }
  $result = RunHelper @(@{patNum='99';amount='35.00';date='2026-09-24'},@{patNum='99';amount='1.00';date='2026-09-24'})
  if (-not $result.ok -or $helperCode -ne 0 -or $result.hashes.Count -ne 2 -or $result.hashes[0] -cne 'SYNTHETIC|99|35.00|2026-09-24') { throw ('Native helper did not bind exact new split fields: ' + ($result | ConvertTo-Json -Compress -Depth 5)) }

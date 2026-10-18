@@ -17,24 +17,10 @@ try {
  $dll = Join-Path $install 'OpenDentBusiness.dll'
  $architecture = [Reflection.AssemblyName]::GetAssemblyName($dll).ProcessorArchitecture.ToString()
  if ($architecture -eq 'X86' -and [IntPtr]::Size -eq 8) {
-  $info = New-Object Diagnostics.ProcessStartInfo
-  $info.FileName = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
-  $info.Arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
-  $info.UseShellExecute = $false
-  $info.CreateNoWindow = $true
-  $info.RedirectStandardInput = $true
-  $info.RedirectStandardOutput = $true
-  $info.RedirectStandardError = $true
-  $info.EnvironmentVariables['METLIFE_OD_INSTALL_DIR'] = $install
-  $info.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
-  $child = [Diagnostics.Process]::Start($info)
-  $child.StandardInput.Write($rawInput)
-  $child.StandardInput.Close()
-  $stdout = $child.StandardOutput.ReadToEndAsync()
-  $stderr = $child.StandardError.ReadToEndAsync()
-  if (-not $child.WaitForExit(12000)) { $child.Kill(); throw 'The 32-bit OD helper timed out.' }
-  [Console]::Write($stdout.Result)
-  exit $child.ExitCode
+  # Ask the Node launcher to retry once with the 32-bit PowerShell executable.
+  # Do not nest PowerShell child processes that can outlive the request timeout.
+  @{ok=$false;retry32=$true;install=$install;error='Use the 32-bit OD helper.'} | ConvertTo-Json -Compress
+  exit 2
  }
  $assembly = [Reflection.Assembly]::LoadFrom($dll)
  $version = $assembly.GetName().Version
