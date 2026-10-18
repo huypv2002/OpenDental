@@ -103,7 +103,7 @@ namespace OpenDentBusiness {
  if ($probe.ok -or $helperCode -eq 0 -or $probe.error -notmatch 'OD returned Exception' -or $probe.error -notmatch 'Synthetic CDT general failure') { throw ('General synthetic probe failure was hidden: ' + $probe.error) }
  $realFailure = RunHelper @(@{patNum='99';amount='0.08';date='2026-09-24'})
  if ($realFailure.ok -or $helperCode -eq 0 -or $realFailure.error -notmatch 'OD returned Exception' -or $realFailure.error -match 'SENSITIVE_REAL_INPUT_MESSAGE') { throw 'General failure leaked a real split exception message.' }
- Rename-Item -LiteralPath (Join-Path $dir 'CodeBase.dll') -NewName 'CodeBase.dll.hidden' 
+ Rename-Item -LiteralPath (Join-Path $dir 'CodeBase.dll') -NewName 'CodeBase.dll.hidden'
  try {
   $missing = RunHelper @(@{patNum='99';amount='35.00';date='2026-09-24'})
   if ($missing.ok -or $helperCode -eq 0 -or $missing.error -notmatch 'Missing OD dependency:.*CodeBase.dll') { throw 'Missing dependency was not diagnosed explicitly.' }
