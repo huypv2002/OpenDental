@@ -22,9 +22,54 @@ try {
   @{ok=$false;retry32=$true;install=$install;error='Use the 32-bit OD helper.'} | ConvertTo-Json -Compress
   exit 2
  }
+ # PowerShell's application base is its own installation directory. Resolve
+ # managed OD dependencies explicitly from this installation, on CLR threads
+ # as well as the PowerShell thread. Never substitute a different identity.
+ Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Reflection;
+public sealed class MetlifeOdAssemblyResolver : IDisposable {
+ private readonly string directory;
+ public MetlifeOdAssemblyResolver(string directory) {
+  this.directory=directory;
+  AppDomain.CurrentDomain.AssemblyResolve+=Resolve;
+ }
+ private Assembly Resolve(object sender, ResolveEventArgs args) {
+  var requested=new AssemblyName(args.Name);
+  if(String.IsNullOrEmpty(requested.Name) || requested.Name!=Path.GetFileName(requested.Name)
+    || requested.Name.IndexOfAny(new char[]{'/', '\\', ':'})>=0) return null;
+  var path=Path.Combine(directory,requested.Name+".dll");
+  if(!File.Exists(path)) return null;
+  var actual=AssemblyName.GetAssemblyName(path);
+  if(!String.Equals(actual.FullName,requested.FullName,StringComparison.OrdinalIgnoreCase))
+   throw new FileLoadException("OD dependency identity mismatch: requested "+requested.FullName+"; found "+actual.FullName,path);
+  return Assembly.LoadFrom(path);
+ }
+ public void Dispose() { AppDomain.CurrentDomain.AssemblyResolve-=Resolve; }
+}
+'@
+ $resolver = New-Object MetlifeOdAssemblyResolver($install)
  $assembly = [Reflection.Assembly]::LoadFrom($dll)
  $version = $assembly.GetName().Version
  if ($version.Major -ne 24 -or $version.Minor -ne 3) { throw 'The installed OD assembly must be version 24.3 for this adapter.' }
+ # Preload direct dependencies, checking identities before CLR binding can
+ # unify a different assembly version in the default load context.
+ $odAssemblies = @($assembly)
+ foreach ($dependency in @('CodeBase.dll', 'CDT.dll')) {
+  $dependencyPath = Join-Path $install $dependency
+  if (-not (Test-Path -LiteralPath $dependencyPath)) { throw ("Missing OD dependency: " + $dependencyPath) }
+  $odAssemblies += [Reflection.Assembly]::LoadFrom($dependencyPath)
+ }
+ foreach ($odAssembly in $odAssemblies) {
+  foreach ($reference in $odAssembly.GetReferencedAssemblies()) {
+   $localPath = Join-Path $install ($reference.Name + '.dll')
+   if (Test-Path -LiteralPath $localPath) {
+    $actual = [Reflection.AssemblyName]::GetAssemblyName($localPath)
+    if ($actual.FullName -ne $reference.FullName) { throw ("OD dependency identity mismatch: requested " + $reference.FullName + "; found " + $actual.FullName) }
+   }
+  }
+ }
  $splitType = $assembly.GetType('OpenDentBusiness.PaySplit', $true)
  $serviceType = $assembly.GetType('OpenDentBusiness.PaySplits', $true)
  $method = $serviceType.GetMethod('HashFields', [Type[]]@($splitType))
@@ -45,6 +90,14 @@ try {
  @{ok=$true;version=$version.ToString();culture=[Globalization.CultureInfo]::CurrentCulture.Name;hashes=@($results)} | ConvertTo-Json -Compress -Depth 5
  exit 0
 } catch {
- @{ok=$false;error=$_.Exception.Message} | ConvertTo-Json -Compress
+ $failure = $_.Exception
+ $messages = @($failure.Message)
+ while ($failure.InnerException) {
+  $failure = $failure.InnerException
+  if ($messages -notcontains $failure.Message) { $messages += $failure.Message }
+ }
+ @{ok=$false;error=("OD helper [" + $install + "]: " + ($messages -join ' -> '))} | ConvertTo-Json -Compress
  exit 1
+} finally {
+ if ($resolver) { $resolver.Dispose() }
 }
