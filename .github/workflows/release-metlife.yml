@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/metlife/**'
       - 'scripts/inspect-metlife-db.mjs'
+      - 'scripts/inspect-metlife-od-context.ps1'
       - 'scripts/metlife-new-split-hashes.ps1'
       - 'scripts/test-metlife-hash-helper.ps1'
       - 'metlife-electron/**'

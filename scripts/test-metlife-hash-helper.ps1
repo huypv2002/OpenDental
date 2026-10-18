@@ -122,6 +122,13 @@ namespace OpenDentBusiness {
   Remove-Item -LiteralPath (Join-Path $dir 'CodeBase.dll') -Force
   Rename-Item -LiteralPath (Join-Path $dir 'CodeBase.dll.correct') -NewName 'CodeBase.dll'
  }
+ $contextFile = Join-Path $dir 'context.json'
+ & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'inspect-metlife-od-context.ps1') -InstallDir $dir -OutputPath $contextFile
+ if ($LASTEXITCODE -ne 0) { throw 'Context diagnostic launcher failed.' }
+ $contextReport = Get-Content -LiteralPath $contextFile -Raw -Encoding UTF8 | ConvertFrom-Json
+ $traced = @($contextReport.probes | Where-Object { $_.result.error -match 'Synthetic CDT general failure' -and $_.result.context.processBits -eq $expectedBits })
+ if ($contextReport.databaseAccess -ne $false -or -not $contextReport.syntheticInputOnly -or $traced.Count -lt 1) { throw 'Context report did not capture the fixed synthetic failure in the correct process.' }
+ if (-not $traced[0].result.context.applicationBase -or -not $traced[0].result.context.assemblies -or $traced[0].result.PSObject.Properties['hashes']) { throw 'Context report missing runtime metadata or exporting hash values.' }
  $nodeTest = Join-Path $dir 'native-launcher-test.mjs'
  [IO.File]::WriteAllText($nodeTest,@'
 import {pathToFileURL} from 'node:url';

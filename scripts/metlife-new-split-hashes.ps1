@@ -1,8 +1,26 @@
 # Internal helper for NEW split values only. Never reads/writes the OD database,
 # modifies an existing row, patches a DLL, or disables integrity checks.
+param([switch]$ContextDiagnostics)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+function Get-HelperContext {
+ if (-not $ContextDiagnostics) { return $null }
+ $domain = [AppDomain]::CurrentDomain
+ return @{
+  processBits=([IntPtr]::Size * 8)
+  clrVersion=[Environment]::Version.ToString()
+  applicationBase=$domain.BaseDirectory
+  configurationFile=$domain.SetupInformation.ConfigurationFile
+  entryAssembly=[string][Reflection.Assembly]::GetEntryAssembly()
+  currentDirectory=[Environment]::CurrentDirectory
+  assemblies=@($domain.GetAssemblies() | ForEach-Object {
+   $location = $null
+   try { $location = $_.Location } catch {}
+   @{identity=$_.FullName;location=$location;dynamic=$_.IsDynamic}
+  })
+ }
+}
 try {
  $rawInput = [Console]::In.ReadToEnd()
  $inputData = $rawInput | ConvertFrom-Json
@@ -71,7 +89,8 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
    // never for a real patient split. Never include the returned hash value.
    string detail=ex.GetType().Name;
    if(loaderFailure || syntheticProbe) detail+=": "+ex.Message;
-   if(detail.Length>600) detail=detail.Substring(0,600);
+   if(syntheticProbe) detail+=" Stack: "+ex.StackTrace;
+   if(detail.Length>2400) detail=detail.Substring(0,2400);
    lock(traceLock) { if(failures.Count<8 && !failures.Contains(detail)) failures.Add(detail); }
   } finally { recording=false; }
  }
@@ -142,7 +161,7 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
   }
   $results += $hash
  }
- @{ok=$true;processBits=([IntPtr]::Size * 8);version=$version.ToString();culture=[Globalization.CultureInfo]::CurrentCulture.Name;hashes=@($results)} | ConvertTo-Json -Compress -Depth 5
+ @{ok=$true;context=(Get-HelperContext);processBits=([IntPtr]::Size * 8);version=$version.ToString();culture=[Globalization.CultureInfo]::CurrentCulture.Name;hashes=@($results)} | ConvertTo-Json -Compress -Depth 5
  exit 0
 } catch {
  $failure = $_.Exception
@@ -159,7 +178,7 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
   @{ok=$false;retry32=$true;install=$install;error='Retry the OD native dependency in a 32-bit helper.'} | ConvertTo-Json -Compress
   exit 2
  }
- @{ok=$false;error=("OD helper (" + ([IntPtr]::Size * 8) + "-bit) [" + $install + "]: " + ($messages -join ' -> '))} | ConvertTo-Json -Compress
+ @{ok=$false;context=(Get-HelperContext);error=("OD helper (" + ([IntPtr]::Size * 8) + "-bit) [" + $install + "]: " + ($messages -join ' -> '))} | ConvertTo-Json -Compress
  exit 1
 } finally {
  if ($resolver) { $resolver.Dispose() }
