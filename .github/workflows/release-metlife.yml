@@ -50,6 +50,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1 -FixtureArchitecture x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1 -FixtureArchitecture x86 -MainArchitecture anycpu
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1 -FixtureArchitecture x64 -MainArchitecture anycpu
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1 -FixtureArchitecture anycpu
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: npm ci --prefix metlife-electron
       - run: npm test --prefix metlife-electron
       - run: npm run test:save --prefix metlife-electron

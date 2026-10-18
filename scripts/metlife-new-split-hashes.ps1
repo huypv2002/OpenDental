@@ -15,13 +15,23 @@ try {
  [Environment]::CurrentDirectory = $install
  Set-Location -LiteralPath $install
  $dll = Join-Path $install 'OpenDentBusiness.dll'
- $architecture = [Reflection.AssemblyName]::GetAssemblyName($dll).ProcessorArchitecture.ToString()
- if ($architecture -eq 'X86' -and [IntPtr]::Size -eq 8) {
-  # Ask the Node launcher to retry once with the 32-bit PowerShell executable.
-  # Do not nest PowerShell child processes that can outlive the request timeout.
-  @{ok=$false;retry32=$true;install=$install;error='Use the 32-bit OD helper.'} | ConvertTo-Json -Compress
+ # The main assembly can be AnyCPU while CodeBase/CDT requires x86.
+ # Inspect metadata without loading any OD code into this process first.
+ $architectures = @()
+ foreach ($name in @('OpenDentBusiness.dll', 'CodeBase.dll', 'CDT.dll')) {
+  $dependencyPath = Join-Path $install $name
+  if (-not (Test-Path -LiteralPath $dependencyPath)) { throw ("Missing OD dependency: " + $dependencyPath) }
+  $architectures += [Reflection.AssemblyName]::GetAssemblyName($dependencyPath).ProcessorArchitecture.ToString()
+ }
+ $needs32 = $architectures -contains 'X86'
+ $needs64 = $architectures -contains 'Amd64'
+ if ($needs32 -and $needs64) { throw 'OD DLLs have incompatible x86/x64 architectures. Check the installed OD files.' }
+ if ($needs32 -and [IntPtr]::Size -eq 8) {
+  # Ask Node to retry once; never nest PowerShell child processes.
+  @{ok=$false;retry32=$true;install=$install;error='Use the 32-bit OD helper for its dependencies.'} | ConvertTo-Json -Compress
   exit 2
  }
+ if ($needs64 -and [IntPtr]::Size -eq 4) { throw 'OD dependencies require a 64-bit helper. Check the installed OD files.' }
  # PowerShell's application base is its own installation directory. Resolve
  # managed OD dependencies explicitly from this installation, on CLR threads
  # as well as the PowerShell thread. Never substitute a different identity.
@@ -82,21 +92,30 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
   $splitType.GetField('SplitAmt').SetValue($split, [double]::Parse($row.amount, [Globalization.CultureInfo]::InvariantCulture))
   $splitType.GetField('DatePay').SetValue($split, [DateTime]::ParseExact($row.date, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture))
   $hash = [string]$method.Invoke($null, @($split))
+  if ($hash -eq 'BadImageFormatException') { throw (New-Object System.BadImageFormatException('An OD native dependency could not load in this process architecture.')) }
   # OD catches native library failures and returns the exception type as text.
   # Never accept that text as a valid hash, or use a blank fallback.
   if ([string]::IsNullOrWhiteSpace($hash) -or $hash.Length -lt 16 -or $hash -match 'Exception$' -or $hash -match '\s') { throw 'OD did not return a valid SecurityHash for the new split. Check CDT.dll and its dependencies on SERVER.' }
   $results += $hash
  }
- @{ok=$true;version=$version.ToString();culture=[Globalization.CultureInfo]::CurrentCulture.Name;hashes=@($results)} | ConvertTo-Json -Compress -Depth 5
+ @{ok=$true;processBits=([IntPtr]::Size * 8);version=$version.ToString();culture=[Globalization.CultureInfo]::CurrentCulture.Name;hashes=@($results)} | ConvertTo-Json -Compress -Depth 5
  exit 0
 } catch {
  $failure = $_.Exception
  $messages = @($failure.Message)
+ $badImage = $failure -is [System.BadImageFormatException]
  while ($failure.InnerException) {
   $failure = $failure.InnerException
+  if ($failure -is [System.BadImageFormatException]) { $badImage = $true }
   if ($messages -notcontains $failure.Message) { $messages += $failure.Message }
  }
- @{ok=$false;error=("OD helper [" + $install + "]: " + ($messages -join ' -> '))} | ConvertTo-Json -Compress
+ # Managed AnyCPU assemblies may load an x86 native dependency only when
+ # invoked. Retry only this architecture error, once, through the Node launcher.
+ if ($badImage -and [IntPtr]::Size -eq 8 -and $install) {
+  @{ok=$false;retry32=$true;install=$install;error='Retry the OD native dependency in a 32-bit helper.'} | ConvertTo-Json -Compress
+  exit 2
+ }
+ @{ok=$false;error=("OD helper (" + ([IntPtr]::Size * 8) + "-bit) [" + $install + "]: " + ($messages -join ' -> '))} | ConvertTo-Json -Compress
  exit 1
 } finally {
  if ($resolver) { $resolver.Dispose() }
