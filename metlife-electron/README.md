@@ -16,7 +16,7 @@ ENABLE_OPEN_DENTAL_WRITES=true
 METLIFE_DIRECT_DB_ENABLED=true
 ```
 
-Writer yêu cầu các bảng liên quan dùng InnoDB, khóa AUTO_INCREMENT và schema tương thích; từ chối MyISAM, random keys, khóa ngày và các cấu hình kế toán được phát hiện mà adapter chưa hỗ trợ. Không đổi engine/schema bảng OD. Không bỏ khóa ngày hay vô hiệu hóa cấu hình OD để vượt qua lỗi. Hai cờ trên chỉ cho phép chạy adapter; không chứng minh nó tương thích mọi cấu hình OD.
+Writer dùng transaction cho InnoDB, khóa bảng/nhật ký ý định cho MyISAM OD 24.3; cần khóa AUTO_INCREMENT và schema tương thích; hỗ trợ MyISAM OD 24.3 bằng khóa bảng/nhật ký ý định, từ chối random keys, khóa ngày và các cấu hình kế toán được phát hiện mà adapter chưa hỗ trợ. Không đổi engine/schema bảng OD. Không bỏ khóa ngày hay vô hiệu hóa cấu hình OD để vượt qua lỗi. Hai cờ trên chỉ cho phép chạy adapter; không chứng minh nó tương thích mọi cấu hình OD.
 
 `POST /api/metlife/operations` với `transport:"direct-db"` chuẩn bị kế hoạch. `POST /api/metlife/operations/:id/post` kiểm tra PDF, khóa/đọc lại dữ liệu trong transaction SERIALIZABLE, ghi Payment + từng Split + biên nhận idempotency, đọc lại xác minh trước commit. `.../verify` yêu cầu biên nhận transaction khớp đúng PayNum rồi đọc lại Payment/Splits. Lỗi trước commit rollback; lỗi/mất kết nối lúc commit giữ pending và chỉ xác minh. Không tự gửi lại lệnh ghi. Bản ghi đã xác minh gọi lại sẽ không tạo Payment mới.
 
@@ -216,3 +216,15 @@ Fill draft mở Account trước khi tìm bệnh nhân. Khi cần đổi bệnh 
 Sau khi chọn bệnh nhân, tool luôn bấm Account lần nữa và chờ đúng ControlAccount/gridAccount/thanh Payment hiển thị trước khi mở Payment. Không chỉ dựa vào IsOffscreen của ControlAccount, vì module có thể còn nằm trong cây UIA khi đang ở Chart/Family. Kiểm thử Windows dựng ca bắt đầu ở Chart, chọn bệnh nhân qua bảng tự vẽ rồi lại ở Chart, và ca đã đúng bệnh nhân nhưng ở Chart; cả hai phải hoàn tất bước chuẩn bị bằng một lần gọi, không cần bấm Account hoặc Fill draft lần hai.
 
 Giao diện khách hàng 0.4.0 chỉ có tìm bệnh nhân, tài liệu, đối chiếu, lưu/xác minh, hướng dẫn và lịch sử thao tác. Không hiển thị URL/DB/schema, snapshot/JSON, ID nội bộ procedure/plan, OCR/driver hoặc nhật ký kỹ thuật. Dùng CLI `npm run metlife:inspect` trên SERVER cho chẩn đoán kỹ thuật.
+
+## Bổ sung tương thích OD 24.3 / MyISAM
+
+Dựa trên metadata SERVER: ProgramVersion 24.3.61.0, DataBaseVersion 24.3.53.0; các bảng OD dùng MyISAM. Không đổi engine bảng OD. Schema bổ sung `payment.ExternalId` (rỗng), `payment.PaymentStatus` (`None` = 0), `paysplit.SecurityHash` (tạo bằng hàm `OpenDentBusiness.PaySplits.HashFields` của bản OD đã cài trên SERVER).
+
+Nguồn đối chiếu là nhánh chính thức `OpenDental/opendental` `24_3`, commit `d804c19546233593d8a66af0591ed118a9e2c794` (24.3.63, không có commit công khai đúng 24.3.61). Không dùng thuật toán hash của phiên bản gần đó để giả định tương thích: helper gọi chính DLL cài trên SERVER. Chưa kiểm chứng DLL/CDT thật của phòng khám; CI chỉ kiểm tra binding với DLL tổng hợp. Không tự xây hash thay thế hoặc chấp nhận chuỗi exception/rỗng; không sửa hash của dữ liệu cũ.
+
+Helper tự tìm `OpenDentBusiness.dll` trong các thư mục cài Open Dental chuẩn. Nếu OD cài riêng, kỹ thuật viên có thể đặt `METLIFE_OD_INSTALL_DIR` trỏ đúng thư mục cài OD trên SERVER. Không chuyển DLL/mật khẩu DB sang R5. Helper chỉ nhận giá trị Split mới qua stdin, tạo hash, trả kết quả; không kết nối DB hoặc thao tác UI. Nếu thiếu DLL/CDT hoặc helper lỗi, dừng trước ghi lâm sàng.
+
+MyISAM không có rollback. Writer khóa bảng OD liên quan trong khoảng ghi/đọc lại, ghi trước toàn bộ kế hoạch và ID mới vào `luk_metlife_myisam_jobs` (InnoDB), rồi mới INSERT Payment/Splits. Tạo hash trước khi khóa bảng để không giữ khóa trong lúc khởi động helper. Mọi cột bắt buộc được kiểm tra trước INSERT đầu tiên. Khi ghi đủ và đọc lại khớp (kể cả ID và hash), nhật ký chuyển complete. Mất phản hồi sau khi ghi đủ có thể xác minh từ ý định và dữ liệu thật. Nếu ngắt giữa các INSERT, có thể còn Payment/Splits chưa đủ: giữ khóa bệnh nhân, không rollback giả, không tự xóa hoặc tự ghi tiếp; kỹ thuật viên phải kiểm tra và xử lý trường hợp cụ thể. Khóa bảng có thể chặn thao tác OD khác trong khoảng ngắn khi ghi.
+
+Trên SERVER cập nhật rồi chạy `npm run metlife:inspect`. Báo cáo kiểm tra thêm việc thư viện OD có tạo được hash cho giá trị tổng hợp hay không, không xuất hash này ra báo cáo và không tạo hồ sơ. Bản khách hàng không hiện thông tin kỹ thuật. R5/EXE hiện có dùng cùng request; thay đổi này nằm ở backend SERVER.

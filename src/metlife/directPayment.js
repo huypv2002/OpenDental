@@ -1,5 +1,7 @@
 import {readPatientContext} from './context.js';
 import {validatePostingPlan,verifyPostedPayment} from './posting.js';
+import {nativeSplitHashes} from './nativeSplitHashes.js';
+import {createMyisamWriter} from './myisamPayment.js';
 
 // Deliberately opt-in: this adapter has not been accepted against the clinic's OD
 // schema. Never silently convert MyISAM tables or fall back to UI automation.
@@ -9,11 +11,11 @@ const money=n=>(n/100).toFixed(2);
 const execute=(c,sql,values=[])=>c.execute({sql,dateStrings:true,supportBigNumbers:true,bigNumberStrings:true},values);
 export function paymentRows(plan,userNum,clinicNum){
  return {
-  payment:{PayType:plan.paymentTypeDefNum,PayDate:plan.date,PayAmt:plan.amount,CheckNum:plan.checkNum,BankBranch:'',PayNote:plan.note,IsSplit:Number(plan.splits.length>1),PatNum:plan.patNum,ClinicNum:clinicNum,DepositNum:0,Receipt:'',IsRecurringCC:0,SecUserNumEntry:userNum,PaymentSource:0,ProcessStatus:0,RecurringChargeDate:'0001-01-01',IsCcCompleted:0,MerchantFee:'0.00'},
+  payment:{PayType:plan.paymentTypeDefNum,PayDate:plan.date,PayAmt:plan.amount,CheckNum:plan.checkNum,BankBranch:'',PayNote:plan.note,IsSplit:Number(plan.splits.length>1),PatNum:plan.patNum,ClinicNum:clinicNum,DepositNum:0,Receipt:'',IsRecurringCC:0,SecUserNumEntry:userNum,PaymentSource:0,ProcessStatus:0,RecurringChargeDate:'0001-01-01',ExternalId:'',PaymentStatus:0,IsCcCompleted:0,MerchantFee:'0.00'},
   splits:plan.splits.map(s=>({SplitAmt:money(s.amountCents),PatNum:plan.patNum,ProcDate:s.date,IsDiscount:0,DiscountType:0,ProvNum:s.ProvNum,PayPlanNum:0,DatePay:plan.date,ProcNum:s.ProcNum,UnearnedType:0,ClinicNum:s.ClinicNum,SecUserNumEntry:userNum,FSplitNum:0,AdjNum:0,PayPlanChargeNum:0,PayPlanDebitType:0}))
  };
 }
-export async function insertFinancialRow(conn,table,row,columns){
+export function financialInsert(table,row,columns){
  const available=new Map(columns.map(c=>[c.COLUMN_NAME,c]));
  const primary=table==='payment'?'PayNum':'SplitNum';
  if(!available.get(primary)?.EXTRA?.includes('auto_increment'))throw new Error(`${table}: cần khóa AUTO_INCREMENT; không hỗ trợ replication/random keys.`);
@@ -26,14 +28,19 @@ export async function insertFinancialRow(conn,table,row,columns){
   if(c.IS_NULLABLE==='NO'&&c.COLUMN_DEFAULT===null)throw new Error(`${table}: chưa hỗ trợ trường bắt buộc ${c.COLUMN_NAME}.`);
  }
  if(!available.has('DateEntry'))throw new Error(`${table}: thiếu DateEntry.`);
- await execute(conn,`INSERT INTO \`${table}\` (${entries.map(([k])=>'`'+k+'`').join(',')},DateEntry) VALUES (${entries.map(()=>'?').join(',')},CURDATE())`,entries.map(([,v])=>v));
+ return {sql:`INSERT INTO \`${table}\` (${entries.map(([k])=>'`'+k+'`').join(',')},DateEntry) VALUES (${entries.map(()=>'?').join(',')},CURDATE())`,values:entries.map(([,v])=>v)};
+}
+export async function insertFinancialRow(conn,table,row,columns){
+ const statement=financialInsert(table,row,columns);
+ await execute(conn,statement.sql,statement.values);
  const [ids]=await execute(conn,'SELECT CAST(LAST_INSERT_ID() AS CHAR) AS id');
  if(!/^[1-9]\d*$/.test(ids[0]?.id))throw new Error('Không đọc được khóa bản ghi vừa tạo.');
  return ids[0].id;
 }
 // The desktop does not authenticate an OD user. Default to the OD sentinel 0,
 // rather than attributing all entries to a fixed employee from an environment variable.
-export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,userNum=()=>0,readContext=readPatientContext}={}){
+export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,userNum=()=>0,readContext=readPatientContext,hashSplits=nativeSplitHashes}={}){
+ const myisam=createMyisamWriter(pool,{readContext,hashSplits});
  let setup;
  async function ensureJournal(){
   if(!setup)setup=pool.query(`CREATE TABLE IF NOT EXISTS ${journal} (OperationId CHAR(36) NOT NULL PRIMARY KEY,PatNum BIGINT NOT NULL,DocNum BIGINT NOT NULL,PdfHash CHAR(64) NOT NULL,PayNum BIGINT NOT NULL,PlanJson LONGTEXT NOT NULL,CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uq_patient_pdf (PatNum,PdfHash)) ENGINE=InnoDB`).catch(e=>{setup=null;throw e;});
@@ -49,6 +56,12 @@ export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,user
    // All observed financial rows must participate in the same transaction.
    const tables=['patient','definition','procedurelog','procedurecode','provider','payment','paysplit','claimproc','claimpayment','preference',...(entryUser==='0'?[]:['userod']),journal];
    const [engines]=await execute(conn,`SELECT TABLE_NAME,ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${tables.map(()=>'?').join(',')})`,tables);
+   if(engines.some(t=>t.ENGINE?.toUpperCase()==='MYISAM')){
+    // Dedicated MyISAM path uses SQL table locks and a durable intent journal.
+    // It must never pass through transaction/rollback logic below.
+    try{return await myisam({id,patNum,docNum,plan:approved,before},entryUser,conn);}
+    catch(e){commitAttempted=!e.noWrite;throw e;}
+   }
    if(tables.some(t=>engines.find(e=>e.TABLE_NAME===t)?.ENGINE?.toUpperCase()!=='INNODB'))throw new Error('Ghi DB cần InnoDB cho các bảng liên quan. SERVER không tự đổi engine; chưa hỗ trợ MyISAM.');
    await conn.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');await conn.beginTransaction();started=true;
    const [old]=await execute(conn,`SELECT CAST(PayNum AS CHAR) AS PayNum,PlanJson FROM ${journal} WHERE OperationId=? FOR UPDATE`,[id]);
@@ -72,10 +85,14 @@ export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,user
    if(financial(context)!==financial(before))throw new Error('Dữ liệu tài chính đã đổi sau khi đối chiếu; tải lại hồ sơ.');
    const [columns]=await execute(conn,"SELECT TABLE_NAME,COLUMN_NAME,COLUMN_DEFAULT,IS_NULLABLE,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('payment','paysplit')");
    const rows=paymentRows(plan,entryUser,String(context.tables.patient[0].ClinicNum||0));
+   if(columns.some(c=>c.TABLE_NAME==='paysplit'&&c.COLUMN_NAME==='SecurityHash')){
+    const hashes=await hashSplits(plan);rows.splits.forEach((row,i)=>{row.SecurityHash=hashes[i];});
+   }
    const payNum=await insertFinancialRow(conn,'payment',rows.payment,columns.filter(c=>c.TABLE_NAME==='payment'));
    for(const row of rows.splits)await insertFinancialRow(conn,'paysplit',{...row,PayNum:payNum},columns.filter(c=>c.TABLE_NAME==='paysplit'));
    const after=await readContext(pool,patNum,{connection:conn,forUpdate:true});
    const result=verifyPostedPayment(before,after,plan);
+   if(rows.splits.some((s,i)=>s.SecurityHash&&after.tables.paysplit.find(p=>String(p.PayNum)===payNum&&String(p.ProcNum)===String(s.ProcNum))?.SecurityHash!==s.SecurityHash))throw new Error('SecurityHash readback mismatch');
    if(!result.verified||result.payNum!==payNum)throw new Error('Payment/Splits vừa ghi không khớp kế hoạch; rollback.');
    // Durable idempotency and integration audit are committed with the payment.
    // This is not an Open Dental securitylog entry and must not be presented as one.

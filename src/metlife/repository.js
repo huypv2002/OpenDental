@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {readPatientContext} from './context.js';
 import {createDirectPaymentWriter,directWritesEnabled} from './directPayment.js';
 import {databaseDiagnostics} from './databaseDiagnostics.js';
+import {myisamReceipt} from './myisamPayment.js';
 export const validId=s=>/^[1-9]\d{0,17}$/.test(String(s??''));
 const like=s=>`%${s.replace(/[\\%_]/g,m=>'\\'+m)}%`;
 const categories=['FINISHED CLAM','FINISHED CLAIMS'];
@@ -24,8 +25,9 @@ export function createRepository(pool){return {
  diagnostics:()=>databaseDiagnostics(pool),
  postDirect:createDirectPaymentWriter(pool),
  async directReceipt(id){
-  try{const [rows]=await pool.execute('SELECT CAST(PayNum AS CHAR) AS payNum FROM luk_metlife_postings WHERE OperationId=?',[id]);return rows[0]||null;}
-  catch(e){if(e.code==='ER_NO_SUCH_TABLE')return null;throw e;}
+  try{const [rows]=await pool.execute('SELECT CAST(PayNum AS CHAR) AS payNum FROM luk_metlife_postings WHERE OperationId=?',[id]);if(rows[0])return rows[0];}
+  catch(e){if(e.code!=='ER_NO_SUCH_TABLE')throw e;}
+  return myisamReceipt(pool,id);
  },
  async health(){await pool.execute('SELECT 1 AS ok');return {db:true,version:2,features:['patient-search','finished-claims','pdf','live-context','direct-payment'],readOnly:!directWritesEnabled(),directPaymentEnabled:directWritesEnabled()};},
  async search(query){

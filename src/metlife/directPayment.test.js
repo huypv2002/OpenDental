@@ -47,8 +47,8 @@ test('direct transaction writes exact procedure split and journal before commit'
  assert.equal(f.calls.at(-1),'release');
  const writes=f.calls.filter(s=>s.startsWith('INSERT')).length;assert.equal((await f.writer(f.args)).replayed,true);assert.equal(f.calls.filter(s=>s.startsWith('INSERT')).length,writes);
 });
-test('nontransactional OD tables stop before clinical inserts',async()=>{
- const f=fixture({engine:'MyISAM'});await assert.rejects(f.writer(f.args),/InnoDB/);assert.ok(!f.calls.some(s=>s.startsWith('INSERT')));
+test('MyISAM schema without OD 24.3 integrity fields stops before clinical inserts',async()=>{
+ const f=fixture({engine:'MyISAM'});await assert.rejects(f.writer(f.args),/SecurityHash/);assert.ok(!f.calls.some(s=>s.startsWith('INSERT')));
 });
 test('split failure and failed readback both rollback rather than commit',async()=>{
  for(const options of [{failSplit:true},{wrongReadback:true}]){

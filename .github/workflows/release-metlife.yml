@@ -6,6 +6,8 @@ on:
     paths:
       - 'src/metlife/**'
       - 'scripts/inspect-metlife-db.mjs'
+      - 'scripts/metlife-new-split-hashes.ps1'
+      - 'scripts/test-metlife-hash-helper.ps1'
       - 'metlife-electron/**'
       - '.github/workflows/release-metlife.yml'
 permissions:
@@ -43,6 +45,11 @@ jobs:
           node-version: '24'
       - run: npm ci --prefix metlife-electron
       - run: npm test --prefix metlife-electron
+      - name: New split native helper binding (synthetic DLL)
+        shell: powershell
+        run: |
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: npm run test:save --prefix metlife-electron
       - run: npm run test:connect --prefix metlife-electron
       - run: npm run test:ui --prefix metlife-electron

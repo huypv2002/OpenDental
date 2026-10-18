@@ -41,7 +41,7 @@ ENABLE_OPEN_DENTAL_WRITES=true
 METLIFE_DIRECT_DB_ENABLED=true
 ```
 
-Không cần cấu hình tài khoản OD cho tool. Các bản ghi mới dùng `SecUserNumEntry=0` (không gán một nhân viên cố định); biến `METLIFE_OD_USER_NUM` cũ không còn được đọc. Khi chưa cấu hình, app vẫn đọc/đối chiếu và báo rõ mục còn thiếu; không tự bật quyền ghi. Nếu báo MyISAM/schema không hỗ trợ, giữ nguyên DB và gửi báo cáo metadata để bổ sung adapter; không tự chuyển engine hoặc bỏ kiểm tra.
+Không cần cấu hình tài khoản OD cho tool. Các bản ghi mới dùng `SecUserNumEntry=0` (không gán một nhân viên cố định); biến `METLIFE_OD_USER_NUM` cũ không còn được đọc. Khi chưa cấu hình, app vẫn đọc/đối chiếu và báo rõ mục còn thiếu; không tự bật quyền ghi. Nếu báo schema hoặc thư viện OD không tương thích, giữ nguyên DB và gửi báo cáo metadata/lỗi; không tự chuyển engine hoặc bỏ kiểm tra.
 
 R5, tại thư mục checkout cùng repo:
 
@@ -69,3 +69,15 @@ CI: https://github.com/huypv2002/OpenDental/actions/runs/39139304638 — cả ha
 Artifact: `LUK-MetLife-0.4.0-Windows` (portable EXE). Icon răng hiện có được giữ nguyên và chuyển đổi kích thước khi đóng gói. Không nhúng `.env` hay thông tin kết nối DB vào EXE.
 
 Chưa xác minh chạy EXE trên R5, chưa restart SERVER/R5 và chưa ghi DB thật của phòng khám. Quản trị viên cấu hình `.env` trên SERVER, kiểm tra metadata bằng CLI rồi cập nhật theo các bước phía trên.
+
+## Bổ sung tương thích OD 24.3 / MyISAM
+
+Dựa trên metadata SERVER: ProgramVersion 24.3.61.0, DataBaseVersion 24.3.53.0; các bảng OD dùng MyISAM. Không đổi engine bảng OD. Schema bổ sung `payment.ExternalId` (rỗng), `payment.PaymentStatus` (`None` = 0), `paysplit.SecurityHash` (tạo bằng hàm `OpenDentBusiness.PaySplits.HashFields` của bản OD đã cài trên SERVER).
+
+Nguồn đối chiếu là nhánh chính thức `OpenDental/opendental` `24_3`, commit `d804c19546233593d8a66af0591ed118a9e2c794` (24.3.63, không có commit công khai đúng 24.3.61). Không dùng thuật toán hash của phiên bản gần đó để giả định tương thích: helper gọi chính DLL cài trên SERVER. Chưa kiểm chứng DLL/CDT thật của phòng khám; CI chỉ kiểm tra binding với DLL tổng hợp. Không tự xây hash thay thế hoặc chấp nhận chuỗi exception/rỗng; không sửa hash của dữ liệu cũ.
+
+Helper tự tìm `OpenDentBusiness.dll` trong các thư mục cài Open Dental chuẩn. Nếu OD cài riêng, kỹ thuật viên có thể đặt `METLIFE_OD_INSTALL_DIR` trỏ đúng thư mục cài OD trên SERVER. Không chuyển DLL/mật khẩu DB sang R5. Helper chỉ nhận giá trị Split mới qua stdin, tạo hash, trả kết quả; không kết nối DB hoặc thao tác UI. Nếu thiếu DLL/CDT hoặc helper lỗi, dừng trước ghi lâm sàng.
+
+MyISAM không có rollback. Writer khóa bảng OD liên quan trong khoảng ghi/đọc lại, ghi trước toàn bộ kế hoạch và ID mới vào `luk_metlife_myisam_jobs` (InnoDB), rồi mới INSERT Payment/Splits. Tạo hash trước khi khóa bảng để không giữ khóa trong lúc khởi động helper. Mọi cột bắt buộc được kiểm tra trước INSERT đầu tiên. Khi ghi đủ và đọc lại khớp (kể cả ID và hash), nhật ký chuyển complete. Mất phản hồi sau khi ghi đủ có thể xác minh từ ý định và dữ liệu thật. Nếu ngắt giữa các INSERT, có thể còn Payment/Splits chưa đủ: giữ khóa bệnh nhân, không rollback giả, không tự xóa hoặc tự ghi tiếp; kỹ thuật viên phải kiểm tra và xử lý trường hợp cụ thể. Khóa bảng có thể chặn thao tác OD khác trong khoảng ngắn khi ghi.
+
+Trên SERVER cập nhật rồi chạy `npm run metlife:inspect`. Báo cáo kiểm tra thêm việc thư viện OD có tạo được hash cho giá trị tổng hợp hay không, không xuất hash này ra báo cáo và không tạo hồ sơ. Bản khách hàng không hiện thông tin kỹ thuật. R5/EXE hiện có dùng cùng request; thay đổi này nằm ở backend SERVER.

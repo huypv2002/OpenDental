@@ -1,9 +1,10 @@
 // Read-only patient context, reused by the MetLife API. No file export or DB writes.
+export const contextTables=['patient','patplan','inssub','insplan','carrier','document','definition','procedurelog','procedurecode','claim','claimproc','claimpayment','payment','paysplit','adjustment','preference','provider'];
 export async function readPatientContext(pool, patArg, {connection=null,forUpdate=false}={}) {
  if(!/^[1-9]\d{0,17}$/.test(String(patArg))) throw new Error('Invalid PatNum');
  const pat=String(patArg),conn=connection||await pool.getConnection();
  const execute=(sql,values)=>conn.execute({sql,dateStrings:true,supportBigNumbers:true,bigNumberStrings:true},values);
-const names=['patient','patplan','inssub','insplan','carrier','document','definition','procedurelog','procedurecode','claim','claimproc','claimpayment','payment','paysplit','adjustment','preference','provider'];
+const names=contextTables;
 const snapshot={capturedAt:new Date().toISOString(),patNum:pat,label:'live-metlife-api',readOnly:true,schema:[],tables:{},warnings:[]};
 let tx=false;
 try {
@@ -45,7 +46,7 @@ try {
  t.claim=await read('claim','ClaimNum,PatNum,PlanNum,InsSubNum,DateService,DateSent,DateReceived,ClaimStatus,ClaimType,ClaimIdentifier,ClaimFee,InsPayEst,InsPayAmt,DedApplied,WriteOff,ClaimNote','PatNum',[pat]);
  t.claimproc=await read('claimproc','ClaimProcNum,ProcNum,ClaimNum,PatNum,PlanNum,InsSubNum,ProvNum,Status,FeeBilled,InsPayEst,InsPayAmt,DedApplied,WriteOff,ClaimPaymentNum,DateCP,ProcDate,CodeSent,Remarks','PatNum',[pat]);
  t.claimpayment=await read('claimpayment','ClaimPaymentNum,CheckDate,DateIssued,CheckAmt,CheckNum,BankBranch,CarrierName,PayType,Note,IsPartial,SecDateEntry,SecDateTEdit','ClaimPaymentNum',t.claimproc.map(r=>r.ClaimPaymentNum));
- t.paysplit=await read('paysplit','SplitNum,PayNum,PatNum,ProcNum,ProvNum,ClinicNum,SplitAmt,DatePay,DateEntry,UnearnedType,AdjNum,PayPlanNum,PayPlanChargeNum,FkcType,FkToothNum','PatNum',[pat]);
+ t.paysplit=await read('paysplit','SplitNum,PayNum,PatNum,ProcNum,ProvNum,ClinicNum,SplitAmt,DatePay,DateEntry,UnearnedType,AdjNum,PayPlanNum,PayPlanChargeNum,FkcType,FkToothNum,SecurityHash','PatNum',[pat]);
  const own=await read('payment','PayNum,PatNum,PayDate,DateEntry,PayAmt,PayType,CheckNum,BankBranch,PayNote,DepositNum,SecDateTEdit','PatNum',[pat]);
  const splitPayments=await read('payment','PayNum,PatNum,PayDate,DateEntry,PayAmt,PayType,CheckNum,BankBranch,PayNote,DepositNum,SecDateTEdit','PayNum',t.paysplit.map(r=>r.PayNum));
  t.payment=[...new Map([...own,...splitPayments].map(r=>[String(r.PayNum),r])).values()];
