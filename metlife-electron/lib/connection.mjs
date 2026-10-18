@@ -39,12 +39,14 @@ export class MetlifeClient{
   if(!response.ok||!result.ok)throw new Error(result.error||'Không lấy được dữ liệu MetLife.');return result.data;
  }
  prepare(args){return this.request('/operations',false,args);}
+ post(id){return this.request(`/operations/${encodeURIComponent(id)}/post`,false,{});}
  recheck(id){return this.request(`/operations/${encodeURIComponent(id)}/recheck`,false,{});}
  verify(id){return this.request(`/operations/${encodeURIComponent(id)}/verify`,false,{});}
  abort(id){return this.request(`/operations/${encodeURIComponent(id)}/abort`,false,{});}
  operation(id){return this.request(`/operations/${encodeURIComponent(id)}`);}
  pending(patNum){return this.request(`/patients/${encodeURIComponent(patNum)}/pending`);}
  health(){return this.request('/health');}
+ diagnostics(){return this.request('/diagnostics/database');}
  search(q,kind='all',page=0){return this.request('/patients?'+new URLSearchParams({q,kind,page:String(page)}));}
  documents(patNum){return this.request(`/patients/${encodeURIComponent(patNum)}/documents`);}
  context(patNum){return this.request(`/patients/${encodeURIComponent(patNum)}/context`);}

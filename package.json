@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "metlife:inspect": "node scripts/inspect-metlife-db.mjs",
+    "test:metlife:database": "node --test src/metlife/directPayment.database.test.js",
     "metlife:configure": "node scripts/configure-metlife.mjs",
     "test:metlife": "node --test src/metlife/*.test.js"
   },

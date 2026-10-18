@@ -30,7 +30,7 @@ export function reconcile(pdf, snapshot, filePath, now=Date.now(), {verifyUncPat
     const sub=t.inssub.find(r=>String(r.InsSubNum)===String(pp.InsSubNum));
     const plan=t.insplan.find(r=>String(r.PlanNum)===String(sub?.PlanNum));
     const carrier=t.carrier.find(r=>String(r.CarrierNum)===String(plan?.CarrierNum));
-    if(plan && norm(plan.GroupNum)===norm(pdf.group) && /metlife/i.test(carrier?.CarrierName||'')) plans.push({...plan,InsSubNum:sub.InsSubNum,subscriberPatNum:sub.Subscriber});
+    if(plan && norm(plan.GroupNum)===norm(pdf.group) && /metlife/i.test(carrier?.CarrierName||'')) plans.push({...plan,InsSubNum:sub.InsSubNum,subscriberPatNum:sub.Subscriber,SubscriberID:sub.SubscriberID,CarrierName:carrier.CarrierName});
   }
   if(plans.length!==1) blocks.push('Không tìm thấy một hợp đồng MetLife duy nhất khớp Group Number.');else {
     output.plan=plans[0];

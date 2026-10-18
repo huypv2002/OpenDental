@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {readPatientContext} from './context.js';
+import {createDirectPaymentWriter,directWritesEnabled} from './directPayment.js';
+import {databaseDiagnostics} from './databaseDiagnostics.js';
 export const validId=s=>/^[1-9]\d{0,17}$/.test(String(s??''));
 const like=s=>`%${s.replace(/[\\%_]/g,m=>'\\'+m)}%`;
 const categories=['FINISHED CLAM','FINISHED CLAIMS'];
@@ -19,7 +21,13 @@ export function searchSql(query={}) {
  return {sql:`SELECT CAST(p.PatNum AS CHAR) AS PatNum,p.ChartNumber,p.FName,p.LName,DATE_FORMAT(p.Birthdate,'%Y-%m-%d') AS Birthdate FROM patient p WHERE ${clauses.join(' OR ')} ORDER BY p.LName,p.FName,p.PatNum LIMIT ? OFFSET ?`,values:[...values,limit+1,page*limit],page,limit};
 }
 export function createRepository(pool){return {
- async health(){await pool.execute('SELECT 1 AS ok');return {db:true,version:1,features:['patient-search','finished-claims','pdf','live-context'],readOnly:true};},
+ diagnostics:()=>databaseDiagnostics(pool),
+ postDirect:createDirectPaymentWriter(pool),
+ async directReceipt(id){
+  try{const [rows]=await pool.execute('SELECT CAST(PayNum AS CHAR) AS payNum FROM luk_metlife_postings WHERE OperationId=?',[id]);return rows[0]||null;}
+  catch(e){if(e.code==='ER_NO_SUCH_TABLE')return null;throw e;}
+ },
+ async health(){await pool.execute('SELECT 1 AS ok');return {db:true,version:2,features:['patient-search','finished-claims','pdf','live-context','direct-payment'],readOnly:!directWritesEnabled(),directPaymentEnabled:directWritesEnabled()};},
  async search(query){
   const stmt=searchSql(query);const [all]=await pool.execute(stmt.sql,stmt.values);const rows=all.slice(0,stmt.limit);
   if(rows.length){const ids=rows.map(r=>r.PatNum);const [plans]=await pool.execute(`SELECT CAST(pp.PatNum AS CHAR) AS PatNum,s.SubscriberID,ip.GroupNum,c.CarrierName FROM patplan pp JOIN inssub s ON s.InsSubNum=pp.InsSubNum JOIN insplan ip ON ip.PlanNum=s.PlanNum JOIN carrier c ON c.CarrierNum=ip.CarrierNum WHERE pp.PatNum IN (${ids.map(()=>'?').join(',')}) ORDER BY pp.Ordinal`,ids);for(const row of rows)row.insurance=plans.filter(p=>String(p.PatNum)===String(row.PatNum));}

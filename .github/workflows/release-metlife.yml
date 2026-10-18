@@ -1,0 +1,60 @@
+name: Validate MetLife deployment
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/metlife/**'
+      - 'scripts/inspect-metlife-db.mjs'
+      - 'metlife-electron/**'
+      - '.github/workflows/release-metlife.yml'
+permissions:
+  contents: read
+jobs:
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mariadb:
+        image: mariadb:10.5
+        env:
+          MARIADB_ROOT_PASSWORD: synthetic-ci-only
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -psynthetic-ci-only"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run test:metlife
+        env:
+          METLIFE_TEST_DB_URL: mysql://root:synthetic-ci-only@127.0.0.1:3306
+  windows:
+    runs-on: windows-latest
+    needs: database
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix metlife-electron
+      - run: npm test --prefix metlife-electron
+      - run: npm run test:save --prefix metlife-electron
+      - run: npm run test:connect --prefix metlife-electron
+      - run: npm run test:ui --prefix metlife-electron
+      - run: npm run dist:win --prefix metlife-electron
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LUK-MetLife-0.4.0-Windows
+          path: metlife-electron/dist/*.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MetLife-synthetic-ui
+          path: metlife-electron/test-results/direct-db-*.png
+          if-no-files-found: ignore

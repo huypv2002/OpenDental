@@ -39,10 +39,12 @@ export function createMetlifeRouter({repository=createRepository(pool),getToken=
  const json=fn=>async(req,res)=>{try{res.json({ok:true,data:await fn(req)});}catch(e){res.status(400).json({ok:false,error:e.code?'SERVER chưa đọc được dữ liệu hoặc file OD. Kiểm tra cấu hình và quyền dịch vụ.':e.message});}};
  router.post('/operations',json(req=>posting.prepare(req.body)));
  router.post('/operations/:id/recheck',json(req=>posting.recheck(req.params.id)));
+ router.post('/operations/:id/post',json(req=>posting.post(req.params.id)));
  router.post('/operations/:id/verify',json(req=>posting.verify(req.params.id)));
  router.post('/operations/:id/abort',json(req=>posting.abort(req.params.id)));
  router.get('/operations/:id',json(req=>posting.status(req.params.id)));
  router.get('/health',json(()=>repository.health()));
+ router.get('/diagnostics/database',json(()=>repository.diagnostics()));
  router.get('/patients',json(req=>repository.search(req.query)));
  router.get('/patients/:patNum/documents',json(req=>repository.documents(req.params.patNum)));
  router.get('/patients/:patNum/pending',json(req=>posting.patientPending(req.params.patNum)));

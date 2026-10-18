@@ -1,6 +1,29 @@
-# LUK MetLife Assistant 0.3.19
+# LUK MetLife Assistant 0.4.0
 
-Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu → Auto fill**. Không cần Python hoặc chuyển snapshot hằng ngày.
+Electron/JavaScript, cùng style LUK Dental SMS Electron. Luồng chính: **Tìm bệnh nhân → FINISHED CLAM → Chọn PDF → đối chiếu đầy đủ → Lưu qua SERVER → xác minh Payment/Splits**. Không cần Python hoặc chuyển snapshot hằng ngày.
+
+
+## Trạng thái đường ghi DB mới (0.4.0)
+
+Đã triển khai source và kiểm thử giả lập; **chưa triển khai/ghi thử DB clone hoặc DB thật của phòng khám**. Đây là adapter SQL thử nghiệm, không tuyên bố tương đương toàn bộ nghiệp vụ/audit/aging của OD. Khuyến nghị chính thức của Open Dental là ghi qua API: https://www.opendental.com/site/integrationtypes.html . Không dùng API Payments POST để thay tùy tiện cho insurance claim payment: https://www.opendental.com/site/apipayments.html .
+
+Phạm vi giữ nguyên quy trình của tool trước: tạo `payment` có definition “Insurance Paid” và `paysplit` gắn vào procedure. Không tạo `claimpayment`, không đổi `claimproc` hay trạng thái claim. Nhật ký `luk_metlife_postings` là nhật ký tích hợp; **không phải Audit Trail/securitylog của OD**. Adapter không sinh hash hoặc giả mạo log OD, chưa xử lý aging/account balance cache và các hook/plugin khi Save bằng OD. Cần đối chiếu Account, báo cáo thu, số dư/aging và audit trên clone trước khi xem là sẵn sàng production. Nếu cần đủ các side effect này, phải dùng API hoặc lớp nghiệp vụ OD phù hợp phiên bản.
+
+SERVER mặc định chỉ đọc. Chỉ bật thử trên clone sau khi xác minh schema và tài khoản OD tích hợp:
+
+```dotenv
+ENABLE_OPEN_DENTAL_WRITES=true
+METLIFE_DIRECT_DB_ENABLED=true
+METLIFE_OD_USER_NUM=<UserNum tài khoản OD dùng cho tích hợp>
+```
+
+Writer yêu cầu các bảng liên quan dùng InnoDB, khóa AUTO_INCREMENT và schema tương thích; từ chối MyISAM, random keys, khóa ngày và các cấu hình kế toán được phát hiện mà adapter chưa hỗ trợ. Không đổi engine/schema bảng OD. Không bỏ khóa ngày hay vô hiệu hóa cấu hình OD để vượt qua lỗi. Hai cờ trên chỉ cho phép chạy adapter; không chứng minh nó tương thích mọi cấu hình OD.
+
+`POST /api/metlife/operations` với `transport:"direct-db"` chuẩn bị kế hoạch. `POST /api/metlife/operations/:id/post` kiểm tra PDF, khóa/đọc lại dữ liệu trong transaction SERIALIZABLE, ghi Payment + từng Split + biên nhận idempotency, đọc lại xác minh trước commit. `.../verify` yêu cầu biên nhận transaction khớp đúng PayNum rồi đọc lại Payment/Splits. Lỗi trước commit rollback; lỗi/mất kết nối lúc commit giữ pending và chỉ xác minh. Không tự gửi lại lệnh ghi. Bản ghi đã xác minh gọi lại sẽ không tạo Payment mới.
+
+Kiểm chứng local: `npm run test:metlife`, `npm --prefix metlife-electron test`, và `npm --prefix metlife-electron run test:save` (PDF tổng hợp, SERVER giả lập, xác nhận không gọi Windows automation). Test giả lập không thay thế kiểm thử MySQL/MariaDB và OD thật. Electron UI local chạy bằng runtime 44.7.0 đã có trên máy; package vẫn pin 44.7.2, chưa đóng gói/kiểm chứng binary 44.7.2.
+
+Các mục phiên bản 0.3.x bên dưới mô tả driver UI cũ. Driver còn giữ để chẩn đoán/đóng draft cũ; không nằm trong luồng lưu chính 0.4.0.
 
 ## SERVER: cập nhật chính Bridge hiện có
 
@@ -24,12 +47,10 @@ Nếu đã ở trong thư mục `metlife-electron`, bỏ dòng `cd`. Đóng app 
 1. Mở app trong mạng phòng khám: tự kết nối `http://SERVER:3008`, không đăng nhập hoặc chuyển file JSON. Nếu SERVER chưa sẵn sàng, bấm **Kết nối lại**. Tên SERVER cần phân giải được và cổng TCP 3008 phải cho phép trong mạng nội bộ. Khi dùng địa chỉ LAN khác, đặt `METLIFE_SERVER_URL=http://<IP-SERVER>:3008` trước khi mở app. Không tự mở truy cập ẩn danh qua tunnel Internet.
 2. Nhập tên, Patient ID/PatNum, Chart Number, Subscriber ID hoặc Group Number; có thể chọn loại tìm hoặc tìm tất cả. Group/Subscriber ID có thể trả nhiều bệnh nhân: xem Patient ID, ngày sinh và bảo hiểm rồi chọn đúng người.
 3. Nhấn **Xem hồ sơ**: app lấy danh sách PDF trong FINISHED CLAM/FINISHED CLAIMS của chính PatNum đó. Chọn PDF để xem và đối chiếu. File và dữ liệu OD được lấy từ SERVER; không cần chọn thư mục UNC hay nạp JSON.
-4. **Auto fill · bản nháp OD** tự chọn bệnh nhân bằng PatNum, mở Account rồi Payment, nhập Amount từ PDF, ngày/trace/Note và **Insurance Paid**. Trong Payment: chọn đúng patient ở Filtering bên phải; đưa bộ lọc Splits bên trái về All; Group By None; **Delete All** Splits của bản nháp vừa mở; đổi Show All Charges nếu cần để hiện đủ dịch vụ; chọn các dịch vụ khớp PDF trong **Outstanding Charges**; **Add Partials** và nhập tiền benefit từng dòng. Kiểm tra tổng Splits và từng dịch vụ trước khi dừng ở Payment để người dùng kiểm tra. Gặp cảnh báo số dư âm thì giữ nguyên popup, không tự bấm OK hay đóng.
-5. **Auto fill & Save vào OD**: SERVER đọc dữ liệu/file mới, khóa lượt ghi cho bệnh nhân; app tạo bản nháp hoàn chỉnh; SERVER kiểm tra lại ngay trước Save; app mở kiểm tra từng Split, bấm Save trong OD; SERVER đọc lại Payment và Splits để đối chiếu tất cả trường. Chỉ báo thành công khi readback đạt. Không gọi nút thu tiền thẻ/merchant.
-6. Nếu timeout, crash hoặc readback không khớp: giữ lượt ghi trên SERVER và local, không tự nhập lại. Dùng **Kiểm tra kết quả trên SERVER** để xác minh; nếu vẫn không khớp phải kiểm tra giao dịch cụ thể. Lỗi trước Save chỉ giải phóng khóa khi dữ liệu tài chính không thay đổi. Khi mở hồ sơ, app tự lấy lại lượt ghi còn chờ từ SERVER ngay cả khi local journal mất.
-7. Bản nháp có thể đóng bằng nút tool. OD/R5 cần đang đăng nhập, desktop mở khóa và cùng mức quyền với tool. Owner-drawn controls dùng Windows OCR tiếng Anh và nhận diện vùng chọn; thiếu OCR/control lạ sẽ dừng và tự chụp ảnh/control OD trong `od-diagnostics` dưới userData của app. Ảnh có thể chứa dữ liệu bệnh nhân, chỉ lưu trên máy và không được đóng gói vào bản phát hành.
+4. Bảng đối chiếu hiển thị Patient ID, tên/ngày sinh OD, PlanNum/InsSubNum, claim/group/trace/ngày, Payment Type, Note, từng ProcNum/code/ngày/răng/provider/clinic và số tiền phân bổ. **Đã đối chiếu · Lưu vào OD** gửi request đến SERVER; không mở Payment, không OCR, không click OD. App hoạt động trên macOS/Windows qua cùng Bridge. Trên OD refresh Account để xem kết quả; chưa kiểm chứng tự refresh trên R5.
 
-**Luồng mới 0.3.9 đã qua fixture Windows x86/x64; chưa được nghiệm thu trên OD thật tại R5.** Nên chạy luồng ghi trên bản sao database/môi trường thử trước khi sử dụng cho dữ liệu thật. Nếu OD tạo draft DB records ngay khi mở Payment, kiểm tra dữ liệu trước Save sẽ phát hiện và dừng thay vì tự bỏ qua; cần bằng chứng thực tế của phiên bản đó để xử lý tiếp.
+5. Khi mất kết nối hoặc readback không khớp, giữ lượt ghi trên SERVER và local, không tự nhập lại. Dùng **Kiểm tra kết quả trên SERVER** để xác minh. Khi mở hồ sơ, app tự lấy lại lượt ghi còn chờ ngay cả khi mất local journal.
+6. Draft tạo bằng phiên bản cũ phải hoàn tất/hủy trên OD trước khi lưu bằng đường mới. Các chức năng chẩn đoán giao diện OD nằm trong phần chẩn đoán ở Cấu hình; chỉ chức năng cũ này cần Windows/desktop mở khóa.
 
 Tab PDF & đối chiếu vẫn hỗ trợ mở PDF local và snapshot để chẩn đoán các trường hợp ngoại lệ. Đó không phải luồng dùng hằng ngày.
 
@@ -37,7 +58,7 @@ Tab PDF & đối chiếu vẫn hỗ trợ mở PDF local và snapshot để ch�
 
 SERVER xác định tài liệu qua DocNum + PatNum + category, không suy bệnh nhân chỉ từ tên file hoặc Group Number. Đọc filesystem theo AtoZfolder/ImageFolder, xác minh file nằm trong root và là PDF tối đa 30 MB đã ổn định. Chưa hỗ trợ ImageStore database/cloud.
 
-Context đọc patient/subscriber/plan/procedure/claim/claimproc/payment/paysplit trong READ ONLY transaction, giữ nguyên ngày dạng string và ID lớn. Không thay đổi dữ liệu tài chính OD bằng SQL. Endpoint MetLife dùng bearer token riêng, không dùng token quản trị Bridge chung; R5 không nhận mật khẩu MySQL.
+Context đọc patient/subscriber/plan/procedure/claim/claimproc/payment/paysplit trong READ ONLY transaction, giữ nguyên ngày dạng string và ID lớn. Đường đọc vẫn không thay đổi dữ liệu; đường ghi SQL thử nghiệm tách riêng và tắt mặc định như mô tả ở trên. Endpoint MetLife dùng bearer token riêng, không dùng token quản trị Bridge chung; R5 không nhận mật khẩu MySQL.
 
 PDF.js hỗ trợ mẫu MetLife Claim Summary có text layer đã kiểm tra. PDF scan/mẫu khác/nhiều claim/thiếu Payment Detail hoặc tổng tiền lệch bị chặn. Tổng tiền dùng integer cents; claim number giữ cả hậu tố trong metadata. App giữ PDF/context trong RAM và lưu cấu hình, kết nối mã hóa, audit hash/loại thao tác. SERVER lưu journal chứa context trước ghi và kế hoạch đối chiếu trong thư mục riêng `METLIFE_JOB_DIR`; thư mục này chứa thông tin hồ sơ, cần quyền truy cập chỉ dành cho dịch vụ/quản trị phòng khám, không đặt trong thư mục web công khai. Xuất đối chiếu chứa dữ liệu hồ sơ do người dùng chọn nơi lưu.
 
@@ -48,7 +69,7 @@ PDF.js hỗ trợ mẫu MetLife Claim Summary có text layer đã kiểm tra. PD
 - Electron UI trên macOS với SERVER giả lập: kết nối một lần, tìm group có 2 bệnh nhân, chọn đúng FINISHED CLAM, chọn PDF, tự lấy context, chặn khoản trùng và render 2 trang. Không dùng test này để khẳng định SERVER thực đã cài.
 - Bộ cài thử trên thư mục Bridge giả lập: backup, token, file kết nối và chạy lại không nhân đôi route.
 - Kiểm thử posting coordinator: khóa bền qua restart, duplicate, đúng/sai type/provider/procedure/amount, readback mới, drift trước Save, hash thay đổi và phục hồi lượt pending.
-- Kiểm thử Electron Save với adapter/SERVER giả lập: hai pha preview/recheck/save, readback đạt, readback chưa xác minh giữ journal/chặn retry. Không ghi tiền hay chạy OD thật trong test này.
+- Kiểm thử Electron Save mới với SERVER giả lập: prepare/post/verify, không gọi Windows adapter, readback chưa xác minh giữ journal/chặn retry. Không ghi tiền hay chạy OD thật trong test này.
 - PowerShell workflow policy chạy bằng .NET: gộp OCR tách cột, chọn đúng răng khi trùng code/ngày, không lấy số răng từ ngày hoặc mô tả; chuẩn hóa dấu phẩy tên và so ngày.
 - PowerShell parser kiểm tra cả adapter/workflow/OCR. Đây không phải bằng chứng Windows OCR hoặc các popup thật đã chạy.
 - Chưa cập nhật/chạy API trên SERVER phòng khám; chưa chạy app/adapter mới end-to-end trên R5; chưa xác minh luồng ghi tài chính/Splits trên database thực.
@@ -194,3 +215,5 @@ Fill draft vẫn không Save hoặc đóng Payment. Khi cập nhật từ bản 
 Fill draft mở Account trước khi tìm bệnh nhân. Khi cần đổi bệnh nhân, tool xóa bộ lọc cũ, tìm theo PatNum đã đối chiếu, bấm Search, chọn đúng dòng PatNum rồi tự bấm OK và xác minh PatNum trên tiêu đề OD. Bảng tìm kiếm tự vẽ không có UIA Text vẫn được đọc bằng OCR đúng cột PatNum; không chọn ID xuất hiện ở cột tên/điện thoại hoặc một phần của ID khác.
 
 Sau khi chọn bệnh nhân, tool luôn bấm Account lần nữa và chờ đúng ControlAccount/gridAccount/thanh Payment hiển thị trước khi mở Payment. Không chỉ dựa vào IsOffscreen của ControlAccount, vì module có thể còn nằm trong cây UIA khi đang ở Chart/Family. Kiểm thử Windows dựng ca bắt đầu ở Chart, chọn bệnh nhân qua bảng tự vẽ rồi lại ở Chart, và ca đã đúng bệnh nhân nhưng ở Chart; cả hai phải hoàn tất bước chuẩn bị bằng một lần gọi, không cần bấm Account hoặc Fill draft lần hai.
+
+Giao diện khách hàng 0.4.0 chỉ có tìm bệnh nhân, tài liệu, đối chiếu, lưu/xác minh, hướng dẫn và lịch sử thao tác. Không hiển thị URL/DB/schema, snapshot/JSON, ID nội bộ procedure/plan, OCR/driver hoặc nhật ký kỹ thuật. Dùng CLI `npm run metlife:inspect` trên SERVER cho chẩn đoán kỹ thuật.

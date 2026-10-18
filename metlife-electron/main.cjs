@@ -90,7 +90,7 @@ async function call(op,arg){
    if(String(context.patNum)!==patNum)throw new Error('SERVER trả sai bệnh nhân.');
    workspace.snapshots.set(patNum,context);
    const bytes=await serverClient.pdf(patNum,doc.DocNum),id=await workspace.addBytes(bytes,doc.FileName,{patNum,docNum:String(doc.DocNum),serverUrl:serverClient.connection.url});
-   patientBrowser.openedId=id;status.message='Đã mở PDF và lấy dữ liệu OD mới tự động. Kiểm tra đối chiếu trước Auto fill.';break;
+   patientBrowser.openedId=id;status.message='Đã mở PDF và lấy dữ liệu OD mới tự động. Kiểm tra đối chiếu trước khi lưu.';break;
   }
   case 'import-pdf':{
    const files=await choose(['openFile','multiSelections'],[{name:'PDF MetLife',extensions:['pdf']}]);
@@ -153,40 +153,46 @@ async function call(op,arg){
   case 'save-payment':{
    if(activeDraft||pendingSave)throw new Error('Còn bản nháp hoặc lượt ghi chưa xác minh. Hoàn tất lượt trước.');
    const id=idArg(arg),item=workspace.items.get(id);
-   if(!item.remote||!serverClient||item.remote.serverUrl!==serverClient.connection.url)throw new Error('Save cần PDF đã chọn từ SERVER hiện tại.');
+   if(!item.remote||!serverClient||item.remote.serverUrl!==serverClient.connection.url)throw new Error('Lưu cần PDF đã chọn từ SERVER hiện tại.');
+   const reviewed=workspace.plan(id);
    const {validateSnapshot}=await import('./lib/reconcile.mjs');
    const fresh=validateSnapshot(await serverClient.context(item.remote.patNum));
    if(String(fresh.patNum)!==item.remote.patNum)throw new Error('SERVER trả sai bệnh nhân.');
    workspace.snapshots.set(item.remote.patNum,fresh);
    const draft=workspace.plan(id);
-   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft});
+   if(JSON.stringify(reviewed)!==JSON.stringify(draft))throw new Error('Thông tin OD đã đổi. Kiểm tra lại bảng đối chiếu mới trước khi lưu.');
+   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft,transport:'direct-db'});
    pendingSave={operationId:prepared.operationId,serverUrl:serverClient.connection.url,itemId:id,at:new Date().toISOString(),state:'started'};
    await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
    notify();
-   let uiError=null;
-   try{
-    const preview=await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'fill-preview',draft:{...prepared.plan,mode:'preview-only'}});
-    try{await serverClient.recheck(prepared.operationId);}catch(e){e.saveInvoked=false;throw e;}
-    await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'save-preview',operationId:prepared.operationId,draft:{...prepared.plan,windowHandle:preview.windowHandle}});
-   }
-   catch(e){uiError=e;if(e.saveInvoked===false){
+   let postError=null;
+   try{await serverClient.post(prepared.operationId);}
+   catch(e){postError=e;
+    // Release only a server-confirmed pre-write failure. Network timeouts never retry.
+    const operation=await serverClient.operation(prepared.operationId);
+    if(['prepared','failed-no-write'].includes(operation.state)){
      const aborted=await serverClient.abort(prepared.operationId);
-     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;status.message=`OD dừng trước Save: ${e.message}`;await audit('save-aborted-no-db-change',{hash:draft.sha256});break;}
-   }}
-   // Even an adapter timeout can happen after Save. Always verify, never retry the write.
+     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;status.message=`Chưa ghi DB: ${e.message}`;await audit('direct-save-aborted',{hash:draft.sha256});break;}
+    }
+   }
    const result=await serverClient.verify(prepared.operationId);
    workspace.snapshots.set(item.remote.patNum,validateSnapshot(await serverClient.context(item.remote.patNum)));
    if(result.verified){
-    await audit('save-verified',{hash:draft.sha256,payNum:result.payNum});await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;
-    status.message=`Đã nhập và xác minh Payment #${result.payNum}, tổng ${result.amount}, ${result.splitNums.length} Splits.`;
+    await audit('direct-save-verified',{hash:draft.sha256,payNum:result.payNum});await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;
+    status.message=`Đã ghi và xác minh Payment #${result.payNum}, tổng ${result.amount}, ${result.splitNums.length} Splits. Refresh Account trên OD để xem.`;
    }else{
     pendingSave.state='unverified';await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
-    status.message=`Chưa xác minh sau thao tác OD. ${result.reason}${uiError?' '+uiError.message:''} Không bấm ghi lại.`;
+    status.message=`Chưa xác minh transaction. ${result.reason}${postError?' '+postError.message:''} Không bấm ghi lại.`;
    }
    break;
   }
   case 'verify-save':{
    if(!pendingSave||!serverClient||pendingSave.serverUrl!==serverClient.connection.url)throw new Error('Kết nối đúng SERVER của lượt ghi đang chờ.');
+   const operation=await serverClient.operation(pendingSave.operationId);
+   if(operation.transport==='direct-db'&&['prepared','failed-no-write','aborted-no-change'].includes(operation.state)){
+    const aborted=await serverClient.abort(pendingSave.operationId);
+    if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;status.message='SERVER xác nhận lượt trước chưa ghi dữ liệu. Tải lại hồ sơ để đối chiếu.';break;}
+   }
    const result=await serverClient.verify(pendingSave.operationId);
    if(result.verified){await audit('save-recovered-verified',{payNum:result.payNum});pendingSave=null;await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});status.message=`Đã xác minh Payment #${result.payNum}.`;}
    else status.message=`Chưa xác minh: ${result.reason} Giữ khóa chống nhập lại.`;
@@ -213,7 +219,7 @@ app.whenReady().then(async()=>{
  try{const saved=JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'pending-save.json'),'utf8'));if(typeof saved.operationId==='string'&&typeof saved.serverUrl==='string')pendingSave=saved;}catch{}
  const {loadConfig}=await import('./lib/config.mjs');
  try{workspace.config=loadConfig(JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'settings.json'),'utf8')));}catch{}
- win=new BrowserWindow({width:1400,height:920,minWidth:1050,minHeight:700,title:'LUK MetLife Assistant',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
+ win=new BrowserWindow({width:1400,height:920,minWidth:1050,minHeight:700,title:'LUK MetLife Assistant',webPreferences:{devTools:!app.isPackaged,preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(e,url)=>{if(url!==rootUrl)e.preventDefault();});
  ipcMain.handle('metlife:call',async(event,op,arg)=>{
   if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||event.senderFrame.url!==rootUrl)throw new Error('Untrusted sender');
@@ -223,7 +229,7 @@ app.whenReady().then(async()=>{
   try{return {ok:true,data:await call(op,arg)}}catch(e){status.message=e.message;notify();return {ok:false,error:e.message}}finally{if(mutation)busy=false;}
  });
  await win.loadFile(path.join(__dirname,'renderer/index.html'));
- connectLocal().catch(e=>{patientBrowser.connected=false;status.message=e.message;notify();});
+ connectLocal().catch(e=>{if(!serverClient){patientBrowser.connected=false;status.message=e.message;notify();}});
  win.on('close',e=>{if(activeDraft){e.preventDefault();status.message='Còn bản nháp OD. Đóng bằng nút Đóng bản nháp trước khi thoát tool.';notify();}});
 });
 app.on('window-all-closed',()=>{clearInterval(watchTimer);app.quit();});

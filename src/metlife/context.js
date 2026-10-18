@@ -1,14 +1,14 @@
 // Read-only patient context, reused by the MetLife API. No file export or DB writes.
-export async function readPatientContext(pool, patArg) {
+export async function readPatientContext(pool, patArg, {connection=null,forUpdate=false}={}) {
  if(!/^[1-9]\d{0,17}$/.test(String(patArg))) throw new Error('Invalid PatNum');
- const pat=String(patArg),conn=await pool.getConnection();
+ const pat=String(patArg),conn=connection||await pool.getConnection();
  const execute=(sql,values)=>conn.execute({sql,dateStrings:true,supportBigNumbers:true,bigNumberStrings:true},values);
 const names=['patient','patplan','inssub','insplan','carrier','document','definition','procedurelog','procedurecode','claim','claimproc','claimpayment','payment','paysplit','adjustment','preference','provider'];
 const snapshot={capturedAt:new Date().toISOString(),patNum:pat,label:'live-metlife-api',readOnly:true,schema:[],tables:{},warnings:[]};
 let tx=false;
 try {
- await conn.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
- await conn.query('START TRANSACTION READ ONLY');tx=true;
+ if(!connection){await conn.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+ await conn.query('START TRANSACTION READ ONLY');tx=true;}
  const [meta]=await execute(`SELECT TABLE_NAME,COLUMN_NAME,DATA_TYPE,COLUMN_KEY FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${names.map(()=>'?').join(',')}) ORDER BY TABLE_NAME,ORDINAL_POSITION`,names);
  snapshot.schema=meta;
  const cols=new Map(names.map(n=>[n,new Set(meta.filter(m=>m.TABLE_NAME===n).map(m=>m.COLUMN_NAME))]));
@@ -22,14 +22,14 @@ try {
   const rows=[];
   for(let i=0;i<vals.length;i+=500) {
    const chunk=vals.slice(i,i+500);
-   const [part]=await execute(`SELECT ${selected.map(f=>'`'+f+'`').join(',')} FROM \`${table}\` WHERE \`${key}\` IN (${chunk.map(()=>'?').join(',')}) LIMIT 5001`,chunk);
+   const [part]=await execute(`SELECT ${selected.map(f=>'`'+f+'`').join(',')} FROM \`${table}\` WHERE \`${key}\` IN (${chunk.map(()=>'?').join(',')}) LIMIT 5001${forUpdate?' FOR UPDATE':''}`,chunk);
    if(part.length>5000) snapshot.warnings.push(`${table} result TRUNCATED to 5000 rows in one chunk`);
    rows.push(...part.slice(0,5000));
   }
   return rows;
  }
  const t=snapshot.tables;
- t.patient=await read('patient','PatNum,FName,LName,MiddleI,Birthdate,Guarantor,PatStatus,ImageFolder,BalTotal,EstBalance','PatNum',[pat]);
+ t.patient=await read('patient','PatNum,ChartNumber,FName,LName,MiddleI,Birthdate,Guarantor,PatStatus,ImageFolder,BalTotal,EstBalance,ClinicNum','PatNum',[pat]);
  if (t.patient.length!==1) throw new Error('Patient did not resolve to exactly one row.');
  t.preference=await read('preference','PrefName,ValueString','PrefName',['ProgramVersion','DataBaseVersion','DocPath','AtoZfolderUsed','AtoZfolder','AtoZFolder','ImageStore','ClaimPaymentBatchOnly','RigorousAccounting']);
  t.definition=await read('definition','DefNum,Category,ItemName,ItemOrder,IsHidden,ItemValue','Category',[10,18,32]);
@@ -50,8 +50,8 @@ try {
  const splitPayments=await read('payment','PayNum,PatNum,PayDate,DateEntry,PayAmt,PayType,CheckNum,BankBranch,PayNote,DepositNum,SecDateTEdit','PayNum',t.paysplit.map(r=>r.PayNum));
  t.payment=[...new Map([...own,...splitPayments].map(r=>[String(r.PayNum),r])).values()];
  t.adjustment=await read('adjustment','AdjNum,PatNum,AdjDate,AdjAmt,AdjType,ProcNum,ProvNum,AdjNote','PatNum',[pat]);
- await conn.rollback();tx=false;
+ if(tx){await conn.rollback();tx=false;}
  return snapshot;
 
-} finally {if(tx) await conn.rollback().catch(()=>{});conn.release();}
+} finally {if(tx) await conn.rollback().catch(()=>{});if(!connection)conn.release();}
 }
