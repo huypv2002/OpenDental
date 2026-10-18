@@ -1,4 +1,4 @@
-const {app,BrowserWindow,ipcMain,dialog,shell,safeStorage}=require('electron');
+const {app,BrowserWindow,ipcMain,dialog,shell,safeStorage,Menu}=require('electron');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
@@ -214,6 +214,7 @@ async function call(op,arg){
  notify();return state();
 }
 app.whenReady().then(async()=>{
+ Menu.setApplicationMenu(null);
  if(process.platform==='win32'&&app.isPackaged)process.env.NAPI_RS_NATIVE_LIBRARY_PATH=path.join(process.resourcesPath,'native','skia.win32-x64-msvc.node');
  const {Workspace}=await import('./lib/workspace.mjs');workspace=new Workspace();
  try{const saved=JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'pending-save.json'),'utf8'));if(typeof saved.operationId==='string'&&typeof saved.serverUrl==='string')pendingSave=saved;}catch{}
