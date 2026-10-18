@@ -25,6 +25,7 @@ try {
   $info.RedirectStandardInput = $true
   $info.RedirectStandardOutput = $true
   $info.RedirectStandardError = $true
+  $info.EnvironmentVariables['METLIFE_OD_INSTALL_DIR'] = $install
   $info.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
   $child = [Diagnostics.Process]::Start($info)
   $child.StandardInput.Write($rawInput)
