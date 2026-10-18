@@ -16,6 +16,8 @@ using System.Reflection;
 using System.Globalization;
 [assembly: AssemblyVersion("24.3.61.0")]
 namespace OpenDentBusiness {
+ // Present in assembly metadata, but unrelated to the hash operation.
+ public class UnusedFeature { public OptionalSupport.Marker Value; }
  public class PaySplit { public long PatNum; public double SplitAmt; public DateTime DatePay; }
  public static class PaySplits {
   public static string HashFields(PaySplit split) {
@@ -30,6 +32,13 @@ namespace OpenDentBusiness {
  $sourceFile = Join-Path $dir 'Synthetic.cs'
  [IO.File]::WriteAllText($sourceFile,$source)
  $compiler = Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+ # A non-OD reference differs from a nearby DLL. Its unused reference must
+ # not fail eager validation of a hash operation that never loads that DLL.
+ $optionalSource = Join-Path $dir 'OptionalSupport.cs'
+ [IO.File]::WriteAllText($optionalSource,'using System.Reflection; [assembly: AssemblyVersion("2.0.0.0")] namespace OptionalSupport { public class Marker {} }')
+ $optionalDll = Join-Path $dir 'OptionalSupport.dll'
+ & $compiler /nologo /target:library /platform:anycpu ('/out:'+$optionalDll) $optionalSource
+ if ($LASTEXITCODE -ne 0) { throw 'Could not compile unused reference fixture.' }
  # Separate managed dependencies reproduce the installed OD dependency graph.
  $cdtSource = Join-Path $dir 'SyntheticCdt.cs'
  [IO.File]::WriteAllText($cdtSource,'using System.Reflection; [assembly: AssemblyVersion("24.3.61.0")] namespace CDT { public static class SyntheticDependency { public static string Prefix() { return "SYNTHETIC|"; } } }')
@@ -43,8 +52,11 @@ namespace OpenDentBusiness {
  [IO.File]::WriteAllText($codeBaseSource,'using System.Reflection; [assembly: AssemblyVersion("24.3.61.0")] namespace CodeBase { public static class SyntheticDependency { public static string Prefix() { return CDT.SyntheticDependency.Prefix(); } } }')
  & $compiler /nologo /target:library ('/platform:'+$FixtureArchitecture) ('/reference:'+(Join-Path $dir 'CDT.dll')) ('/out:'+(Join-Path $dir 'CodeBase.dll')) $codeBaseSource
  if ($LASTEXITCODE -ne 0) { throw 'Could not compile synthetic CodeBase dependency.' }
- & $compiler /nologo /target:library ('/platform:'+$MainArchitecture) ('/reference:'+(Join-Path $dir 'CodeBase.dll')) ('/out:'+(Join-Path $dir 'OpenDentBusiness.dll')) $sourceFile
+ & $compiler /nologo /target:library ('/platform:'+$MainArchitecture) ('/reference:'+(Join-Path $dir 'CodeBase.dll')) ('/reference:'+$optionalDll) ('/out:'+(Join-Path $dir 'OpenDentBusiness.dll')) $sourceFile
  if ($LASTEXITCODE -ne 0) { throw 'Could not compile the synthetic helper fixture.' }
+ [IO.File]::WriteAllText($optionalSource,([IO.File]::ReadAllText($optionalSource).Replace('2.0.0.0','1.0.0.0')))
+ & $compiler /nologo /target:library /platform:anycpu ('/out:'+$optionalDll) $optionalSource
+ if ($LASTEXITCODE -ne 0) { throw 'Could not compile nearby compatibility fixture.' }
  $env:METLIFE_OD_INSTALL_DIR = $dir
  $helper = Join-Path $PSScriptRoot 'metlife-new-split-hashes.ps1'
  function RunHelper($rows) {

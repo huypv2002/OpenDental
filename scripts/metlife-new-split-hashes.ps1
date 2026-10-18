@@ -63,8 +63,9 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
  $assembly = [Reflection.Assembly]::LoadFrom($dll)
  $version = $assembly.GetName().Version
  if ($version.Major -ne 24 -or $version.Minor -ne 3) { throw 'The installed OD assembly must be version 24.3 for this adapter.' }
- # Preload direct dependencies, checking identities before CLR binding can
- # unify a different assembly version in the default load context.
+ # Preload the OD dependencies used directly by this helper.
+ # Validate only their identities below. Let CLR handle framework references;
+ # a nearby DLL may differ from the framework assembly CLR actually uses.
  $odAssemblies = @($assembly)
  foreach ($dependency in @('CodeBase.dll', 'CDT.dll')) {
   $dependencyPath = Join-Path $install $dependency
@@ -73,6 +74,7 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
  }
  foreach ($odAssembly in $odAssemblies) {
   foreach ($reference in $odAssembly.GetReferencedAssemblies()) {
+   if ($reference.Name -notin @('OpenDentBusiness', 'CodeBase', 'CDT')) { continue }
    $localPath = Join-Path $install ($reference.Name + '.dll')
    if (Test-Path -LiteralPath $localPath) {
     $actual = [Reflection.AssemblyName]::GetAssemblyName($localPath)
