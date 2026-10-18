@@ -47,6 +47,19 @@ namespace OpenDentBusiness {
   $bad = RunHelper @(@{patNum='99';amount=$amount;date='2026-09-24'})
   if ($bad.ok -or $helperCode -eq 0) { throw 'Native helper accepted invalid input or a failed native hash.' }
  }
+ $nodeTest = Join-Path $dir 'native-launcher-test.mjs'
+ [IO.File]::WriteAllText($nodeTest,@'
+import {pathToFileURL} from 'node:url';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const {nativeSplitHashes}=await import(pathToFileURL(path.resolve('src/metlife/nativeSplitHashes.js')));
+const hashes=await nativeSplitHashes({patNum:'99',date:'2026-09-24',splits:[{amountCents:3500},{amountCents:100}]});
+assert.deepEqual(hashes,['SYNTHETIC|99|35.00|2026-09-24','SYNTHETIC|99|1.00|2026-09-24']);
+await assert.rejects(nativeSplitHashes({patNum:'99',date:'2026-09-24',splits:[{amountCents:3}]}),/SecurityHash/);
+console.log('Node to Windows PowerShell to synthetic OD helper passed, including architecture selection and native error rejection.');
+'@)
+ & node $nodeTest
+ if ($LASTEXITCODE -ne 0) { throw 'Node native-helper launcher test failed.' }
  'OD new-split helper passed synthetic assembly loading, exact fields, blank/error hash rejection and invalid amount rejection. Actual OD/CDT library not available in CI.'
 } finally {
  $env:METLIFE_OD_INSTALL_DIR=$old
