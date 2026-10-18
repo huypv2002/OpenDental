@@ -129,6 +129,12 @@ namespace OpenDentBusiness {
  $traced = @($contextReport.probes | Where-Object { $_.result.error -match 'Synthetic CDT general failure' -and $_.result.context.processBits -eq $expectedBits })
  if ($contextReport.databaseAccess -ne $false -or -not $contextReport.syntheticInputOnly -or $traced.Count -lt 1) { throw 'Context report did not capture the fixed synthetic failure in the correct process.' }
  if (-not $traced[0].result.context.applicationBase -or -not $traced[0].result.context.assemblies -or $traced[0].result.PSObject.Properties['hashes']) { throw 'Context report missing runtime metadata or exporting hash values.' }
+ $hostFile = Join-Path $dir 'host-context.json'
+ $hostArchitecture = if ($expectedBits -eq 32) { 'x86' } else { 'x64' }
+ & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'inspect-metlife-od-host.ps1') -InstallDir $dir -Architecture $hostArchitecture -OutputPath $hostFile
+ if ($LASTEXITCODE -ne 0) { throw 'Standalone context host failed.' }
+ $hostReport = Get-Content -LiteralPath $hostFile -Raw -Encoding UTF8 | ConvertFrom-Json
+ if ($hostReport.databaseAccess -ne $false -or $hostReport.hashReturned -ne $false -or $hostReport.resultKind -cne 'Exception' -or $hostReport.context.entryAssembly -notmatch '^MetlifeOdContextHost,' -or $hostReport.context.processBits -ne $expectedBits -or ($hostReport.exceptionTrace -join ' ') -notmatch 'Synthetic CDT general failure') { throw 'Standalone host did not capture its own entry assembly and synthetic failure.' }
  $nodeTest = Join-Path $dir 'native-launcher-test.mjs'
  [IO.File]::WriteAllText($nodeTest,@'
 import {pathToFileURL} from 'node:url';
