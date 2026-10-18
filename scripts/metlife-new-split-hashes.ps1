@@ -9,20 +9,20 @@ try {
  if ($env:METLIFE_OD_INSTALL_DIR) { $candidates += $env:METLIFE_OD_INSTALL_DIR }
  $candidates += @("${env:ProgramFiles(x86)}\Open Dental", "$env:ProgramFiles\Open Dental", 'C:\Open Dental')
  $install = $candidates | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'OpenDentBusiness.dll') } | Select-Object -First 1
- if (-not $install) { throw 'Không tìm thấy OpenDentBusiness.dll trên SERVER. Kỹ thuật viên kiểm tra thư mục cài OD (METLIFE_OD_INSTALL_DIR nếu cài vị trí riêng).' }
+ if (-not $install) { throw 'OpenDentBusiness.dll was not found on SERVER. Check the OD installation directory; METLIFE_OD_INSTALL_DIR is optional for a custom location.' }
  $install = (Resolve-Path -LiteralPath $install).Path
  [Environment]::CurrentDirectory = $install
  Set-Location -LiteralPath $install
  $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $install 'OpenDentBusiness.dll'))
  $version = $assembly.GetName().Version
- if ($version.Major -ne 24 -or $version.Minor -ne 3) { throw 'Thư viện OD trên SERVER phải thuộc phiên bản 24.3 cho adapter này.' }
+ if ($version.Major -ne 24 -or $version.Minor -ne 3) { throw 'The installed OD assembly must be version 24.3 for this adapter.' }
  $splitType = $assembly.GetType('OpenDentBusiness.PaySplit', $true)
  $serviceType = $assembly.GetType('OpenDentBusiness.PaySplits', $true)
  $method = $serviceType.GetMethod('HashFields', [Type[]]@($splitType))
- if (-not $method) { throw 'Không tìm thấy hàm tạo hash Split của OD.' }
+ if (-not $method) { throw 'The installed OD assembly does not expose PaySplits.HashFields.' }
  $results = @()
  foreach ($row in @($inputData.splits)) {
-  if ([string]$row.patNum -notmatch '^[1-9]\d{0,17}$' -or [string]$row.amount -notmatch '^\d+\.\d{2}$' -or [string]$row.date -notmatch '^\d{4}-\d{2}-\d{2}$') { throw 'Dữ liệu Split mới không hợp lệ.' }
+  if ([string]$row.patNum -notmatch '^[1-9]\d{0,17}$' -or [string]$row.amount -notmatch '^\d+\.\d{2}$' -or [string]$row.date -notmatch '^\d{4}-\d{2}-\d{2}$') { throw 'Invalid new split input.' }
   $split = [Activator]::CreateInstance($splitType)
   $splitType.GetField('PatNum').SetValue($split, [long]$row.patNum)
   $splitType.GetField('SplitAmt').SetValue($split, [double]::Parse($row.amount, [Globalization.CultureInfo]::InvariantCulture))
@@ -30,7 +30,7 @@ try {
   $hash = [string]$method.Invoke($null, @($split))
   # OD catches native library failures and returns the exception type as text.
   # Never accept that text as a valid hash, or use a blank fallback.
-  if ([string]::IsNullOrWhiteSpace($hash) -or $hash.Length -lt 16 -or $hash -match 'Exception$' -or $hash -match '\s') { throw 'Thư viện OD chưa tạo được SecurityHash hợp lệ cho Split mới. Kiểm tra CDT.dll và dependency trên SERVER.' }
+  if ([string]::IsNullOrWhiteSpace($hash) -or $hash.Length -lt 16 -or $hash -match 'Exception$' -or $hash -match '\s') { throw 'OD did not return a valid SecurityHash for the new split. Check CDT.dll and its dependencies on SERVER.' }
   $results += $hash
  }
  @{ok=$true;version=$version.ToString();culture=[Globalization.CultureInfo]::CurrentCulture.Name;hashes=@($results)} | ConvertTo-Json -Compress -Depth 5
