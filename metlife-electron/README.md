@@ -50,9 +50,9 @@ Nếu đã ở trong thư mục `metlife-electron`, bỏ dòng `cd`. Đóng app 
 4. Bảng đối chiếu hiển thị Patient ID, tên/ngày sinh OD, PlanNum/InsSubNum, claim/group/trace/ngày, Payment Type, Note, từng ProcNum/code/ngày/răng/provider/clinic và số tiền phân bổ. **Đã đối chiếu · Lưu vào OD** gửi request đến SERVER; không mở Payment, không OCR, không click OD. App hoạt động trên macOS/Windows qua cùng Bridge. Trên OD refresh Account để xem kết quả; chưa kiểm chứng tự refresh trên R5.
 
 5. Khi mất kết nối hoặc readback không khớp, giữ lượt ghi trên SERVER và local, không tự nhập lại. Dùng **Kiểm tra kết quả trên SERVER** để xác minh. Khi mở hồ sơ, app tự lấy lại lượt ghi còn chờ ngay cả khi mất local journal.
-6. Draft tạo bằng phiên bản cũ phải hoàn tất/hủy trên OD trước khi lưu bằng đường mới. Các chức năng chẩn đoán giao diện OD nằm trong phần chẩn đoán ở Cấu hình; chỉ chức năng cũ này cần Windows/desktop mở khóa.
+6. Draft tạo bằng phiên bản cũ phải hoàn tất/hủy trên OD trước khi lưu bằng đường mới. Driver giao diện OD cũ chỉ giữ trong source cho kỹ thuật viên; không có nút chẩn đoán trong bản khách hàng.
 
-Tab PDF & đối chiếu vẫn hỗ trợ mở PDF local và snapshot để chẩn đoán các trường hợp ngoại lệ. Đó không phải luồng dùng hằng ngày.
+Tab PDF & đối chiếu hỗ trợ xem thêm PDF local; để lưu cần chọn tài liệu từ hồ sơ bệnh nhân. Snapshot/JSON và công cụ chẩn đoán không hiển thị trong bản khách hàng.
 
 ## Phạm vi dữ liệu và kiểm tra
 

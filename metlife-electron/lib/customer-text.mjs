@@ -1,6 +1,11 @@
 export function customerMessage(value){
  const text=String(value||'');
  if(/FName|LName|MiddleI/.test(text))return 'Tên bệnh nhân trong PDF không khớp hồ sơ Open Dental. Vui lòng kiểm tra lại.';
+ if(/Existing payment|possible duplicate/i.test(text))return 'Khoản thanh toán này đã được ghi hoặc có thể bị trùng. Vui lòng kiểm tra lại.';
+ if(/already has insurance payment/i.test(text))return 'Dịch vụ đã có khoản bảo hiểm thanh toán. Vui lòng kiểm tra trước khi lưu lại.';
+ if(/allocation total mismatch/i.test(text))return 'Tổng phân bổ không khớp số tiền thanh toán. Vui lòng kiểm tra lại.';
+ if(/PDF changed/i.test(text))return 'Tài liệu đã thay đổi. Mở lại tài liệu để đối chiếu trước khi lưu.';
+ if(/context|metadata|Cannot read|undefined|TypeError|SyntaxError|ENOTFOUND/i.test(text))return 'Chưa cập nhật được hồ sơ. Vui lòng làm mới để đối chiếu lại hoặc liên hệ hỗ trợ.';
  if(/^Đã ghi và xác minh Payment/.test(text))return 'Đã lưu và xác minh khoản thanh toán. Làm mới Account trong Open Dental để xem.';
  if(/^Đã xác minh Payment/.test(text))return 'Đã xác minh khoản thanh toán đã lưu.';
  if(/Chưa xác minh transaction|^Chưa xác minh:/.test(text))return 'Chưa xác minh được kết quả lưu. Bấm Kiểm tra kết quả; không lưu lại.';
