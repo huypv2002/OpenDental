@@ -92,6 +92,17 @@ async function call(op,arg){
    await fs.unlink(path.join(app.getPath('userData'),'server-connection.enc')).catch(()=>{});serverClient=null;
    Object.assign(patientBrowser,{connected:false,url:'',patients:[],selectedPatient:null,documents:[],openedId:null});workspace.snapshots.clear();status.message='Đã ngắt kết nối SERVER.';break;
   }
+  case 'server-history':{
+   if(!serverClient)throw new Error('Chưa kết nối SERVER.');
+   return await serverClient.history();
+  }
+  case 'scan-server':{
+   if(!serverClient)throw new Error('Chưa kết nối SERVER.');
+   const r=await serverClient.scan();
+   status.message=`Đã quét thư mục SERVER: ${r.count||0} claim phát hiện.`;
+   notify();
+   return r;
+  }
   case 'search-patients':{
    if(!serverClient)throw new Error('Kết nối SERVER một lần để tìm bệnh nhân.');
    if(!arg||typeof arg.q!=='string'||!arg.q.trim()||arg.q.length>100||!['all','name','patientId','subscriberId','groupNumber'].includes(arg.kind)||!Number.isInteger(arg.page)||arg.page<0||arg.page>10000)throw new Error('Từ khóa hoặc loại tìm kiếm không hợp lệ.');

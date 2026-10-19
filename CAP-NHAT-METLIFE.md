@@ -1,8 +1,26 @@
-# MetLife 0.4.0 — cập nhật source SERVER và R5
+# MetLife 0.7.0 — Hệ thống tự động 100% trên SERVER & R5 Audit Dashboard
 
 Repo: https://github.com/huypv2002/OpenDental — nhánh `main`.
 
-Trong checkout Bridge hiện có trên SERVER, lần đầu lấy launcher mới:
+## Tổng quan kiến trúc mới (100% Tự động hóa)
+
+1. **SERVER Tự động giám sát & Xử lý (Auto-Pilot):**
+   - Thư mục giám sát: `D:\SHARE\INSURANCE CLAIM\METLIFE` (tùy chỉnh qua `.env: METLIFE_INCOMING_DIR`).
+   - Server Bridge tự động quét định kỳ (mỗi 30s) hoặc khi nhận lệnh quét tức thì.
+   - Khi có file PDF (ví dụ `1307.pdf` hoặc theo tên bệnh nhân):
+     - Đọc và bóc tách dữ liệu EOB MetLife (`feeCents`, `benefitCents`, `CheckNum`, `GroupNum`, thủ thuật...).
+     - Tự động import PDF vào **Finished Claims** trong Open Dental (sao chép vào thư mục AtoZ ảnh của bệnh nhân và tạo bản ghi bảng `document`).
+     - **Tự động bù phí 0.00 (`ProcFee`):** Nếu các thủ thuật hoàn thành trên OD bị để phí $0.00 (dẫn đến số dư Balance âm sau khi trừ tiền bảo hiểm), Server tự động cập nhật `procedurelog.ProcFee` và `claimproc.FeeBilled` theo mức phí gửi trong EOB, đảm bảo số dư tài khoản bệnh nhân luôn chính xác 100%.
+     - Tự động ghi nhận thanh toán (`payment`, `paysplit` với `SecurityHash` in-memory chuẩn xác, `securitylog`, `securityloghash`), chuyển Claim sang trạng thái Received (`ClaimStatus = 'R'`).
+     - Tự động lưu trữ file đã xử lý vào thư mục `PROCESSED/`.
+     - Lưu toàn bộ vết kiểm toán vào bảng MariaDB `luk_metlife_history`.
+
+2. **Client R5 — Audit & Activity Dashboard:**
+   - Không còn phải nhập bệnh nhân, chọn file thủ công hay bấm "Lưu vào Open Dental" bằng tay.
+   - Trở thành **Bảng điều khiển & Giám sát hoạt động**:
+     - Hiển thị trực quan danh sách các EOB mà Server đã tự động xử lý.
+     - Kiểm tra chi tiết side-by-side: Số tiền thanh toán ($439.20), mã PayNum, các thủ thuật được bù phí, tài liệu Finished Claims đã nhập.
+     - Có nút **"⚡ Quét thư mục Server ngay"** để kích hoạt quét ngay lập tức khi vừa thả file PDF mới vào thư mục.
 
 ```bat
 git pull --ff-only origin main

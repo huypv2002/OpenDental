@@ -39,3 +39,23 @@ nav{height:48px;padding:0 20px}main{height:calc(100vh - 150px)}.page{padding:22p
 .modal-splits-table tfoot td{padding:10px 10px;background:#f8fafc;border-top:2px solid var(--border);border-bottom:none;font-size:13px;color:#0f172a}
 .modal-splits-table tfoot td.num{font-size:15px;color:#155bd8;font-weight:700}
 
+/* Dashboard & Audit Layout */
+.dashboard-controls{display:flex;gap:10px;align-items:center}
+.dashboard-workspace{display:grid;grid-template-columns:1.2fr 1fr;gap:18px;flex:1;min-height:0}
+.history-table-panel,.history-detail-panel{display:flex;flex-direction:column;min-height:0;overflow:hidden;background:#fff}
+.history-scroll{overflow:auto;flex:1}
+.history-table{width:100%;border-collapse:collapse;font-size:12px}
+.history-table th{position:sticky;top:0;background:#f4f8fb;z-index:2;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:600;color:#647381;font-size:11px}
+.history-table td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+.history-table tr.history-row{cursor:pointer;transition:background .12s ease}
+.history-table tr.history-row:hover{background:#f8fafc}
+.history-table tr.history-row.selected{background:#eef5ff;border-left:3px solid #155bd8}
+.badge.success{background:#e8f8f0;color:#197b56;border:1px solid #bce3ce}
+.badge.failed{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.badge.fee-tag{background:#f0fdf4;color:#166534;font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #bbf7d0;display:inline-block;margin-top:2px}
+.history-detail-panel{overflow-y:auto}
+.audit-box{background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px}
+.audit-box h4{margin:0 0 8px;font-size:13px;color:#1e293b}
+.audit-box p{margin:4px 0;font-size:12px;line-height:1.6}
+.audit-box code{background:#e2e8f0;padding:2px 5px;border-radius:4px;font-size:11px}
+

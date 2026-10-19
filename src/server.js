@@ -1,4 +1,5 @@
 import { createMetlifeRouter } from './metlife/router.js';
+import { startAutoProcessor } from './metlife/autoProcessor.js';
 import cors from 'cors';
 import express from 'express';
 import multer from 'multer';
@@ -989,7 +990,19 @@ const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(`Open Dental bridge listening on http://0.0.0.0:${config.port}`);
 });
 
+let metlifeAutoProcessor = null;
+if (process.env.METLIFE_AUTO_SCAN !== 'false') {
+  try {
+    metlifeAutoProcessor = startAutoProcessor({ pool });
+  } catch (err) {
+    console.warn('[MetLife Auto-Processor] Could not start auto processor:', err.message);
+  }
+}
+
 async function shutdown() {
+  if (metlifeAutoProcessor?.stop) {
+    try { metlifeAutoProcessor.stop(); } catch {}
+  }
   server.close(async () => {
     await closePool();
     process.exit(0);

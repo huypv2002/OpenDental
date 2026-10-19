@@ -53,4 +53,6 @@ export class MetlifeClient{
  documents(patNum){return this.request(`/patients/${encodeURIComponent(patNum)}/documents`);}
  context(patNum){return this.request(`/patients/${encodeURIComponent(patNum)}/context`);}
  pdf(patNum,docNum){return this.request(`/patients/${encodeURIComponent(patNum)}/documents/${encodeURIComponent(docNum)}/pdf`,true);}
+ history(){return this.request('/history');}
+ scan(){return this.request('/scan',false,{});}
 }

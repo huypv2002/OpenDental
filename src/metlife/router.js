@@ -55,5 +55,19 @@ export function createMetlifeRouter({repository=createRepository(pool),getToken=
   try{const file=await repository.pdf(req.params.patNum,req.params.docNum);res.set({'Content-Type':'application/pdf','Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,'X-Content-Type-Options':'nosniff','X-Metlife-SHA256':file.sha256});res.send(file.bytes);}
   catch(e){res.status(400).json({ok:false,error:e.code?'SERVER chưa đọc được PDF. Kiểm tra quyền truy cập thư mục Images.':e.message});}
  });
+ router.get('/history',json(async()=>{
+  try{
+   const [rows]=await pool.execute(`SELECT Id, FileName, FileHash, PatNum, PatientName, ClaimNumber, CheckNumber, TotalAmount, ProceduresCount, FeesUpdated, PayNum, DocNum, Status, Message, Details, DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt, DATE_FORMAT(ProcessedAt, '%Y-%m-%d %H:%i:%s') AS ProcessedAt FROM luk_metlife_history ORDER BY Id DESC LIMIT 100`);
+   return {items:rows};
+  }catch(err){
+   if(err.code==='ER_NO_SUCH_TABLE')return {items:[]};
+   throw err;
+  }
+ }));
+ router.post('/scan',json(async()=>{
+  const {scanIncomingFolder}=await import('./autoProcessor.js');
+  const dir=process.env.METLIFE_INCOMING_DIR||'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+  return scanIncomingFolder(pool,dir);
+ }));
  return router;
 }

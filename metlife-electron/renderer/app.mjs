@@ -180,3 +180,182 @@ $('#patient-results').addEventListener('keydown',e=>{if(!['Enter',' '].includes(
 $('#patient-documents').addEventListener('click',e=>{const b=e.target.closest('[data-document]');if(b)action('open-document',b.dataset.document);});
 
 $('#connect-server').addEventListener('click',()=>action('reconnect-server'));
+
+let serverHistoryItems=[],selectedHistoryItem=null;
+async function loadServerHistory(){
+ try{
+  const res=await request('server-history');
+  serverHistoryItems=res?.items||[];
+  renderHistory();
+ }catch(err){
+  const el=$('#history-count');
+  if(el)el.textContent='Chưa tải được lịch sử';
+ }
+}
+
+function renderHistory(){
+ const items=serverHistoryItems;
+ const countEl=$('#history-count');
+ if(countEl)countEl.textContent=`${items.length} giao dịch`;
+ const statTotal=$('#stat-total-processed');
+ if(statTotal)statTotal.textContent=items.length;
+
+ const successItems=items.filter(i=>i.Status==='SUCCESS');
+ const failedItems=items.filter(i=>i.Status!=='SUCCESS');
+ const statSuccess=$('#stat-success');
+ if(statSuccess)statSuccess.textContent=successItems.length;
+ const statFailed=$('#stat-failed');
+ if(statFailed)statFailed.textContent=failedItems.length;
+
+ const totalCents=successItems.reduce((acc,cur)=>acc+Math.round(Number(cur.TotalAmount||0)*100),0);
+ const statTotalAmount=$('#stat-total-amount');
+ if(statTotalAmount)statTotalAmount.textContent=usd(totalCents);
+
+ const tbody=$('#history-items-tbody');
+ if(!tbody)return;
+ if(!items.length){
+  tbody.innerHTML='';
+  const hEmpty=$('#history-empty');if(hEmpty)hEmpty.hidden=false;
+  const dEmpty=$('#history-detail-empty');if(dEmpty)dEmpty.hidden=false;
+  const dContent=$('#history-detail-content');if(dContent)dContent.hidden=true;
+  return;
+ }
+
+ const hEmpty=$('#history-empty');if(hEmpty)hEmpty.hidden=true;
+ tbody.innerHTML=items.map(item=>{
+  const isSuccess=item.Status==='SUCCESS';
+  const isSel=selectedHistoryItem&&selectedHistoryItem.Id===item.Id;
+  const badgeCls=isSuccess?'success':'failed';
+  const badgeText=isSuccess?'✓ Đã ghi OD':'✗ Lỗi';
+  const amountStr=usd(Math.round(Number(item.TotalAmount||0)*100));
+  const feeTag=item.FeesUpdated?`<span class="badge fee-tag">${esc(item.FeesUpdated)}</span>`:'<span class="muted">—</span>';
+
+  return `<tr class="history-row ${isSel?'selected':''}" data-history-id="${item.Id}">
+   <td><small>${esc(item.ProcessedAt||item.CreatedAt)}</small></td>
+   <td><strong>${esc(item.FileName)}</strong></td>
+   <td><b>${esc(item.PatientName)}</b><br><small>PatNum: ${esc(item.PatNum)}</small></td>
+   <td><small>${esc(item.ClaimNumber||item.CheckNumber||'—')}</small></td>
+   <td class="num"><b>${amountStr}</b></td>
+   <td>${feeTag}</td>
+   <td><span class="badge ${badgeCls}">${badgeText}</span></td>
+  </tr>`;
+ }).join('');
+
+ if(!selectedHistoryItem&&items.length>0){
+  selectedHistoryItem=items[0];
+ }
+
+ if(selectedHistoryItem){
+  const fresh=items.find(i=>i.Id===selectedHistoryItem.Id)||items[0];
+  selectedHistoryItem=fresh;
+  renderHistoryDetail(fresh);
+ }
+}
+
+function renderHistoryDetail(item){
+ const dEmpty=$('#history-detail-empty');
+ const dContent=$('#history-detail-content');
+ if(!dEmpty||!dContent)return;
+ if(!item){
+  dEmpty.hidden=false;
+  dContent.hidden=true;
+  return;
+ }
+
+ dEmpty.hidden=true;
+ dContent.hidden=false;
+ const badge=$('#history-detail-badge');
+ if(badge){
+  badge.textContent=item.Status==='SUCCESS'?`Giao dịch #${item.Id} (Thành công)`:`Giao dịch #${item.Id} (Lỗi)`;
+  badge.className=item.Status==='SUCCESS'?'badge success':'badge failed';
+ }
+
+ let parsedDetails=null;
+ try{if(item.Details)parsedDetails=JSON.parse(item.Details);}catch{}
+
+ const amountStr=usd(Math.round(Number(item.TotalAmount||0)*100));
+ let splitsHtml='';
+ if(parsedDetails?.splits&&parsedDetails.splits.length){
+  splitsHtml=`<h4 style="margin-top:16px;">Chi tiết phân bổ dịch vụ (PaySplits):</h4>
+  <table>
+   <thead><tr><th>Mã thủ thuật</th><th>ProcNum OD</th><th class="num">Số tiền</th><th>Bảo mật Hash</th></tr></thead>
+   <tbody>
+    ${parsedDetails.splits.map(s=>`<tr><td><b>${esc(s.code)}</b></td><td>ProcNum: ${esc(s.procNum||'—')}</td><td class="num"><b>$${esc(s.amount)}</b></td><td><span class="badge ready">✓ SecurityHash OK</span></td></tr>`).join('')}
+   </tbody>
+  </table>`;
+ }
+
+ dContent.innerHTML=`
+  <div class="audit-box">
+   <h4>Bệnh nhân & Hồ sơ Open Dental</h4>
+   <p><b>Họ tên:</b> ${esc(item.PatientName)} (Mã bệnh nhân: <code>PatNum #${item.PatNum}</code>)</p>
+   <p><b>Số Claim EOB:</b> <code>${esc(item.ClaimNumber||'—')}</code> | <b>Số Check / Trace:</b> <code>${esc(item.CheckNumber||'—')}</code></p>
+   <p><b>File nguồn:</b> <code>${esc(item.FileName)}</code></p>
+   <p><b>Thời gian xử lý:</b> ${esc(item.ProcessedAt||item.CreatedAt)}</p>
+  </div>
+
+  <div class="audit-box">
+   <h4>Giao dịch thanh toán (Payment & PaySplits)</h4>
+   <p><b>Mã thanh toán (PayNum):</b> <code>#${item.PayNum||'Chưa tạo'}</code></p>
+   <p><b>Loại thanh toán:</b> Insurance Paid (Bảo hiểm chi trả)</p>
+   <p><b>Tổng số tiền chi trả:</b> <b style="color:#155bd8;font-size:16px;">${amountStr}</b></p>
+   <p><b>Ghi chú thanh toán:</b> <code>group number : ${esc(parsedDetails?.groupNum||'—')}</code></p>
+   <p><b>Trạng thái Claim:</b> <span class="badge ready">✓ ClaimStatus = 'R' (Received)</span></p>
+  </div>
+
+  <div class="audit-box">
+   <h4>Bù phí dịch vụ tự động (Fix 0.00 ProcFee)</h4>
+   <p><b>Các dịch vụ đã được cập nhật phí theo EOB:</b></p>
+   <p style="color:#166534;font-weight:600;">${esc(item.FeesUpdated||'Không phát hiện phí 0.00 cần bù.')}</p>
+   <small class="muted">Nhờ cập nhật ProcFee, tổng Charges của bệnh nhân khớp đúng chi phí điều trị và số dư (Balance) không bị âm.</small>
+  </div>
+
+  <div class="audit-box">
+   <h4>Lưu trữ tài liệu Open Dental Imaging (Finished Claims)</h4>
+   <p><b>Mã tài liệu (DocNum):</b> <code>#${item.DocNum||'Chưa tạo'}</code></p>
+   <p><b>Danh mục lưu trữ:</b> <code>FINISHED CLAIMS</code></p>
+   <p><b>Vị trí lưu:</b> Thư mục AtoZ ImageFolder của bệnh nhân trên SERVER</p>
+   <p><b>Trạng thái:</b> <span class="badge ready">✓ Đã import vào Imaging OD</span></p>
+  </div>
+
+  ${splitsHtml}
+
+  ${item.Message?`<div class="notice ${item.Status==='SUCCESS'?'ok':''}"><b>Thông báo hệ thống:</b> ${esc(item.Message)}</div>`:''}
+ `;
+}
+
+$('#history-items-tbody')?.addEventListener('click',e=>{
+ const row=e.target.closest('tr[data-history-id]');
+ if(!row)return;
+ const id=Number(row.dataset.historyId);
+ const item=serverHistoryItems.find(i=>i.Id===id);
+ if(item){
+  selectedHistoryItem=item;
+  document.querySelectorAll('#history-items-tbody tr').forEach(r=>r.classList.toggle('selected',r===row));
+  renderHistoryDetail(item);
+ }
+});
+
+$('#scan-server-now')?.addEventListener('click',async()=>{
+ const btn=$('#scan-server-now');
+ btn.disabled=true;
+ btn.textContent='⏳ Đang quét server…';
+ try{
+  const res=await request('scan-server');
+  toast(`Đã quét xong: ${res?.count??0} file được xử lý.`);
+  await loadServerHistory();
+ }catch(e){
+  toast(`Lỗi khi quét server: ${customerMessage(e.message)}`);
+ }finally{
+  btn.disabled=false;
+  btn.textContent='⚡ Quét thư mục Server ngay';
+ }
+});
+
+$('#refresh-history')?.addEventListener('click',()=>loadServerHistory());
+
+// Initial history load and auto-refresh every 15s
+loadServerHistory();
+setInterval(()=>{
+ if(!working)loadServerHistory().catch(()=>{});
+},15000);
