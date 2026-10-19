@@ -65,9 +65,12 @@ export function createMetlifeRouter({repository=createRepository(pool),getToken=
   }
  }));
  router.post('/scan',json(async()=>{
+  console.log('[MetLife API] Nhận yêu cầu quét thư mục từ client…');
   const {scanIncomingFolder}=await import('./autoProcessor.js');
   const dir=process.env.METLIFE_INCOMING_DIR||'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
-  return scanIncomingFolder(pool,dir);
+  const res=await scanIncomingFolder(pool,dir);
+  console.log(`[MetLife API] Quét hoàn tất: trạng thái ${res.status}, số lượng: ${res.count??0}`);
+  return res;
  }));
  return router;
 }

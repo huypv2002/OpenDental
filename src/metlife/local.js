@@ -13,5 +13,5 @@ export function isLocalDesktop(req,hostname=os.hostname()){
  if(Object.keys(headers).some(k=>k==='forwarded'||k.startsWith('x-forwarded-')||k.startsWith('cf-')))return false;
  if(!privateAddress(req.socket?.remoteAddress)||!privateAddress(req.socket?.localAddress))return false;
  let host;try{host=new URL('http://'+(headers.host||'')).hostname.toLowerCase().replace(/^\[|\]$/g,'');}catch{return false;}
- return ['localhost',hostname.toLowerCase(),hostname.toLowerCase().split('.')[0],address(req.socket.localAddress)].includes(host);
+ return ['localhost','server',hostname.toLowerCase(),hostname.toLowerCase().split('.')[0],address(req.socket.localAddress)].includes(host) || privateAddress(host);
 }

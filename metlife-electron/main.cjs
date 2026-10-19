@@ -47,7 +47,7 @@ async function scan(){
 }
 async function choose(properties,filters,title){const r=await dialog.showOpenDialog(win,{properties,filters,title});return r.canceled?[]:r.filePaths;}
 function idArg(id){if(typeof id!=='string'||!workspace.items.has(id))throw new Error('Invalid PDF id');return id;}
-async function connectLocal(){
+async function connectLocal(customUrl){
  const {autoConnect,MetlifeClient,validateConnection}=await import('./lib/connection.mjs');
  let remembered=null;
  if(safeStorage.isEncryptionAvailable()){
@@ -56,21 +56,24 @@ async function connectLocal(){
    try{remembered=validateConnection(JSON.parse(safeStorage.decryptString(await fs.readFile(path.join(directory,'server-connection.enc')))));break;}catch{}
   }
  }
+ let normalized=typeof customUrl==='string'?customUrl.trim():'';
+ if(normalized&&!/^https?:\/\//i.test(normalized))normalized='http://'+normalized;
+
  // A pending receipt or explicit operator setting must never fall back to another clinic.
- const target=pendingSave?.serverUrl||process.env.METLIFE_SERVER_URL||remembered?.url||'http://SERVER:3008';
+ const target=normalized||pendingSave?.serverUrl||process.env.METLIFE_SERVER_URL||remembered?.url||'http://SERVER:3008';
  let client;
  if(remembered?.url===target&&remembered.token){client=new MetlifeClient(remembered);await client.health();}
- else client=await autoConnect([target, 'http://127.0.0.1:3008', 'http://localhost:3008']);
+ else client=await autoConnect([target, 'http://SERVER:3008', 'http://127.0.0.1:3008', 'http://localhost:3008']);
  if(pendingSave&&pendingSave.serverUrl!==client.connection.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi đang chờ.');
  if(serverClient&&serverClient.connection.url!==client.connection.url){workspace.snapshots.clear();Object.assign(patientBrowser,{patients:[],selectedPatient:null,documents:[],openedId:null});}
  if(safeStorage.isEncryptionAvailable())await fs.writeFile(path.join(app.getPath('userData'),'server-connection.enc'),safeStorage.encryptString(JSON.stringify(client.connection)),{mode:0o600});
- serverClient=client;await refreshSaveStatus();Object.assign(patientBrowser,{connected:true,url:client.connection.url});status.message='Đã kết nối SERVER. Tìm bệnh nhân để bắt đầu.';notify();
+ serverClient=client;await refreshSaveStatus();Object.assign(patientBrowser,{connected:true,url:client.connection.url});status.message=`Đã kết nối SERVER (${client.connection.url}).`;notify();
 }
 async function call(op,arg){
  assertEditionAction(edition,op);
  switch(op){
   case 'state':return state();
-  case 'reconnect-server':await connectLocal();break;
+  case 'reconnect-server':await connectLocal(arg);break;
   case 'login-server':
   case 'connect-server':{
    const {MetlifeClient,validateConnection,loginConnection}=await import('./lib/connection.mjs');

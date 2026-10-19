@@ -2,7 +2,7 @@ import net from 'node:net';
 export const DEFAULT_SERVER_URL='http://SERVER:3008';
 export function localServerUrl(value){
  try{const u=new URL(value);if(u.protocol!=='http:'||u.username||u.password||u.search||u.hash||u.pathname!=='/')return false;
- const h=u.hostname.toLowerCase();if(['server','localhost','127.0.0.1','[::1]'].includes(h))return true;
+ const h=u.hostname.toLowerCase();if(['server','localhost','127.0.0.1','[::1]'].includes(h)||(!h.includes('.')&&/^[a-z0-9_-]+$/i.test(h))||h.endsWith('.local'))return true;
  if(net.isIP(h)!==4)return false;const p=h.split('.').map(Number);return p[0]===10||p[0]===192&&p[1]===168||p[0]===172&&p[1]>=16&&p[1]<=31;
  }catch{return false;}
 }
@@ -28,7 +28,8 @@ export function validateConnection(value){
 export class MetlifeClient{
  constructor(connection){this.connection=validateConnection(connection);}
  async request(endpoint,pdf=false,body=undefined){
-  const response=await fetch(`${this.connection.url}/api/metlife${endpoint}`,{method:body===undefined?'GET':'POST',headers:{...(this.connection.token?{Authorization:`Bearer ${this.connection.token}`}:{'X-LUK-Desktop':'metlife'}),...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(this.connection.token?30000:8000),redirect:'error'});
+  const timeoutMs=endpoint==='/scan'?90000:30000;
+  const response=await fetch(`${this.connection.url}/api/metlife${endpoint}`,{method:body===undefined?'GET':'POST',headers:{...(this.connection.token?{Authorization:`Bearer ${this.connection.token}`}:{'X-LUK-Desktop':'metlife'}),...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(timeoutMs),redirect:'error'});
   const limit=pdf?30*1024*1024:30*1024*1024;
   if(Number(response.headers.get('content-length')||0)>limit)throw new Error('Phản hồi SERVER quá lớn.');
   const chunks=[];let total=0;

@@ -345,7 +345,9 @@ $('#scan-server-now')?.addEventListener('click',async()=>{
   toast(`Đã quét xong: ${res?.count??0} file được xử lý.`);
   await loadServerHistory();
  }catch(e){
-  toast(`Lỗi khi quét server: ${customerMessage(e.message)}`);
+  const friendly=customerMessage(e.message);
+  const detail=e.message&&!friendly.includes(e.message)?` (${e.message})`:'';
+  toast(`Lỗi khi quét server: ${friendly}${detail}`);
  }finally{
   btn.disabled=false;
   btn.textContent='⚡ Quét thư mục Server ngay';
