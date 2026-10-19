@@ -101,7 +101,63 @@ $('#watch').addEventListener('change',async e=>{await action('watch',e.target.ch
 $('#search').addEventListener('input',renderList);
 $('nav').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(!b)return;document.querySelectorAll('nav [data-tab]').forEach(t=>t.classList.toggle('active',t===b));document.querySelectorAll('main>.page').forEach(p=>p.hidden=p.id!==b.dataset.tab);});
 $('#file-list').addEventListener('click',e=>{const b=e.target.closest('[data-file]');if(b){selected=b.dataset.file;view='review';renderList();renderDetail();}});
-$('#detail').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.view){view=b.dataset.view;renderDetail();}else if(b.dataset.action==='open-pdf'&&state.items.find(i=>i.id===selected)?.remote){view='pdf';renderDetail();}else if(b.dataset.action==='save-payment'){const item=state.items.find(i=>i.id===selected);if(b.dataset.saved==='true'||item?.result?.duplicates?.length){toast('Khoản thanh toán này đã có trong Open Dental. Không lưu trùng.');return;}if(!state.patientBrowser.connected){toast('Chưa kết nối dữ liệu phòng khám. Bấm Kết nối lại ở trên.');return;}if(!item?.remote){toast('Vui lòng chọn PDF từ tab Tìm bệnh nhân để lưu vào hồ sơ Open Dental.');return;}if(item?.result?.blocks?.length){toast(`Chưa thể lưu: còn ${item.result.blocks.length} điểm cần đối chiếu.`);return;}action('save-payment',selected);}else if(b.dataset.action){action(b.dataset.action,selected);}});
+$('#detail').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.view){view=b.dataset.view;renderDetail();}else if(b.dataset.action==='open-pdf'&&state.items.find(i=>i.id===selected)?.remote){view='pdf';renderDetail();}else if(b.dataset.action==='save-payment'){const item=state.items.find(i=>i.id===selected);if(b.dataset.saved==='true'||item?.result?.duplicates?.length){toast('Khoản thanh toán này đã có trong Open Dental. Không lưu trùng.');return;}if(!state.patientBrowser.connected){toast('Chưa kết nối dữ liệu phòng khám. Bấm Kết nối lại ở trên.');return;}if(!item?.remote){toast('Vui lòng chọn PDF từ tab Tìm bệnh nhân để lưu vào hồ sơ Open Dental.');return;}if(item?.result?.blocks?.length){toast(`Chưa thể lưu: còn ${item.result.blocks.length} điểm cần đối chiếu.`);return;}showConfirmSaveModal(item);}else if(b.dataset.action){action(b.dataset.action,selected);}});
+
+let pendingConfirmItemId=null;
+function showConfirmSaveModal(item){
+ if(!item)return;
+ pendingConfirmItemId=item.id;
+ const p=item.parsed,r=item.result;
+ const patientName=r.patient?`${r.patient.LName}, ${r.patient.FName}`:p.patient;
+ const patNum=r.patient?r.patient.PatNum:'—';
+ const totalAmount=usd(p.payment?.amountCents);
+ const payType=state.config.paymentType||'Insurance Paid';
+ const payDate=p.payment?.date||'—';
+ const checkNum=(p.payment?.trace||p.claimRaw||'—').trim();
+ const note=noteOf(p);
+ const splits=r.splits||[];
+
+ const html=`<div class="modal-alert"><span>ℹ️</span><span>Vui lòng kiểm tra các thông tin payload dưới đây. Sau khi nhân viên bấm xác nhận, hệ thống sẽ lưu Payment và toàn bộ PaySplits trực tiếp vào Open Dental.</span></div><div class="modal-payload-group"><div class="modal-payload-item highlight"><span>Tổng thanh toán</span><strong>${esc(totalAmount)}</strong></div><div class="modal-payload-item"><span>Bệnh nhân</span><strong>${esc(patientName)} (#${esc(patNum)})</strong></div><div class="modal-payload-item"><span>Số Check / Claim</span><strong>${esc(checkNum)}</strong></div><div class="modal-payload-item"><span>Loại thanh toán (PayType)</span><strong>${esc(payType)}</strong></div><div class="modal-payload-item"><span>Ngày thanh toán</span><strong>${esc(payDate)}</strong></div><div class="modal-payload-item"><span>Bảo hiểm / Group</span><strong>${esc(r.plan?.CarrierName||'MetLife')} / ${esc(r.plan?.GroupNum||p.group||'—')}</strong></div></div><div><span class="field-label">Ghi chú (PayNote) sẽ lưu vào Open Dental:</span><div class="modal-note-box">${esc(note)}</div></div><div><span class="field-label">Chi tiết ${splits.length} dịch vụ phân bổ (PaySplits Payload):</span><table class="modal-splits-table"><thead><tr><th>Mã dịch vụ</th><th>Mô tả</th><th>Bác sĩ</th><th>Răng</th><th>Ngày</th><th class="num">Số tiền</th></tr></thead><tbody>${splits.map(s=>`<tr><td><b>${esc(s.code)}</b></td><td>${esc(s.description)}</td><td>${esc(s.providerAbbr||'—')}</td><td>${esc(s.tooth||'—')}</td><td>${esc(s.date||'—')}</td><td class="num"><b>${usd(s.amountCents)}</b></td></tr>`).join('')}</tbody></table></div>`;
+
+ $('#modal-body-content').innerHTML=html;
+ $('#modal-confirm').textContent='✓ Xác nhận lưu vào Open Dental';
+ $('#modal-confirm').disabled=false;
+ $('#modal-cancel').disabled=false;
+ $('#confirm-modal').hidden=false;
+}
+
+function closeConfirmModal(){
+ if(working)return;
+ $('#confirm-modal').hidden=true;
+ pendingConfirmItemId=null;
+}
+
+$('#modal-close')?.addEventListener('click',closeConfirmModal);
+$('#modal-cancel')?.addEventListener('click',closeConfirmModal);
+$('#confirm-modal')?.addEventListener('click',e=>{if(e.target===$('#confirm-modal'))closeConfirmModal();});
+window.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#confirm-modal').hidden&&!working)closeConfirmModal();});
+
+$('#modal-confirm')?.addEventListener('click',async()=>{
+ if(!pendingConfirmItemId||working)return;
+ const id=pendingConfirmItemId;
+ $('#modal-confirm').textContent='⏳ Đang lưu vào Open Dental…';
+ $('#modal-confirm').disabled=true;
+ $('#modal-cancel').disabled=true;
+ try{
+  const res=await action('save-payment',id);
+  if(res)$('#confirm-modal').hidden=true;
+  else{
+   $('#modal-confirm').textContent='✓ Thử lưu lại';
+   $('#modal-confirm').disabled=false;
+   $('#modal-cancel').disabled=false;
+  }
+ }catch(err){
+  $('#modal-confirm').textContent='✓ Thử lưu lại';
+  $('#modal-confirm').disabled=false;
+  $('#modal-cancel').disabled=false;
+ }
+});
+
 window.metlife.onState(render);
 try{render(await request('state'));}catch(e){toast(customerMessage(e.message));}
 setInterval(()=>{if(!working)request('state').then(render).catch(()=>{});},60000);

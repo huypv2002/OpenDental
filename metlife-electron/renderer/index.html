@@ -25,6 +25,22 @@
 <section id="activity" class="page" hidden><div class="hero"><div><div class="eyebrow">LỊCH SỬ THAO TÁC</div><h1>Hoạt động trên máy</h1><p>Các thao tác và kết quả trong lần sử dụng hiện tại.</p></div></div><div class="card activity-card" id="events"></div></section>
 </main>
 <footer><span class="status-dot"></span><span id="status-text" role="status">Đang khởi động…</span><span class="grow"></span><span id="runtime">MetLife · Dữ liệu phòng khám</span></footer>
+<div id="confirm-modal" class="modal-backdrop" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-header">
+      <div>
+        <div class="eyebrow">XÁC NHẬN GHI VÀO OPEN DENTAL</div>
+        <h2 id="modal-title">Xác nhận thông tin thanh toán</h2>
+      </div>
+      <button id="modal-close" class="modal-close-btn" aria-label="Đóng popup">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body-content"></div>
+    <div class="modal-footer">
+      <button id="modal-cancel" class="small">Hủy bỏ</button>
+      <button id="modal-confirm" class="primary">✓ Xác nhận lưu vào Open Dental</button>
+    </div>
+  </div>
+</div>
 <div id="toast" role="alert" hidden></div>
 <script type="module" src="app.mjs"></script>
 </body></html>
