@@ -124,35 +124,50 @@ export function parseMetlife(extracted) {
           .map((r) => r.text)
           .join(' ');
         const currency = (lo, hi) =>
-          row.filter((t) => t.x / p.width >= lo && t.x / p.width < hi && /^\$[\d,]+\.\d{2}$/.test(t.str));
+          row.flatMap((t) => {
+            if (t.x / p.width < lo || t.x / p.width >= hi) return [];
+            const matches = t.str.match(/\$[\d,]+\.\d{2}/g);
+            return matches ? matches.map((m) => cents(m)) : [];
+          });
         const field = (lo, hi) => {
           const a = currency(lo, hi);
-          return a.length === 1 ? cents(a[0].str) : null;
+          return a.length === 1 ? a[0] : null;
         };
         const code = c.str.match(/D\d{4}/)[0];
-        const benefit = field(0.81, 0.9);
+        let benefit = field(0.8, 0.93);
+        if (benefit === null) {
+          // Fallback: in MetLife EOB row, benefit is the last dollar amount before notes
+          const allCurrencies = [...rowText.matchAll(/\$[\d,]+\.\d{2}/g)].map((m) => cents(m[0]));
+          if (allCurrencies.length >= 1) {
+            benefit = allCurrencies.at(-1);
+          }
+        }
         if (benefit === null) errors.push(`${code}: không xác định duy nhất Plan Benefit.`);
         const teeth = row
-          .filter((t) => t.x / p.width >= 0.39 && t.x / p.width < 0.45)
+          .filter((t) => t.x / p.width >= 0.38 && t.x / p.width < 0.46)
           .map((t) => t.str)
           .filter((t) => /^([A-T]|[1-9]|[12][0-9]|3[0-2])$/.test(t));
         procedures.push({
           code,
           tooth: teeth.length === 1 ? teeth[0] : null,
           date: isoDate(take(rowText, /(\d{2}\/\d{2}\/\d{4})/)),
-          status: /\bDenied\b/.test(rowText) ? 'Denied' : /\bApproved\b/.test(rowText) ? 'Approved' : 'Unknown',
-          feeCents: field(0.45, 0.54),
+          status: /\bDenied\b/i.test(rowText) ? 'Denied' : /\bApproved\b/i.test(rowText) ? 'Approved' : 'Unknown',
+          feeCents: field(0.44, 0.56),
           benefitCents: benefit,
-          coveredCents: field(0.63, 0.72),
-          deductibleCents: field(0.72, 0.81),
-          bundled: /Allowable/.test(rowText),
+          coveredCents: field(0.62, 0.73),
+          deductibleCents: field(0.72, 0.82),
+          bundled: /Allowable/i.test(rowText),
           page: p.page,
           evidence: rowText
         });
       }
       const total = totalLines.find((r) => r.y > codeItems.at(-1).y);
-      const b = total?.items.filter((i) => i.x / p.width >= 0.81 && i.x / p.width < 0.9 && /^\$/.test(i.str));
-      if (b?.length === 1) benefits.push(cents(b[0].str));
+      const b = total?.items.flatMap((i) => {
+        if (i.x / p.width < 0.78 || i.x / p.width >= 0.95) return [];
+        const m = i.str.match(/\$[\d,]+\.\d{2}/);
+        return m ? [cents(m[0])] : [];
+      });
+      if (b?.length === 1) benefits.push(b[0]);
     }
     if (paymentHeading) paymentSection = true;
     if (paymentSection) {
@@ -160,9 +175,9 @@ export function parseMetlife(extracted) {
         (r) => (!paymentHeading || r.y > paymentHeading.y) && (!notesHeading || r.y < notesHeading.y)
       );
       for (const row of rows) {
-        const dateItem = row.items.filter((i) => i.x / p.width >= 0.14 && i.x / p.width < 0.26 && isoDate(i.str));
+        const dateItem = row.items.filter((i) => i.x / p.width >= 0.12 && i.x / p.width < 0.28 && isoDate(i.str));
         const amountItem = row.items.filter(
-          (i) => i.x / p.width >= 0.26 && i.x / p.width < 0.37 && /^\$[\d,]+\.\d{2}$/.test(i.str)
+          (i) => i.x / p.width >= 0.24 && i.x / p.width < 0.40 && /^\$[\d,]+\.\d{2}$/.test(i.str)
         );
         if (dateItem.length === 1 && amountItem.length === 1) {
           const method = row.items
