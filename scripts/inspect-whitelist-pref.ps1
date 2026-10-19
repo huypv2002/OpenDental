@@ -1,4 +1,4 @@
-# Inspect and decrypt DatabaseIntegritiesWhiteList preference from MariaDB
+# Inspect all methods of CDT.Class1 and test decryption
 param(
     [string]$InstallDir
 )
@@ -26,9 +26,10 @@ Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Reflection;
+using System.Collections.Generic;
 
-public class WhitelistDecrypter {
-    public static void Inspect(string dir) {
+public class CDTExplorer {
+    public static void Explore(string dir) {
         AppDomain.CurrentDomain.AssemblyResolve += (sender, args) => {
             string asmName = new AssemblyName(args.Name).Name + ".dll";
             string p = Path.Combine(dir, asmName);
@@ -38,25 +39,49 @@ public class WhitelistDecrypter {
             return null;
         };
 
-        Assembly bizAsm = Assembly.LoadFrom(Path.Combine(dir, "OpenDentBusiness.dll"));
         Assembly cdtAsm = Assembly.LoadFrom(Path.Combine(dir, "CDT.dll"));
         Type class1Type = cdtAsm.GetType("CDT.Class1");
 
-        MethodInfo tryDecrypt = class1Type.GetMethod("TryDecrypt", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        Console.WriteLine("CDT.Class1.TryDecrypt initialized: " + (tryDecrypt != null ? "OK" : "FAILED"));
+        Console.WriteLine("\n--- Methods in CDT.Class1 ---");
+        foreach (MethodInfo m in class1Type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)) {
+            List<string> pms = new List<string>();
+            foreach (var p in m.GetParameters()) {
+                pms.Add((p.IsOut ? "out " : "") + p.ParameterType.Name + " " + p.Name);
+            }
+            Console.WriteLine("  " + m.ReturnType.Name + " " + m.Name + "(" + string.Join(", ", pms.ToArray()) + ")");
+        }
     }
 
-    public static string Decrypt(string dir, string cipherText) {
+    public static string TryDecryptAny(string dir, string cipher) {
         Assembly cdtAsm = Assembly.LoadFrom(Path.Combine(dir, "CDT.dll"));
         Type class1Type = cdtAsm.GetType("CDT.Class1");
-        MethodInfo tryDecrypt = class1Type.GetMethod("TryDecrypt", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        object res = tryDecrypt.Invoke(null, new object[] { cipherText });
-        return res != null ? res.ToString() : null;
+
+        foreach (MethodInfo m in class1Type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)) {
+            if (m.Name.IndexOf("Decrypt", StringComparison.OrdinalIgnoreCase) >= 0) {
+                var pars = m.GetParameters();
+                Console.WriteLine("\nAttempting: " + m.Name + " with " + pars.Length + " params...");
+                try {
+                    if (pars.Length == 1 && pars[0].ParameterType == typeof(string)) {
+                        object res = m.Invoke(null, new object[] { cipher });
+                        Console.WriteLine("  Returned: " + (res != null ? res.ToString().Substring(0, Math.Min(80, res.ToString().Length)) : "null"));
+                        if (res != null && res.ToString().Contains("<")) return res.ToString();
+                    } else if (pars.Length == 2 && pars[0].ParameterType == typeof(string)) {
+                        object[] args = new object[] { cipher, null };
+                        object res = m.Invoke(null, args);
+                        Console.WriteLine("  Returned bool: " + res + ", out val: " + (args[1] != null ? args[1].ToString().Substring(0, Math.Min(80, args[1].ToString().Length)) : "null"));
+                        if (args[1] != null && args[1].ToString().Contains("<")) return args[1].ToString();
+                    }
+                } catch (Exception ex) {
+                    Console.WriteLine("  Error: " + (ex.InnerException != null ? ex.InnerException.Message : ex.Message));
+                }
+            }
+        }
+        return null;
     }
 }
 '@
 
-[WhitelistDecrypter]::Inspect($InstallDir)
+[CDTExplorer]::Explore($InstallDir)
 
 # Read credentials from .env
 $dbHost = "127.0.0.1"
@@ -81,26 +106,6 @@ if (Test-Path $envFile) {
     }
 }
 
-# Also check FreeDentalConfig.xml
-$cfgCandidates = @(
-    (Join-Path $InstallDir "FreeDentalConfig.xml"),
-    "C:\OpenDental\FreeDentalConfig.xml",
-    "C:\open-dental-bridge\FreeDentalConfig.xml",
-    "$env:LOCALAPPDATA\Open_Dental_Software\FreeDentalConfig.xml"
-)
-$cfgFile = $cfgCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($cfgFile) {
-    try {
-        [xml]$cfg = Get-Content -LiteralPath $cfgFile -Raw
-        $c = $cfg.ConnectionData
-        if ($c.Database) { $dbName = $c.Database }
-        if ($c.User -and -not $dbUser) { $dbUser = $c.User }
-        if ($c.Password -and -not $dbPass) { $dbPass = $c.Password }
-        if ($c.ComputerName) { $dbHost = $c.ComputerName }
-    } catch {}
-}
-
-Write-Host "`nQuerying MariaDB [$($dbHost):$dbPort / $dbName as $dbUser] for preference DatabaseIntegritiesWhiteList..."
 $mysqlExe = "mysql.exe"
 $candidatesSql = @(
     "C:\Program Files\MariaDB 10.5\bin\mysql.exe",
@@ -117,17 +122,12 @@ $passArg = if ($dbPass) { "-p$dbPass" } else { "" }
 $query = "SELECT ValueString FROM preference WHERE PrefName='DatabaseIntegritiesWhiteList';"
 $rawPref = & $mysqlExe -h $dbHost -P $dbPort -u $dbUser $passArg -s -N -e "$query" $dbName 2>$null
 
-if (-not $rawPref) {
-    Write-Host "Direct query failed. Prompting for password..."
-    $rawPref = & $mysqlExe -h $dbHost -P $dbPort -u $dbUser -p -s -N -e "$query" $dbName
-}
-
 if ($rawPref) {
-    Write-Host "Raw Encrypted Pref Length: $($rawPref.Length)"
-    $decrypted = [WhitelistDecrypter]::Decrypt($InstallDir, $rawPref.Trim())
-    Write-Host "`n================ DECRYPTED WHITELIST XML ================"
-    Write-Host $decrypted
-    Write-Host "========================================================`n"
-} else {
-    Write-Host "Could not retrieve preference DatabaseIntegritiesWhiteList."
+    Write-Host "`nTesting decryption on preference length $($rawPref.Length)..."
+    $xml = [CDTExplorer]::TryDecryptAny($InstallDir, $rawPref.Trim())
+    if ($xml) {
+        Write-Host "`n================ XML CONTENT DECRYPTED ================"
+        Write-Host $xml
+        Write-Host "======================================================="
+    }
 }
