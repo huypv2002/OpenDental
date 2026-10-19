@@ -133,6 +133,7 @@ AI nhận việc trả lại:
 
 - Bản đồ kỹ thuật và bằng chứng theo đúng phiên bản.
 - Kết luận có/không có đường request đáp ứng điều kiện không trả phí, còn phần nào chưa biết.
+- Kiểm tra khóa chống nhập trùng giữa Client preview và API. Client preview hiện không giữ server posting lock; profile riêng không thay thế khóa tài chính dùng chung. Không coi hai app đã an toàn để xử lý đồng thời cùng khoản thanh toán chỉ vì từng luồng riêng lẻ đã qua test.
 - Nếu có PoC: cách chạy trên lab dữ liệu giả, bằng chứng đầu vào/đầu ra và giới hạn; không gọi đó là clinic-ready nếu chưa nghiệm thu.
 - Nếu hướng duy nhất được hỗ trợ vẫn cần key/quyền Payments, nói thẳng. Không báo “đã xong bản API” khi nút lưu thực chất bị khóa hoặc thao tác vẫn là UI/SQL.
 
