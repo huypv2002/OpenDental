@@ -23,18 +23,30 @@ if (-not $InstallDir) {
     exit 1
 }
 
-Write-Host "=== Open Dental Plugin Whitelist & Integrity Deep Disassembler ==="
+Write-Host "=== Open Dental Plugin Whitelist Deep Decoder ==="
 Write-Host "Target Directory: $InstallDir`n"
 
 Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
 
-public class ODPluginDisassembler {
+public class ODILDecoder {
+    private static Dictionary<short, OpCode> opCodes = new Dictionary<short, OpCode>();
+
+    static ODILDecoder() {
+        foreach (FieldInfo f in typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)) {
+            if (f.FieldType == typeof(OpCode)) {
+                OpCode op = (OpCode)f.GetValue(null);
+                opCodes[op.Value] = op;
+            }
+        }
+    }
+
     public static void Run(string dir) {
         AppDomain.CurrentDomain.AssemblyResolve += (sender, args) => {
             string asmName = new AssemblyName(args.Name).Name + ".dll";
@@ -45,181 +57,141 @@ public class ODPluginDisassembler {
             return null;
         };
 
-        // 1. Find DatabaseIntegrities across all assemblies in directory
-        string[] files = Directory.GetFiles(dir, "*.dll");
-        Type dbIntegritiesType = null;
-        Assembly dbIntegritiesAsm = null;
+        Assembly bizAsm = Assembly.LoadFrom(Path.Combine(dir, "OpenDentBusiness.dll"));
+        Assembly wpfAsm = Assembly.LoadFrom(Path.Combine(dir, "WpfControlsOD.dll"));
 
-        foreach (string f in files) {
-            try {
-                Assembly a = Assembly.LoadFrom(f);
-                Type[] types = null;
-                try { types = a.GetTypes(); } catch (ReflectionTypeLoadException ex) {
-                    List<Type> list = new List<Type>();
-                    foreach (Type t in ex.Types) { if (t != null) list.Add(t); }
-                    types = list.ToArray();
-                }
-                foreach (Type t in types) {
-                    if (t.Name == "DatabaseIntegrities" || t.FullName == "OpenDental.DatabaseIntegrities" || t.FullName == "OpenDentBusiness.DatabaseIntegrities") {
-                        dbIntegritiesType = t;
-                        dbIntegritiesAsm = a;
-                        Console.WriteLine("FOUND DatabaseIntegrities in: " + Path.GetFileName(f) + " -> " + t.FullName);
-                        break;
-                    }
-                }
-                if (dbIntegritiesType != null) break;
-            } catch {}
-        }
-
-        // Also check OpenDental.exe
-        if (dbIntegritiesType == null) {
-            try {
-                Assembly a = Assembly.LoadFrom(Path.Combine(dir, "OpenDental.exe"));
-                foreach (Type t in a.GetTypes()) {
-                    if (t.Name == "DatabaseIntegrities") {
-                        dbIntegritiesType = t;
-                        dbIntegritiesAsm = a;
-                        Console.WriteLine("FOUND DatabaseIntegrities in OpenDental.exe -> " + t.FullName);
-                        break;
-                    }
-                }
-            } catch {}
-        }
-
-        // 2. Dump all members and methods of DatabaseIntegrities
-        if (dbIntegritiesType != null) {
-            Console.WriteLine("\n========================================================");
-            Console.WriteLine(">>> DISSECTING DatabaseIntegrities");
-            Console.WriteLine("========================================================");
-
-            foreach (FieldInfo f in dbIntegritiesType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)) {
-                Console.WriteLine("  Field: " + f.FieldType.Name + " " + f.Name);
-                if (f.IsStatic) {
-                    try {
-                        object val = f.GetValue(null);
-                        Console.WriteLine("    Value = " + DumpValue(val));
-                    } catch (Exception ex) { Console.WriteLine("    Value error: " + ex.Message); }
-                }
-            }
-
-            foreach (PropertyInfo p in dbIntegritiesType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)) {
-                Console.WriteLine("  Prop: " + p.PropertyType.Name + " " + p.Name);
-                if (p.CanRead && p.GetGetMethod(true).IsStatic && p.GetIndexParameters().Length == 0) {
-                    try {
-                        object val = p.GetValue(null, null);
-                        Console.WriteLine("    Value = " + DumpValue(val));
-                    } catch (Exception ex) { Console.WriteLine("    Value error: " + ex.Message); }
-                }
-            }
-
-            foreach (MethodInfo m in dbIntegritiesType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)) {
-                Console.WriteLine("\n  Method: " + m.ReturnType.Name + " " + m.Name + "(" + FormatParams(m) + ")");
-                DisassembleFullMethod(dbIntegritiesAsm, m);
-            }
-
-            // Test IsPluginAllowed directly with test strings
-            MethodInfo isPluginAllowed = dbIntegritiesType.GetMethod("IsPluginAllowed", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            if (isPluginAllowed != null) {
-                Console.WriteLine("\n--- Testing IsPluginAllowed method invocations ---");
-                string[] testDlls = new string[] {
-                    "LukMetlifeHash.dll",
-                    "someplugin.dll",
-                    "DentalIntel.dll",
-                    "Podium.dll",
-                    "Weave.dll",
-                    "CareCredit.dll",
-                    "Plugin.dll"
-                };
-                foreach (string d in testDlls) {
-                    try {
-                        object res = isPluginAllowed.Invoke(null, new object[] { d });
-                        Console.WriteLine("    IsPluginAllowed(\"" + d + "\") => " + res);
-                    } catch (Exception ex) {
-                        Console.WriteLine("    IsPluginAllowed(\"" + d + "\") ERROR: " + ex.InnerException != null ? ex.InnerException.Message : ex.Message);
-                    }
+        // 1. Inspect PrefName enum
+        Console.WriteLine("--- Matching PrefName enums in OpenDentBusiness ---");
+        Type prefNameType = bizAsm.GetType("OpenDentBusiness.PrefName");
+        if (prefNameType != null) {
+            foreach (string name in Enum.GetNames(prefNameType)) {
+                if (name.IndexOf("Integrity", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    name.IndexOf("Plugin", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    name.IndexOf("White", StringComparison.OrdinalIgnoreCase) >= 0) {
+                    Console.WriteLine("  PrefName: " + name + " (Int = " + (int)Enum.Parse(prefNameType, name) + ")");
                 }
             }
         }
 
-        // 3. Dissect PluginLoader.LoadAllPlugins in WpfControlsOD.dll
-        string wpfPath = Path.Combine(dir, "WpfControlsOD.dll");
-        if (File.Exists(wpfPath)) {
-            Assembly wpfAsm = Assembly.LoadFrom(wpfPath);
-            Type pLoader = wpfAsm.GetType("OpenDental.PluginLoader");
-            if (pLoader != null) {
+        // 2. Decode PluginLoader.LoadAllPlugins start
+        Type pLoader = wpfAsm.GetType("OpenDental.PluginLoader");
+        if (pLoader != null) {
+            MethodInfo m = pLoader.GetMethod("LoadAllPlugins", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+            if (m != null) {
                 Console.WriteLine("\n========================================================");
-                Console.WriteLine(">>> FULL DISASSEMBLY: OpenDental.PluginLoader.LoadAllPlugins");
+                Console.WriteLine(">>> DECODING: PluginLoader.LoadAllPlugins");
                 Console.WriteLine("========================================================");
-                MethodInfo loadAll = pLoader.GetMethod("LoadAllPlugins", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
-                if (loadAll != null) {
-                    DisassembleFullMethod(wpfAsm, loadAll);
-                }
+                DecodeIL(wpfAsm, m, 80);
+            }
+        }
+
+        // 3. Decode DatabaseIntegrities.IsPluginAllowed
+        Type dbInteg = wpfAsm.GetType("OpenDental.DatabaseIntegrities");
+        if (dbInteg != null) {
+            MethodInfo m = dbInteg.GetMethod("IsPluginAllowed", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+            if (m != null) {
+                Console.WriteLine("\n========================================================");
+                Console.WriteLine(">>> DECODING: DatabaseIntegrities.IsPluginAllowed");
+                Console.WriteLine("========================================================");
+                DecodeIL(wpfAsm, m, 60);
+            }
+
+            MethodInfo mRef = dbInteg.GetMethod("RefreshCacheFromPref", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+            if (mRef != null) {
+                Console.WriteLine("\n========================================================");
+                Console.WriteLine(">>> DECODING: DatabaseIntegrities.RefreshCacheFromPref");
+                Console.WriteLine("========================================================");
+                DecodeIL(wpfAsm, mRef, 40);
             }
         }
     }
 
-    private static string FormatParams(MethodInfo m) {
-        ParameterInfo[] ps = m.GetParameters();
-        List<string> pstrs = new List<string>();
-        foreach (var p in ps) pstrs.Add(p.ParameterType.Name + " " + p.Name);
-        return string.Join(", ", pstrs.ToArray());
-    }
+    private static void DecodeIL(Assembly asm, MethodInfo m, int maxOps) {
+        MethodBody body = m.GetMethodBody();
+        if (body == null) return;
+        byte[] il = body.GetILAsByteArray();
+        int offset = 0;
+        int count = 0;
 
-    private static string DumpValue(object val) {
-        if (val == null) return "null";
-        if (val is string || val.GetType().IsPrimitive) return "\"" + val + "\"";
-        if (val is IEnumerable) {
-            List<string> items = new List<string>();
-            foreach (object o in (IEnumerable)val) {
-                if (o != null) items.Add(o.ToString());
+        while (offset < il.Length && count < maxOps) {
+            int curOffset = offset;
+            short opVal = il[offset++];
+            if (opVal == 0xFE) {
+                opVal = (short)(0xFE00 | il[offset++]);
             }
-            return "[" + string.Join(", ", items.ToArray()) + "]";
+
+            OpCode op;
+            if (!opCodes.TryGetValue(opVal, out op)) {
+                Console.WriteLine("  IL_{0:X4}: Unknown opcode 0x{1:X}", curOffset, opVal);
+                continue;
+            }
+
+            string operandStr = "";
+            switch (op.OperandType) {
+                case OperandType.InlineString:
+                    int strToken = BitConverter.ToInt32(il, offset);
+                    offset += 4;
+                    try {
+                        operandStr = "\"" + asm.ManifestModule.ResolveString(strToken).Replace("\r"," ").Replace("\n"," ") + "\"";
+                    } catch { operandStr = "token 0x" + strToken.ToString("X"); }
+                    break;
+
+                case OperandType.InlineMethod:
+                case OperandType.InlineField:
+                case OperandType.InlineType:
+                case OperandType.InlineTok:
+                    int tok = BitConverter.ToInt32(il, offset);
+                    offset += 4;
+                    try {
+                        MemberInfo member = asm.ManifestModule.ResolveMember(tok);
+                        operandStr = member.DeclaringType.Name + "." + member.Name;
+                    } catch { operandStr = "token 0x" + tok.ToString("X"); }
+                    break;
+
+                case OperandType.InlineI:
+                    int valI = BitConverter.ToInt32(il, offset);
+                    offset += 4;
+                    operandStr = valI.ToString();
+                    break;
+
+                case OperandType.ShortInlineI:
+                    sbyte valSi = (sbyte)il[offset++];
+                    operandStr = valSi.ToString();
+                    break;
+
+                case OperandType.InlineBrTarget:
+                    int target = BitConverter.ToInt32(il, offset) + offset + 4;
+                    offset += 4;
+                    operandStr = "-> IL_" + target.ToString("X4");
+                    break;
+
+                case OperandType.ShortInlineBrTarget:
+                    int starget = (sbyte)il[offset++] + offset;
+                    operandStr = "-> IL_" + starget.ToString("X4");
+                    break;
+
+                case OperandType.InlineVar:
+                    short varI = BitConverter.ToInt16(il, offset);
+                    offset += 2;
+                    operandStr = "V_" + varI;
+                    break;
+
+                case OperandType.ShortInlineVar:
+                    byte svarI = il[offset++];
+                    operandStr = "V_" + svarI;
+                    break;
+
+                default:
+                    break;
+            }
+
+            Console.WriteLine("  IL_{0:X4}: {1,-12} {2}", curOffset, op.Name, operandStr);
+            count++;
         }
-        return val.ToString();
-    }
-
-    private static void DisassembleFullMethod(Assembly asm, MethodInfo m) {
-        try {
-            MethodBody body = m.GetMethodBody();
-            if (body == null) return;
-            byte[] il = body.GetILAsByteArray();
-            for (int i = 0; i < il.Length - 4; i++) {
-                byte op = il[i];
-                if (op == 0x72) { // ldstr
-                    int token = BitConverter.ToInt32(il, i + 1);
-                    if ((token & 0xFF000000) == 0x70000000) {
-                        try {
-                            string s = asm.ManifestModule.ResolveString(token);
-                            if (!string.IsNullOrEmpty(s)) {
-                                Console.WriteLine("      [IL String]: " + s.Replace("\r", " ").Replace("\n", " "));
-                            }
-                        } catch {}
-                    }
-                } else if (op == 0x28 || op == 0x6F) { // call, callvirt
-                    int token = BitConverter.ToInt32(il, i + 1);
-                    try {
-                        MethodBase called = asm.ManifestModule.ResolveMethod(token);
-                        if (called != null) {
-                            string cName = called.DeclaringType != null ? called.DeclaringType.Name : "";
-                            Console.WriteLine("      [IL Call]: " + cName + "." + called.Name);
-                        }
-                    } catch {}
-                } else if (op == 0x7B || op == 0x7E) { // ldfld, ldsfld
-                    int token = BitConverter.ToInt32(il, i + 1);
-                    try {
-                        FieldInfo f = asm.ManifestModule.ResolveField(token) as FieldInfo;
-                        if (f != null) {
-                            string cName = f.DeclaringType != null ? f.DeclaringType.Name : "";
-                            Console.WriteLine("      [IL Field]: " + cName + "." + f.Name);
-                        }
-                    } catch {}
-                }
-            }
-        } catch {}
     }
 }
 '@
 
-[ODPluginDisassembler]::Run($InstallDir)
+[ODILDecoder]::Run($InstallDir)
 
 Write-Host "`n=== Complete ==="
