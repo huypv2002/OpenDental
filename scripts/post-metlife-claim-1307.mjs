@@ -104,9 +104,25 @@ try {
   try {
     await conn.query('LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE');
 
-    const payNote = `MetLife Claim ${claimNumber} - Proc 09/20/2026 Processed 09/29/2026. Total Benefit $${totalBenefit}`;
+    // [BƯỚC REVERT] Kiểm tra và hoàn tác (revert) bản ghi cũ nếu đã chạy trước đó
+    const [existingPayments] = await conn.execute(
+      'SELECT PayNum FROM payment WHERE PatNum = ? AND CheckNum = ?',
+      [patNum, claimNumber]
+    );
 
-    // a. Insert Payment
+    for (const p of existingPayments) {
+      console.log(`\n[REVERT] Tìm thấy bản ghi cũ PayNum = ${p.PayNum}. Tiến hành xóa sạch để tạo lại...`);
+      await conn.execute('DELETE FROM paysplit WHERE PayNum = ?', [p.PayNum]);
+      await conn.execute('DELETE FROM payment WHERE PayNum = ?', [p.PayNum]);
+      console.log(`  ✓ Đã xóa sạch PayNum = ${p.PayNum} và toàn bộ PaySplits liên quan.`);
+    }
+
+    // Ghi chú chuẩn theo quy định phòng khám: group number : <group>
+    const groupNum = '301044';
+    const payNote = `group number : ${groupNum}`;
+    console.log(`\n[BƯỚC GHI MỚI] Note thanh toán chuẩn: "${payNote}"`);
+
+    // a. Insert Payment mới
     const [payRes] = await conn.execute(
       `INSERT INTO payment (
         PayType, PayDate, PayAmt, CheckNum, BankBranch, PayNote, IsSplit, PatNum,
@@ -117,9 +133,9 @@ try {
       [selectedPayType.DefNum, eobDate, totalBenefit, claimNumber, payNote, patNum, clinicNum, claimNumber]
     );
     const payNum = payRes.insertId;
-    console.log(`  ✓ Đã tạo bản ghi Payment: PayNum = ${payNum}`);
+    console.log(`  ✓ Đã tạo bản ghi Payment mới: PayNum = ${payNum}`);
 
-    // b. Insert PaySplits (with valid SecurityHash)
+    // b. Insert PaySplits (với SecurityHash mới)
     for (const split of splitsPlan) {
       const [splitRes] = await conn.execute(
         `INSERT INTO paysplit (
@@ -131,7 +147,7 @@ try {
       );
       console.log(`  ✓ Đã tạo PaySplit #${splitRes.insertId} cho thủ thuật ${split.code} ($${split.amount})`);
 
-      // c. Cập nhật claimproc nếu có (gán InsPayAmt và Status = 1 / Received)
+      // c. Cập nhật claimproc
       await conn.execute(
         `UPDATE claimproc SET InsPayAmt = ?, Status = 1, DateCP = ? WHERE PatNum = ? AND ProcNum = ? AND Status IN (0, 6)`,
         [split.amount, eobDate, patNum, split.ProcNum]
