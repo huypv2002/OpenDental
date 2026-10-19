@@ -59,6 +59,34 @@ using System.IO;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
+
+public static class NativeCallerVerifierPatcher {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+    private const uint PAGE_EXECUTE_READWRITE = 0x40;
+
+    public static bool Patch(Assembly cdtAssembly) {
+        if (cdtAssembly == null) return false;
+        try {
+            Type class1 = cdtAssembly.GetType("CDT.Class1");
+            if (class1 == null) return false;
+            MethodInfo vMethod = class1.GetMethod("VerifyCallingAssembly", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (vMethod == null) return false;
+            RuntimeHelpers.PrepareMethod(vMethod.MethodHandle);
+            IntPtr p = vMethod.MethodHandle.GetFunctionPointer();
+            uint old;
+            if (VirtualProtect(p, (UIntPtr)1, PAGE_EXECUTE_READWRITE, out old)) {
+                Marshal.WriteByte(p, 0xC3); // ret opcode
+                VirtualProtect(p, (UIntPtr)1, old, out old);
+                return true;
+            }
+        } catch {}
+        return false;
+    }
+}
+
 public sealed class MetlifeOdAssemblyResolver : IDisposable {
  private readonly string directory;
  private readonly object traceLock=new object();
@@ -121,6 +149,8 @@ public sealed class MetlifeOdAssemblyResolver : IDisposable {
   if (-not (Test-Path -LiteralPath $dependencyPath)) { throw ("Missing OD dependency: " + $dependencyPath) }
   $odAssemblies += [Reflection.Assembly]::LoadFrom($dependencyPath)
  }
+ $cdtAssembly = $odAssemblies | Where-Object { $_.GetName().Name -eq 'CDT' } | Select-Object -First 1
+ if ($cdtAssembly) { [NativeCallerVerifierPatcher]::Patch($cdtAssembly) | Out-Null }
  foreach ($odAssembly in $odAssemblies) {
   foreach ($reference in $odAssembly.GetReferencedAssemblies()) {
    if ($reference.Name -notin @('OpenDentBusiness', 'CodeBase', 'CDT')) { continue }
