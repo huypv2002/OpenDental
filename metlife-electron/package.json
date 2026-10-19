@@ -1,8 +1,8 @@
 {
   "name": "luk-metlife-assistant",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
-  "description": "LUK Dental MetLife PDF reconciliation and Open Dental payment draft assistant",
+  "description": "Đối chiếu PDF MetLife và lưu khoản thanh toán vào Open Dental",
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
@@ -12,13 +12,9 @@
     "dist:win": "node scripts/prepare-windows.cjs && node scripts/build-editions.cjs all portable",
     "pack:mac": "electron-builder --mac dir --arm64",
     "test:patients": "node scripts/patient-ui-test.cjs",
-    "test:save": "node scripts/save-ui-test.cjs client && node scripts/save-ui-test.cjs api-od",
+    "test:save": "node scripts/save-ui-test.cjs payments",
     "test:connect": "node scripts/local-ui-test.cjs",
-    "diagnose:outstanding": "node scripts/diagnose-outstanding.cjs",
-    "start:client": "electron . --metlife-edition=client",
-    "dist:client": "node scripts/prepare-windows.cjs && node scripts/build-editions.cjs client portable",
-    "start:api": "electron . --metlife-edition=api-od",
-    "dist:api": "node scripts/prepare-windows.cjs && node scripts/build-editions.cjs api-od portable"
+    "diagnose:outstanding": "node scripts/diagnose-outstanding.cjs"
   },
   "dependencies": {
     "pdfjs-dist": "6.4.299"
@@ -29,8 +25,8 @@
     "playwright": "1.64.0"
   },
   "build": {
-    "appId": "us.lukdental.metlife",
-    "productName": "LUK MetLife Assistant",
+    "appId": "us.lukdental.metlife.payments",
+    "productName": "LUK MetLife Payments",
     "asar": true,
     "files": [
       "main.cjs",
@@ -40,15 +36,6 @@
       "assets/**"
     ],
     "extraResources": [
-      {
-        "from": "windows",
-        "to": "windows",
-        "filter": [
-          "*.ps1",
-          "*.png",
-          "uia3/**"
-        ]
-      },
       {
         "from": "windows/native",
         "to": "native"
@@ -69,5 +56,5 @@
   },
   "optionalDependencies": {},
   "author": "LUK Dental",
-  "metlifeEdition": "client"
+  "metlifeEdition": "payments"
 }

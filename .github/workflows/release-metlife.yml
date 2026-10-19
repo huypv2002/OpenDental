@@ -68,13 +68,8 @@ jobs:
       - run: node metlife-electron/scripts/verify-editions.cjs
       - uses: actions/upload-artifact@v4
         with:
-          name: LUK-MetLife-Client-0.5.0-Windows
-          path: metlife-electron/dist/client/*.exe
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
-          name: LUK-MetLife-API-OD-0.5.0-Windows
-          path: metlife-electron/dist/api-od/*.exe
+          name: LUK-MetLife-Payments-0.6.0-Windows
+          path: metlife-electron/dist/payments/*.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

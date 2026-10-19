@@ -2,8 +2,6 @@ const {app,BrowserWindow,ipcMain,dialog,shell,safeStorage,Menu}=require('electro
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
-const {createHash}=require('node:crypto');
-const windows=require('./lib/windows.cjs');
 const {resolveEdition,assertEditionAction}=require('./lib/edition.cjs');
 const edition=resolveEdition({packaged:app.isPackaged,metadata:require('./package.json').metlifeEdition,argv:process.argv});
 const profileBase=app.getPath('userData');
@@ -12,8 +10,7 @@ const profilePath=path.join(profileBase,edition.profile);
 require('node:fs').mkdirSync(profilePath,{recursive:true});
 app.setPath('userData',profilePath);
 if(process.platform==='win32')app.setAppUserModelId(edition.appId);
-let win,workspace,folder='',watchTimer=null,busy=false,scanBusy=false,activeDraft=null;
-const resources=()=>app.isPackaged?path.join(process.resourcesPath,'windows'):path.join(__dirname,'windows');
+let win,workspace,folder='',watchTimer=null,busy=false,scanBusy=false;
 const rootUrl=pathToFileURL(path.join(__dirname,'renderer/index.html')).href;
 if(!app.requestSingleInstanceLock())app.quit();
 app.on('second-instance',()=>{if(win){win.show();win.focus();}});
@@ -23,7 +20,7 @@ let serverClient=null;
 let pendingSave=null;
 let paymentSaveReady=false;
 async function refreshSaveStatus(){
- if(edition.id!=='api-od'||!serverClient){paymentSaveReady=false;return;}
+ if(!serverClient){paymentSaveReady=false;return;}
  const health=await serverClient.health().catch(()=>({}));
  paymentSaveReady=health.directPaymentEnabled===true;
 }
@@ -45,13 +42,12 @@ async function scan(){
     const id=await workspace.addPdf(f);stamps.set(f,mark);await audit('pdf-import',{hash:workspace.items.get(id).parsed.sha256});
    }catch(e){status.errors.push(`${path.basename(f)}: ${e.message}`);}
   }
-  status.message=`Đã quét ${files.length} PDF. Tự điền chỉ chạy khi bạn chọn bản nháp.`;
+  status.message=`Đã quét ${files.length} PDF. Chọn tài liệu để đối chiếu thanh toán.`;
  }catch(e){status.errors.push(e.message);status.message='Quét thư mục chưa hoàn tất.';}finally{scanBusy=false;notify();}
 }
 async function choose(properties,filters,title){const r=await dialog.showOpenDialog(win,{properties,filters,title});return r.canceled?[]:r.filePaths;}
 function idArg(id){if(typeof id!=='string'||!workspace.items.has(id))throw new Error('Invalid PDF id');return id;}
 async function connectLocal(){
- if(activeDraft)throw new Error('Đóng bản nháp trước khi đổi kết nối.');
  const {autoConnect}=await import('./lib/connection.mjs');
  const client=await autoConnect([...(pendingSave?[pendingSave.serverUrl]:[]),process.env.METLIFE_SERVER_URL||'http://SERVER:3008']);
  if(pendingSave&&pendingSave.serverUrl!==client.connection.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi đang chờ.');
@@ -65,7 +61,6 @@ async function call(op,arg){
   case 'reconnect-server':await connectLocal();break;
   case 'login-server':
   case 'connect-server':{
-   if(activeDraft)throw new Error('Đóng bản nháp trước khi đổi kết nối SERVER.');
    const {MetlifeClient,validateConnection,loginConnection}=await import('./lib/connection.mjs');
    let c;
    if(op==='login-server')c=await loginConnection(arg||{});
@@ -81,7 +76,7 @@ async function call(op,arg){
    serverClient=client;await refreshSaveStatus();workspace.snapshots.clear();Object.assign(patientBrowser,{connected:true,url:c.url,patients:[],selectedPatient:null,documents:[],openedId:null});status.message='Đã kết nối SERVER. Có thể tìm bệnh nhân và mở FINISHED CLAM.';break;
   }
   case 'disconnect-server':{
-   if(activeDraft||pendingSave)throw new Error('Hoàn tất bản nháp/lượt ghi trước khi ngắt kết nối SERVER.');
+   if(pendingSave)throw new Error('Hoàn tất lượt lưu trước khi ngắt kết nối SERVER.');
    await fs.unlink(path.join(app.getPath('userData'),'server-connection.enc')).catch(()=>{});serverClient=null;
    Object.assign(patientBrowser,{connected:false,url:'',patients:[],selectedPatient:null,documents:[],openedId:null});workspace.snapshots.clear();status.message='Đã ngắt kết nối SERVER.';break;
   }
@@ -136,39 +131,9 @@ async function call(op,arg){
   }
   case 'pdf-bytes':return new Uint8Array(workspace.items.get(idArg(arg)).bytes);
   case 'open-pdf':{const item=workspace.items.get(idArg(arg));const error=await shell.openPath(item.path);if(error)throw new Error(error);return true;}
-  case 'inspect-od':{const r=await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'inspect'});if(activeDraft&&!r.modals.includes('Payment')){workspace.snapshots.delete(activeDraft.patNum);activeDraft=null;workspace.preview=null;await audit('preview-closed-externally',{saveState:'unknown'});}status.message=`OD: ${r.title}${r.modals.length?' | Popup: '+r.modals.join(', '):''}`;notify();return r;}
-  case 'fill-preview':{
-   if(activeDraft||pendingSave)throw new Error('Đang có bản nháp hoặc lượt ghi chưa xác minh; hoàn tất trước khi mở bản khác.');
-   const id=idArg(arg),item=workspace.items.get(id);
-   let original;
-   if(item.remote){
-    if(!serverClient)throw new Error('Kết nối lại SERVER trước Auto fill.');
-    if(item.remote.serverUrl!==serverClient.connection.url)throw new Error('PDF này thuộc kết nối SERVER khác; tìm lại bệnh nhân trên SERVER hiện tại.');
-    const {validateSnapshot}=await import('./lib/reconcile.mjs');
-    const context=validateSnapshot(await serverClient.context(item.remote.patNum));
-    if(String(context.patNum)!==item.remote.patNum)throw new Error('SERVER trả sai bệnh nhân.');
-    workspace.snapshots.set(item.remote.patNum,context);
-    original=await serverClient.pdf(item.remote.patNum,item.remote.docNum);
-   }
-   const draft=workspace.plan(id),matched=workspace.result(item);
-   if(!item.remote){
-    const snapshot=workspace.snapshots.get(String(matched.patient.PatNum));
-    const {sourceDocumentPath}=await import('./lib/reconcile.mjs');
-    const source=sourceDocumentPath(snapshot,matched);
-    const stat=await fs.stat(source);if(stat.size>30*1024*1024)throw new Error('PDF gốc quá lớn.');
-    original=await fs.readFile(source);
-   }
-   if(createHash('sha256').update(original).digest('hex')!==draft.sha256)throw new Error('Nội dung PDF không trùng tài liệu gốc trên SERVER.');
-   // Revalidate a fresh snapshot and all derived values in the privileged process.
-   const result=await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'fill-preview',draft});
-   if(!result.windowHandle||!result.paymentTypeApplied||!result.splitsApplied)throw new Error('Chưa điền đủ nội dung trên Open Dental. Kiểm tra cửa sổ đang mở.');
-   activeDraft={...draft,windowHandle:result.windowHandle};workspace.preview={id,amount:draft.amount,paymentType:draft.paymentType,paymentTypeApplied:result.paymentTypeApplied,at:new Date().toISOString()};
-   await audit('preview-filled',{hash:draft.sha256,saveInvoked:false});
-   status.message='Đã tự điền trên Open Dental. Chưa lưu. Kiểm tra bản nháp trên OD; bạn tự quyết định lưu hoặc đóng bản nháp.';break;
-  }
   case 'save-payment':{
    await refreshSaveStatus();if(!paymentSaveReady)throw new Error('Chức năng lưu chưa được kích hoạt. Vui lòng liên hệ bộ phận hỗ trợ.');
-   if(activeDraft||pendingSave)throw new Error('Còn bản nháp hoặc lượt ghi chưa xác minh. Hoàn tất lượt trước.');
+   if(pendingSave)throw new Error('Còn lượt lưu chưa xác minh. Hoàn tất lượt trước.');
    const id=idArg(arg),item=workspace.items.get(id);
    if(!item.remote||!serverClient||item.remote.serverUrl!==serverClient.connection.url)throw new Error('Lưu cần PDF đã chọn từ SERVER hiện tại.');
    const reviewed=workspace.plan(id);
@@ -206,36 +171,13 @@ async function call(op,arg){
   case 'verify-save':{
    if(!pendingSave||!serverClient||pendingSave.serverUrl!==serverClient.connection.url)throw new Error('Kết nối đúng SERVER của lượt ghi đang chờ.');
    const operation=await serverClient.operation(pendingSave.operationId);
-   if(edition.id==='client'&&operation.transport==='od-ui'&&operation.state==='prepared'){
-    const inspected=await windows.runWindows(resources(),{action:'inspect'});
-    if(Array.isArray(inspected.modals)&&inspected.modals.length===0){
-     const aborted=await serverClient.abort(pendingSave.operationId);
-     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;activeDraft=null;workspace.preview=null;status.message='Lượt trước chưa lưu. Mở lại hồ sơ để đối chiếu.';break;}
-    }
-   }
    if(['direct-db','od-api'].includes(operation.transport)&&['prepared','failed-no-write','aborted-no-change'].includes(operation.state)){
     const aborted=await serverClient.abort(pendingSave.operationId);
     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;status.message='SERVER xác nhận lượt trước chưa ghi dữ liệu. Tải lại hồ sơ để đối chiếu.';break;}
    }
    const result=await serverClient.verify(pendingSave.operationId);
-   if(result.verified){activeDraft=null;workspace.preview=null;await audit('save-recovered-verified',{payNum:result.payNum});pendingSave=null;await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});status.message=`Đã xác minh Payment #${result.payNum}.`;}
+   if(result.verified){await audit('save-recovered-verified',{payNum:result.payNum});pendingSave=null;await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});status.message=`Đã xác minh Payment #${result.payNum}.`;}
    else status.message=`Chưa xác minh: ${result.reason} Giữ khóa chống nhập lại.`;
-   break;
-  }
-  case 'close-preview':{
-   if(!activeDraft)throw new Error('Không có bản nháp do tool đang quản lý.');
-   if(pendingSave){const operation=await serverClient.operation(pendingSave.operationId);if(operation.state!=='prepared')throw new Error('Lượt này có thể đã lưu. Kiểm tra kết quả trước khi đóng.');}
-   let alreadyClosed=false;
-   try{await windows.runWindows(resources(),{diagnosticDir:path.join(app.getPath('userData'),'od-diagnostics'),action:'close-preview',draft:activeDraft});}
-   catch(e){
-    // The operator may already have saved or closed this preview in OD.
-    // Empty UI clears only local draft tracking; it never claims DB success.
-    const inspected=await windows.runWindows(resources(),{action:'inspect'});
-    if(!Array.isArray(inspected.modals)||inspected.modals.length!==0)throw e;
-    alreadyClosed=true;
-   }
-   await audit('preview-closed',{hash:activeDraft.sha256});workspace.snapshots.delete(activeDraft.patNum);activeDraft=null;workspace.preview=null;status.message=alreadyClosed?'Bản nháp đã được đóng trên Open Dental. Mở lại hồ sơ để đối chiếu kết quả.':'Đã đóng bản nháp.';
-   if(pendingSave){const aborted=await serverClient.abort(pendingSave.operationId);if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;}}
    break;
   }
   case 'export-plan':{
@@ -266,6 +208,5 @@ app.whenReady().then(async()=>{
  });
  await win.loadFile(path.join(__dirname,'renderer/index.html'));
  connectLocal().catch(e=>{if(!serverClient){patientBrowser.connected=false;status.message=e.message;notify();}});
- win.on('close',e=>{if(activeDraft){e.preventDefault();status.message='Còn bản nháp OD. Đóng bằng nút Đóng bản nháp trước khi thoát tool.';notify();}});
 });
 app.on('window-all-closed',()=>{clearInterval(watchTimer);app.quit();});

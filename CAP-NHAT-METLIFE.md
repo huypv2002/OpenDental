@@ -103,3 +103,13 @@ Theo lựa chọn cuối của người dùng, không phát hành thêm bản DB
 Từ `metlife-electron`, dùng `npm run start:client` hoặc `npm run start:api`. SERVER cần pull/restart để có `/api/metlife/diagnostics/api` và transport `od-api`. Cấu hình mẫu trong `.env.metlife-api.example`, mặc định tắt; không đưa key vào app. OD 24.3 hiện tại và trạng thái chưa có key khiến bản API khóa nút Lưu. Bản này chưa được nghiệm thu API thật; không phải giải pháp bỏ kiểm tra key hoặc CDT.
 
 Tài liệu OD tại thời điểm 2026-10-19: quyền Payments thuộc mức 35 USD/tháng/location, phí do developer trả; Read All miễn phí không bao gồm ghi payment. Nguồn: https://www.opendental.com/site/apipermissions.html .
+
+
+## 0.6.0 — giao diện một luồng thanh toán
+
+- Bỏ hai lựa chọn Client/API cũ, chỉ giữ ứng dụng LUK MetLife Payments và request direct-db hiện có.
+- Bố cục đối chiếu mới: tóm tắt bệnh nhân/tổng tiền/trạng thái, PDF cùng bảng đối chiếu, nút Lưu đi cùng tổng thanh toán.
+- Thông báo kết quả rõ trên đầu ứng dụng. Lượt chưa xác minh vẫn được giữ và chặn gửi lại.
+- Chạy source: `cd metlife-electron` rồi `npm start`; tiêu đề hiển thị v0.6.0.
+- EXE Windows mới: `LUK-MetLife-Payments-0.6.0.exe`. Không đóng gói bộ tự điền client; không thay đổi backend hash/ghi DB.
+- Kiểm thử giao diện dùng dữ liệu tổng hợp và Bridge giả lập; cần kiểm tra trên máy triển khai để xác nhận kết nối và backend thực tế.

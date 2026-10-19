@@ -10,8 +10,8 @@ try{
   config.appId=edition.appId;config.productName=edition.productName;
   config.extraMetadata={metlifeEdition:id};
   config.directories.output=path.join('dist',id);
-  config.artifactName=`LUK-MetLife-${id==='client'?'Client':'API-OD'}-${pkg.version}.exe`;
-  if(id==='api-od')config.extraResources=[{from:'windows/native',to:'native'}];
+  config.artifactName=`LUK-MetLife-Payments-${pkg.version}.exe`;
+  config.extraResources=[{from:'windows/native',to:'native'}];
   const file=path.join(temp,id+'.json');fs.writeFileSync(file,JSON.stringify(config,null,2));
   execFileSync(process.execPath,[require.resolve('electron-builder/cli.js'),'--win',target,'--x64','--config',file],{cwd:root,stdio:'inherit'});
  }

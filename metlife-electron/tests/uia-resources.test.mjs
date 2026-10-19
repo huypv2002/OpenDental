@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 const root=new URL('../',import.meta.url);
-test('pinned UIA3 libraries are intact and included in packaged Windows resources',async()=>{
+test('legacy UIA libraries remain intact but payment package excludes automation',async()=>{
  const manifest=JSON.parse(await fs.readFile(new URL('windows/uia3/manifest.json',root),'utf8'));
  assert.equal(manifest.package,'UIAComWrapper');
  assert.equal(Object.keys(manifest.files).length,2);
@@ -16,5 +16,6 @@ test('pinned UIA3 libraries are intact and included in packaged Windows resource
  assert.match(await fs.readFile(new URL('windows/uia3/LICENSE.txt',root),'utf8'),/Microsoft Public License/);
  const pkg=JSON.parse(await fs.readFile(new URL('package.json',root),'utf8'));
  const windows=pkg.build.extraResources.find(r=>r.from==='windows');
- assert.ok(windows.filter.includes('uia3/**'));
+ assert.equal(windows,undefined);
+ assert.deepEqual(pkg.build.extraResources,[{from:'windows/native',to:'native'}]);
 });

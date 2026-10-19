@@ -1,5 +1,5 @@
-const edition=process.argv[2]||'client';
-if(!['client','api-od'].includes(edition))throw new Error('Invalid test edition');
+const edition=process.argv[2]||'payments';
+if(edition!=='payments')throw new Error('Invalid test edition');
 const fixtureGroup=process.env.METLIFE_TEST_GROUP||'G123';
 const fixtureClaim=process.env.METLIFE_TEST_CLAIM||'1234567890 99';
 const {_electron:electron}=require('playwright');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const os=require('node:os');const http=require('node:http');
@@ -50,6 +50,8 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   assert.ok(calls.includes('/api/metlife/patients/99/context'));assert.ok(calls.includes('/api/metlife/patients/99/documents/55/pdf'));
   await page.screenshot({path:path.join(root,'test-results/direct-db-review.png')});
   await page.click('[data-view="pdf"]');await page.waitForFunction(()=>document.querySelectorAll('canvas').length===2);
+  assert.equal(await page.locator('#detail-content table').count(),2);
+  await page.screenshot({path:path.join(root,'test-results/payments-pdf-comparison.png')});
   // No OD or real payments: stub the Windows adapter in Electron's main process.
   duplicate=false;await page.click('[data-tab="patients"]');await page.click('[data-document="55"]');await page.waitForFunction(()=>document.body.getAttribute('aria-busy')!=='true');
   await a.evaluate(async(_electron,root)=>{
@@ -57,26 +59,22 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
    require('./lib/windows.cjs').runWindows=async(_resources,request)=>{globalThis.odTestActions.push(request.action);if(request.action==='save-preview')throw new Error('Auto fill must never click Save');return {ok:true,windowHandle:'999',paymentTypeApplied:true,splitsApplied:true,saveInvoked:request.action==='save-preview'};};
   },root);
   const fill=page.locator('[data-action="fill-preview"]'),save=page.locator('[data-action="save-payment"]');
-  if(edition==='client'){
-   assert.equal(await save.count(),0);
-   const denied=await page.evaluate(()=>window.metlife.call('save-payment','not-an-item'));
-   assert.equal(denied.ok,false);assert.ok(!calls.includes('/api/metlife/operations'));
-   assert.equal(await fill.isEnabled(),true);await fill.click();
-   await page.waitForFunction(()=>document.querySelector('#status-text').textContent.includes('Chưa lưu')&&document.body.getAttribute('aria-busy')!=='true');
-   assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),['fill-preview']);
-   assert.ok(!calls.includes('/api/metlife/operations'));assert.equal(await fill.isDisabled(),true);
-   await page.click('[data-action="close-preview"]');await page.waitForFunction(()=>document.body.getAttribute('aria-busy')!=='true');
-   assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),['fill-preview','close-preview']);
-   console.log('Client-only edition: preview and close only; no Save button, no posting request, no OD Save invocation.');
-   return;
-  }
   assert.equal(await fill.count(),0);
   const denied=await page.evaluate(()=>window.metlife.call('fill-preview','not-an-item'));
   assert.equal(denied.ok,false);assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),[]);
   assert.equal(await page.locator('#detail table:nth-of-type(2) tbody tr').count(),3);
   await save.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(root,'test-results/direct-db-splits.png')});
-  assert.equal(await save.isEnabled(),true);await save.click();
+  assert.equal(await save.isEnabled(),true);
+  await page.setViewportSize({width:1050,height:700});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await save.scrollIntoViewIfNeeded();
+  const buttonBounds=await save.boundingBox();assert.ok(buttonBounds.x>=0&&buttonBounds.x+buttonBounds.width<=1050&&buttonBounds.y+buttonBounds.height<=700);
+  await page.screenshot({path:path.join(root,'test-results/payments-compact.png')});
+  await page.setViewportSize({width:1400,height:888});
+  await page.screenshot({path:path.join(root,'test-results/payments-review.png')});await save.click();
   await page.waitForFunction(()=>document.querySelector('#status-text').textContent.includes('Đã lưu và xác minh'));
+  assert.equal(await page.locator('#workflow-feedback').isVisible(),true);
+  await page.screenshot({path:path.join(root,'test-results/payments-saved.png')});
   assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),[]);
   assert.equal(preparedPlan.paymentType,'Insurance Paid');assert.equal(preparedPlan.splits.length,3);assert.equal(preparedPlan.note,`group number : ${fixtureGroup}`);
   assert.ok(calls.findIndex(x=>x.endsWith('/post'))<calls.findIndex(x=>x.endsWith('/verify')));
@@ -94,8 +92,8 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   const rejected=await page.evaluate(async()=>{const state=await window.metlife.call('state');return window.metlife.call('save-payment',state.data.items[0].id);});
   assert.equal(rejected.ok,false);assert.equal(calls.filter(x=>x.endsWith('/post')).length,postsBefore);assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),[]);
   await page.screenshot({path:path.join(root,'test-results/api-not-configured.png')});
-  assert.equal(await page.locator('[data-action="fill-preview"]').count(),0);await page.click('[data-tab="settings"]');assert.match(await page.locator('#settings').innerText(),/Hướng dẫn/);
+  assert.equal(await page.locator('[data-action="fill-preview"]').count(),0);await page.click('[data-tab="settings"]');assert.match(await page.locator('#settings').innerText(),/Hướng dẫn/i);
   for(const tab of ['patients','queue','settings','activity']){await page.click(`[data-tab="${tab}"]`);assert.doesNotMatch(await page.locator('body').innerText(),/\b(DB|SQL|JSON|schema|SERVER|Bridge|ProcNum|DocNum|PlanNum|InsSubNum|InnoDB|MyISAM|snapshot|OCR|Electron)\b/i);}
-  assert.deepEqual(errors,[]);console.log('Independent preview and request save UI passed: synthetic PDF, detailed review, post request, zero Windows automation calls, verified readback, uncertain journal and retry block. Simulated SERVER; no clinic writes.');
+  assert.deepEqual(errors,[]);console.log('Payment request UI passed: synthetic PDF, detailed review, post request, zero Windows automation calls, verified readback, uncertain journal and retry block. Simulated SERVER; no clinic writes.');
  }catch(e){console.error('Synthetic UI failure:',e.message,'Status:',page?await page.locator('#status-text').innerText().catch(()=>'?'):'no page','Calls:',calls);throw e;}finally{await a.evaluate(({app})=>app.exit(0)).catch(()=>{});await a.close();await new Promise(r=>server.close(r));fs.rmSync(temp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

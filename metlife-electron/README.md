@@ -1,4 +1,20 @@
-## Bản hiện tại 0.5.0 — hai ứng dụng độc lập
+## Bản hiện tại 0.6.0 — một ứng dụng thanh toán
+
+Chạy `npm start` trong `metlife-electron`. Chỉ còn **LUK MetLife Payments**, sử dụng luồng request `direct-db` đã có trên Bridge. Ứng dụng không gọi bộ điều khiển giao diện OD, không có tự điền hay lựa chọn API OD/OpenAI. Các mô tả phiên bản cũ phía dưới chỉ là lịch sử.
+
+Luồng khách hàng: **Tìm bệnh nhân → chọn PDF Finished Claims → đối chiếu hồ sơ và từng dịch vụ → Lưu khoản thanh toán → xem kết quả xác minh**.
+
+- Hiển thị bệnh nhân, tổng tiền, ngày, số tham chiếu và trạng thái ở đầu hồ sơ.
+- Có thể mở PDF cùng thông tin đối chiếu; cửa sổ hẹp xếp PDF phía dưới.
+- Nút lưu đi cùng tổng tiền ở cuối hồ sơ. Chỉ mở khi tài liệu thuộc hồ sơ trên Bridge, dữ liệu khớp và Bridge đã bật chức năng lưu.
+- Khi chưa xác minh, giữ lượt lưu và khóa gửi lại; dùng Kiểm tra kết quả để khôi phục. Dùng lại profile `api-od` của bản thanh toán cũ để giữ journal còn chờ.
+- Thông báo khách hàng không hiển thị DB, hash, key hoặc nội dung chẩn đoán.
+
+Build Windows: `npm run dist:win`, xuất `dist/payments/LUK-MetLife-Payments-0.6.0.exe`. Gói mới không chứa tài nguyên điều khiển giao diện OD. Không thay đổi cơ chế hash hoặc ghi DB trong lần thiết kế giao diện này. Kiểm tra UI dùng tài liệu tổng hợp và Bridge giả lập, không ghi hồ sơ thật.
+
+---
+
+## Lịch sử phiên bản 0.5.0 — hai ứng dụng độc lập
 
 - **LUK MetLife Client**: chỉ tự điền và đóng bản nháp OD, không có nút gửi thanh toán. Chạy source: `npm run start:client` (hoặc `npm start`).
 - **LUK MetLife API**: chỉ gửi thanh toán qua API OD, không có tự điền và không đóng gói bộ điều khiển OD. Chạy source: `npm run start:api`.
@@ -11,7 +27,7 @@ Cấu hình nội bộ SERVER tham khảo `.env.metlife-api.example` ở repo g�
 
 Build: `npm run dist:win` tạo hai EXE ở `dist/client` và `dist/api-od`. Các mục 0.4.x dưới đây là lịch sử, không mô tả bản hiện tại.
 
-## Bản hiện tại 0.4.2 — tách Tự điền và Lưu trực tiếp
+## Lịch sử phiên bản 0.4.2 — tách Tự điền và Lưu trực tiếp
 
 **Tự điền trên OD · Chưa lưu** chỉ mở và điền bản nháp trên client OD, không bấm Save, không gọi endpoint post/prepare. Người dùng kiểm tra rồi tự lưu hoặc đóng trên OD.
 
@@ -19,7 +35,7 @@ Build: `npm run dist:win` tạo hai EXE ở `dist/client` và `dist/api-od`. Cá
 
 Chạy source tại `metlife-electron`: `npm start`. Giao diện phải hiện v0.4.2 và hai nút riêng. Những mô tả 0.4.1 bên dưới là lịch sử, không phải hành vi hiện tại.
 
-## Bản hiện tại 0.4.1 — lưu qua client OD
+## Lịch sử phiên bản 0.4.1 — lưu qua client OD
 
 Giữ giao diện tìm bệnh nhân, PDF và đối chiếu. Nút Lưu tự điền trên client OD cùng máy, kiểm tra lại với Bridge rồi bấm Save; sau đó đọc lại DB để xác minh. Không dùng đường ghi SQL trực tiếp hoặc helper CDT cho thao tác Lưu. Các mục 0.4.0/direct DB bên dưới mô tả bản trước.
 
