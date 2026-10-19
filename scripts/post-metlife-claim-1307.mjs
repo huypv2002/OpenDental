@@ -117,6 +117,20 @@ try {
       console.log(`  ✓ Đã xóa sạch PayNum = ${p.PayNum} và toàn bộ PaySplits liên quan.`);
     }
 
+    // Reset sạch claimproc và claim nếu trước đó bị gán nhầm InsPay
+    const [resetCp] = await conn.execute(
+      `UPDATE claimproc SET InsPayAmt = 0, Status = 0, DateCP = '0001-01-01' WHERE PatNum = ? AND Status = 1`,
+      [patNum]
+    );
+    if (resetCp.affectedRows > 0) {
+      console.log(`  ✓ Đã reset ${resetCp.affectedRows} claimproc về trạng thái ban đầu (xóa bỏ dòng PAYMENT NEEDS TO BE FINALIZED thừa).`);
+    }
+
+    await conn.execute(
+      `UPDATE claim SET ClaimStatus = 'W', DateReceived = '0001-01-01' WHERE PatNum = ? AND ClaimStatus = 'R'`,
+      [patNum]
+    );
+
     // Ghi chú chuẩn theo quy định phòng khám: group number : <group>
     const groupNum = '301044';
     const payNote = `group number : ${groupNum}`;
@@ -146,20 +160,6 @@ try {
         [split.amount, patNum, split.date, eobDate, split.ProcNum, split.ProvNum, split.ClinicNum, payNum, split.SecurityHash]
       );
       console.log(`  ✓ Đã tạo PaySplit #${splitRes.insertId} cho thủ thuật ${split.code} ($${split.amount})`);
-
-      // c. Cập nhật claimproc
-      await conn.execute(
-        `UPDATE claimproc SET InsPayAmt = ?, Status = 1, DateCP = ? WHERE PatNum = ? AND ProcNum = ? AND Status IN (0, 6)`,
-        [split.amount, eobDate, patNum, split.ProcNum]
-      );
-    }
-
-    // d. Cập nhật claim nếu có
-    if (claimNum) {
-      await conn.execute(
-        `UPDATE claim SET ClaimStatus = 'R', DateReceived = ? WHERE ClaimNum = ?`,
-        [eobDate, claimNum]
-      );
     }
 
     // e. Ghi SecurityLog và SecurityLogHash

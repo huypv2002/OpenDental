@@ -28,6 +28,16 @@ try {
         const [delPay] = await conn.execute('DELETE FROM payment WHERE PayNum = ?', [p.PayNum]);
         console.log(`  ✓ Đã xóa bản ghi Payment: PayNum = ${p.PayNum}`);
       }
+
+      await conn.execute(
+        `UPDATE claimproc SET InsPayAmt = 0, Status = 0, DateCP = '0001-01-01' WHERE PatNum = ? AND Status = 1`,
+        [patNum]
+      );
+      await conn.execute(
+        `UPDATE claim SET ClaimStatus = 'W', DateReceived = '0001-01-01' WHERE PatNum = ? AND ClaimStatus = 'R'`,
+        [patNum]
+      );
+      console.log('  ✓ Đã reset claimproc và claim về trạng thái ban đầu.');
       console.log('\n>>> ĐÃ HOÀN TÁC THÀNH CÔNG! Bệnh nhân #1307 đã sạch bản ghi payment thử nghiệm.');
     }
 
