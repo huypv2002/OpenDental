@@ -115,3 +115,5 @@ Tài liệu OD tại thời điểm 2026-10-19: quyền Payments thuộc mức 3
 - Kiểm thử giao diện dùng dữ liệu tổng hợp và Bridge giả lập; cần kiểm tra trên máy triển khai để xác nhận kết nối và backend thực tế.
 
 Kiểm tra CI với DB tổng hợp phát hiện hai lỗi có sẵn: danh sách khóa MyISAM thiếu bảng clinic mà context đã đọc, và chẩn đoán nhận nhầm các cột nhật ký đã hỗ trợ thành cột lạ. Đã đồng bộ danh sách khóa theo toàn bộ bảng context đọc và sửa nhận diện trường nhật ký; không đổi thuật toán hash hay giá trị thanh toán.
+
+Sửa khôi phục kết nối: đọc lại cấu hình được mã hóa khi mở app (kể cả profile Client cũ), ghi nhớ địa chỉ kết nối thành công; ưu tiên địa chỉ của lượt đang chờ hoặc METLIFE_SERVER_URL nếu đặt rõ. Không tự chuyển sang máy chủ khác khi đang xác minh thanh toán. Kiểm tra khởi động lại không còn biến môi trường đã qua với dịch vụ giả lập.

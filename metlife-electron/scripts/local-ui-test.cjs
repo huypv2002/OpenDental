@@ -11,5 +11,11 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   assert.equal(await page.locator('#server-login,#server-password,#login-server').count(),0);
   await page.fill('#patient-search-query','TEST');await page.click('#search-patients');await page.waitForFunction(()=>document.querySelector('#status-text').textContent.startsWith('Tìm thấy'));
   await page.click('#connect-server');assert.ok(calls>=2);console.log('LAN UI: automatic connection without credentials, no login controls, patient search and reconnect passed.');
+  if(await app.evaluate(({safeStorage})=>safeStorage.isEncryptionAvailable())){
+   await app.close();app=null;
+   app=await electron.launch({args:[root,`--user-data-dir=${temp}`],env:{...process.env,METLIFE_SERVER_URL:''},...(process.env.METLIFE_ELECTRON_PATH?{executablePath:process.env.METLIFE_ELECTRON_PATH}:{}),timeout:30000});
+   const restarted=await app.firstWindow();await restarted.waitForFunction(()=>document.querySelector('#server-status').textContent.startsWith('Đã kết nối'));
+   console.log('Saved clinic endpoint restored after restart without environment override.');
+  }
  }finally{if(app)await app.close();server.closeAllConnections();await new Promise(r=>server.close(r));fs.rmSync(temp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -48,10 +48,22 @@ async function scan(){
 async function choose(properties,filters,title){const r=await dialog.showOpenDialog(win,{properties,filters,title});return r.canceled?[]:r.filePaths;}
 function idArg(id){if(typeof id!=='string'||!workspace.items.has(id))throw new Error('Invalid PDF id');return id;}
 async function connectLocal(){
- const {autoConnect}=await import('./lib/connection.mjs');
- const client=await autoConnect([...(pendingSave?[pendingSave.serverUrl]:[]),process.env.METLIFE_SERVER_URL||'http://SERVER:3008']);
+ const {autoConnect,MetlifeClient,validateConnection}=await import('./lib/connection.mjs');
+ let remembered=null;
+ if(safeStorage.isEncryptionAvailable()){
+  // Preserve previously paired connections, including the former client profile.
+  for(const directory of [app.getPath('userData'),path.join(profileBase,'client')]){
+   try{remembered=validateConnection(JSON.parse(safeStorage.decryptString(await fs.readFile(path.join(directory,'server-connection.enc')))));break;}catch{}
+  }
+ }
+ // A pending receipt or explicit operator setting must never fall back to another clinic.
+ const target=pendingSave?.serverUrl||process.env.METLIFE_SERVER_URL||remembered?.url||'http://SERVER:3008';
+ let client;
+ if(remembered?.url===target&&remembered.token){client=new MetlifeClient(remembered);await client.health();}
+ else client=await autoConnect([target]);
  if(pendingSave&&pendingSave.serverUrl!==client.connection.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi đang chờ.');
  if(serverClient&&serverClient.connection.url!==client.connection.url){workspace.snapshots.clear();Object.assign(patientBrowser,{patients:[],selectedPatient:null,documents:[],openedId:null});}
+ if(safeStorage.isEncryptionAvailable())await fs.writeFile(path.join(app.getPath('userData'),'server-connection.enc'),safeStorage.encryptString(JSON.stringify(client.connection)),{mode:0o600});
  serverClient=client;await refreshSaveStatus();Object.assign(patientBrowser,{connected:true,url:client.connection.url});status.message='Đã kết nối SERVER. Tìm bệnh nhân để bắt đầu.';notify();
 }
 async function call(op,arg){
