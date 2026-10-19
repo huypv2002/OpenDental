@@ -159,31 +159,9 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
 
   const updatedFees = [];
 
-  const standardDefaults = {
-    D0120: 96.00,
-    D1208: 50.00,
-    D1110: 120.00,
-    D0210: 222.00,
-    D0274: 70.00,
-    D0330: 130.00,
-    D0220: 33.00,
-    D0230: 27.00
-  };
-
   for (const item of eobProcedures) {
-    let feeCents = item.feeCents;
-    if (!feeCents || feeCents <= 0) {
-      if (item.benefitCents && item.benefitCents > 0) {
-        // Plan pays 90%: submitted = benefit / 0.9
-        feeCents = Math.round(item.benefitCents / 0.9);
-      }
-    }
-
-    const submittedFee = feeCents > 0
-      ? (feeCents / 100).toFixed(2)
-      : (standardDefaults[item.code] ? standardDefaults[item.code].toFixed(2) : '0.00');
-
-    if (Number(submittedFee) <= 0) continue;
+    if (!item.code || !item.benefitCents || item.benefitCents <= 0) continue;
+    const splitFee = (item.benefitCents / 100).toFixed(2);
 
     // Find matching completed procedure
     let match = procs.find(
@@ -194,24 +172,20 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
     }
 
     if (match) {
-      const currentFee = Number(match.ProcFee || 0);
-      if (currentFee === 0) {
-        await db.execute('UPDATE procedurelog SET ProcFee = ? WHERE ProcNum = ?', [submittedFee, match.ProcNum]);
-        await db.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [submittedFee, match.ProcNum]);
-        updatedFees.push(`${item.code}: $0.00 -> $${submittedFee}`);
-        match.ProcFee = submittedFee;
-      }
+      await db.execute('UPDATE procedurelog SET ProcFee = ? WHERE ProcNum = ?', [splitFee, match.ProcNum]);
+      await db.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [splitFee, match.ProcNum]);
+      updatedFees.push(`${item.code}: $${splitFee}`);
+      match.ProcFee = splitFee;
     }
   }
 
-  // Also check if any remaining procedures on the same date have 0.00 fee
+  // Any procedure not in EOB (or without benefit, like unsent bitewings/panoramic/periapicals): keep at 0.00
   for (const p of procs) {
-    if (Number(p.ProcFee || 0) === 0 && standardDefaults[p.ProcCode]) {
-      const defFee = standardDefaults[p.ProcCode].toFixed(2);
-      await db.execute('UPDATE procedurelog SET ProcFee = ? WHERE ProcNum = ?', [defFee, p.ProcNum]);
-      await db.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [defFee, p.ProcNum]);
-      updatedFees.push(`${p.ProcCode}: $0.00 -> $${defFee}`);
-      p.ProcFee = defFee;
+    const isEob = eobProcedures.some((ep) => ep.code === p.ProcCode && ep.benefitCents > 0);
+    if (!isEob) {
+      await db.execute('UPDATE procedurelog SET ProcFee = 0.00 WHERE ProcNum = ?', [p.ProcNum]);
+      await db.execute('UPDATE claimproc SET FeeBilled = 0.00 WHERE ProcNum = ?', [p.ProcNum]);
+      p.ProcFee = '0.00';
     }
   }
 
