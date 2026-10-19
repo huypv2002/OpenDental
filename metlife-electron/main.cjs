@@ -60,7 +60,7 @@ async function connectLocal(){
  const target=pendingSave?.serverUrl||process.env.METLIFE_SERVER_URL||remembered?.url||'http://SERVER:3008';
  let client;
  if(remembered?.url===target&&remembered.token){client=new MetlifeClient(remembered);await client.health();}
- else client=await autoConnect([target]);
+ else client=await autoConnect([target, 'http://127.0.0.1:3008', 'http://localhost:3008']);
  if(pendingSave&&pendingSave.serverUrl!==client.connection.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi đang chờ.');
  if(serverClient&&serverClient.connection.url!==client.connection.url){workspace.snapshots.clear();Object.assign(patientBrowser,{patients:[],selectedPatient:null,documents:[],openedId:null});}
  if(safeStorage.isEncryptionAvailable())await fs.writeFile(path.join(app.getPath('userData'),'server-connection.enc'),safeStorage.encryptString(JSON.stringify(client.connection)),{mode:0o600});

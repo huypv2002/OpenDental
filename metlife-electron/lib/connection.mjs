@@ -6,7 +6,7 @@ export function localServerUrl(value){
  if(net.isIP(h)!==4)return false;const p=h.split('.').map(Number);return p[0]===10||p[0]===192&&p[1]===168||p[0]===172&&p[1]>=16&&p[1]<=31;
  }catch{return false;}
 }
-export async function autoConnect(urls=[DEFAULT_SERVER_URL]){
+export async function autoConnect(urls=[DEFAULT_SERVER_URL, 'http://127.0.0.1:3008', 'http://localhost:3008']){
  for(const url of urls){if(!localServerUrl(url))continue;try{const client=new MetlifeClient({url,token:''});await client.health();return client;}catch{}}
  throw new Error('Chưa kết nối được SERVER trong mạng phòng khám. Kiểm tra SERVER và cổng 3008 rồi bấm Kết nối lại.');
 }
