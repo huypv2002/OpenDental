@@ -36,19 +36,26 @@ export function createMyisamWriter(pool,{readContext=readPatientContext,hashSpli
    await conn.query('SET SESSION autocommit=1');
    const lockedTables=[...new Set([...captureTables,...writeTables,...(entryUser==='0'?[]:['userod']),myisamJournal])];
    await conn.query('LOCK TABLES '+lockedTables.map(t=>'`'+t+'` '+(writeTables.includes(t)||t===myisamJournal?'WRITE':'READ')).join(','));locked=true;
-   const [existing]=await execute(conn,`SELECT OperationId,State,IntentJson FROM ${myisamJournal} WHERE OperationId=? OR (PatNum=? AND PdfHash=?)`,[op.id,op.patNum,op.plan.sha256]);
+   const [existing]=await execute(conn,`SELECT OperationId,State,PayNum,IntentJson FROM ${myisamJournal} WHERE OperationId=? OR (PatNum=? AND PdfHash=?)`,[op.id,op.patNum,op.plan.sha256]);
    if(existing.length){
-    const old=existing.find(r=>r.OperationId===op.id);
-    if(!old)throw new Error('PDF đã có lượt ghi MyISAM; cần xác minh lượt trước.');
-    const intent=JSON.parse(old.IntentJson);
-    if(JSON.stringify(intent.plan)!==JSON.stringify(op.plan))throw new Error('Operation không khớp kế hoạch đã lưu.');
-    // Restart/replay never creates any clinical rows. Only an exact complete intent
-    // can be recovered, including interruption after last split before journal update.
-    mayHaveWritten=true;
-    const result=verifyMyisamIntent(await readContext(pool,op.patNum,{connection:conn}),intent);
-    if(!result.verified)throw new Error('Lượt MyISAM chưa đủ Payment/Splits; giữ khóa và cần kỹ thuật viên kiểm tra, không tự ghi lại.');
-    await execute(conn,`UPDATE ${myisamJournal} SET State='complete' WHERE OperationId=?`,[op.id]);
-    return {payNum:result.payNum,splitNums:result.splitNums,replayed:true};
+    const payNums=[...new Set(existing.map(r=>String(r.PayNum)).filter(p=>/^[1-9]\d*$/.test(p)))];
+    let livePayments=[];
+    if(payNums.length){
+     [livePayments]=await execute(conn,`SELECT PayNum FROM payment WHERE PayNum IN (${payNums.map(()=>'?').join(',')})`,payNums);
+    }
+    if(!livePayments.length){
+     await execute(conn,`DELETE FROM ${myisamJournal} WHERE OperationId=? OR (PatNum=? AND PdfHash=?)`,[op.id,op.patNum,op.plan.sha256]);
+    }else{
+     const old=existing.find(r=>r.OperationId===op.id);
+     if(!old)throw new Error('PDF đã có khoản thanh toán đang tồn tại trong Open Dental. Không ghi trùng.');
+     const intent=JSON.parse(old.IntentJson);
+     if(JSON.stringify(intent.plan)!==JSON.stringify(op.plan))throw new Error('Operation không khớp kế hoạch đã lưu.');
+     mayHaveWritten=true;
+     const result=verifyMyisamIntent(await readContext(pool,op.patNum,{connection:conn}),intent);
+     if(!result.verified)throw new Error('Lượt MyISAM chưa đủ Payment/Splits; giữ khóa và cần kỹ thuật viên kiểm tra, không tự ghi lại.');
+     await execute(conn,`UPDATE ${myisamJournal} SET State='complete' WHERE OperationId=?`,[op.id]);
+     return {payNum:result.payNum,splitNums:result.splitNums,replayed:true};
+    }
    }
    const [prefs]=await execute(conn,"SELECT PrefName,ValueString FROM preference WHERE PrefName IN ('RandomPrimaryKeys','AccountingSoftware','AccountingAutomaticPaymentEntry','AllowFuturePayments','DateLock','DateLockLimitDays')");
    if(prefs.some(p=>['RandomPrimaryKeys','AccountingSoftware','AccountingAutomaticPaymentEntry','DateLock','DateLockLimitDays'].includes(p.PrefName)&&!['','0','false','0001-01-01','0000-00-00'].includes(String(p.ValueString).toLowerCase())))throw new Error('MyISAM: chưa hỗ trợ random keys, khóa ngày hoặc đồng bộ kế toán đang bật.');

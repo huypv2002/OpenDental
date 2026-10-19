@@ -131,6 +131,7 @@ export function createDirectPaymentWriter(pool,{enabled=directWritesEnabled,user
    if(!result.verified||result.payNum!==payNum)throw new Error('Payment/Splits vừa ghi không khớp kế hoạch; rollback.');
    // Durable idempotency and integration audit are committed with the payment.
    // This is not an Open Dental securitylog entry and must not be presented as one.
+   await execute(conn,`DELETE FROM ${journal} WHERE PatNum=? AND PdfHash=?`,[patNum,plan.sha256]);
    await execute(conn,`INSERT INTO ${journal} (OperationId,PatNum,DocNum,PdfHash,PayNum,PlanJson) VALUES (?,?,?,?,?,?)`,[id,patNum,docNum,plan.sha256,payNum,JSON.stringify(approved)]);
    commitAttempted=true;await conn.commit();started=false;
    return {payNum,splitNums:result.splitNums};
