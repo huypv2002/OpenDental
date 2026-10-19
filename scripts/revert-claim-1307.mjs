@@ -35,10 +35,10 @@ try {
       D0210: 199.80,
       D1110: 108.00,
       D1208: 45.00,
-      D0274: 0.00,  // unsent
-      D0330: 0.00,  // unsent
-      D0220: 0.00,  // unsent
-      D0230: 0.00   // unsent
+      D0274: 0.00,  // Denied (kết hợp vào D0210 theo MetLife Note 65, J)
+      D0330: 0.00,  // Denied (kết hợp vào D0210 theo MetLife Note 65, J)
+      D0220: 0.00,  // Denied (kết hợp vào D0210 theo MetLife Note 65, J)
+      D0230: 0.00   // Denied (kết hợp vào D0210 theo MetLife Note 65, J)
     };
 
     const [patientProcs] = await conn.execute(
