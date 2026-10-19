@@ -36,4 +36,6 @@ nav{height:48px;padding:0 20px}main{height:calc(100vh - 150px)}.page{padding:22p
 .modal-splits-table td{padding:8px 10px;border-bottom:1px solid #e2e8f0}
 .modal-note-box{background:#f8fafc;border:1px dashed #cbd5e1;padding:10px 14px;border-radius:6px;font-size:12px;color:#334155}
 .modal-alert{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:10px 14px;border-radius:6px;font-size:12px;display:flex;align-items:center;gap:8px}
+.modal-splits-table tfoot td{padding:10px 10px;background:#f8fafc;border-top:2px solid var(--border);border-bottom:none;font-size:13px;color:#0f172a}
+.modal-splits-table tfoot td.num{font-size:15px;color:#155bd8;font-weight:700}
 
