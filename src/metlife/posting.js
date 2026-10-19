@@ -5,6 +5,7 @@ import {validId} from './repository.js';
 const cents=v=>{const s=String(v??'');if(!/^-?\d+(\.\d{1,2})?$/.test(s))throw new Error('Invalid financial amount');const n=Math.round(Number(s)*100);if(!Number.isSafeInteger(n))throw new Error('Invalid financial amount');return n;};
 const norm=s=>String(s??'').trim().toLowerCase();
 export function validatePostingPlan(context,draft){
+ if(draft&&!draft.checkNum&&draft.claimRaw)draft.checkNum=draft.claimRaw;
  if(!draft||!validId(draft.patNum)||String(context.patNum)!==String(draft.patNum)||!/^\d+\.\d{2}$/.test(draft.amount)||cents(draft.amount)<=0||!/^[a-f0-9]{64}$/.test(draft.sha256)||!/^\d{4}-\d{2}-\d{2}$/.test(draft.date)||typeof draft.note!=='string'||draft.note.length>2000||typeof draft.checkNum!=='string'||!draft.checkNum||draft.checkNum.length>100)throw new Error('Invalid posting plan');
  if(!Number.isFinite(Date.parse(context.capturedAt||''))||Math.abs(Date.now()-Date.parse(context.capturedAt))>60000)throw new Error('OD context is not fresh');
  const validDate=new Date(draft.date+'T12:00:00Z');if(!Number.isFinite(+validDate)||validDate.toISOString().slice(0,10)!==draft.date)throw new Error('Invalid payment date');

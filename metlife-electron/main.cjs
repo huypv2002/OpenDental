@@ -166,7 +166,7 @@ async function call(op,arg){
     const operation=await serverClient.operation(prepared.operationId);
     if(['prepared','failed-no-write'].includes(operation.state)){
      const aborted=await serverClient.abort(prepared.operationId);
-     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;status.message=`Chưa ghi DB: ${e.message}`;await audit('direct-save-aborted',{hash:draft.sha256});break;}
+     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json'));pendingSave=null;status.message=`Chưa ghi DB: ${e.message}`;await audit('direct-save-aborted',{hash:draft.sha256});throw new Error(`Chưa thể lưu vào Open Dental: ${e.message}`);}
     }
    }
    const result=await serverClient.verify(prepared.operationId);

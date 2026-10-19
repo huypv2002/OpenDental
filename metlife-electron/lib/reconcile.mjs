@@ -71,7 +71,7 @@ export function draftOf(pdf, result, config={}) {
   if(noteTemplate.length>2000) throw new Error('Mẫu Note quá dài.');
   const values={claim:pdf.claimRaw,group:pdf.group,method:pdf.payment.method,trace:pdf.payment.trace,date:pdf.payment.date};
   const note=noteTemplate.replace(/\{(claim|group|method|trace|date)\}/g,(_,k)=>values[k]);
-  return {patNum:String(result.patient.PatNum),patientName:`${result.patient.LName}, ${result.patient.FName}`,splitPatientName:`${result.patient.LName}, ${result.patient.FName}${result.patient.MiddleI?' '+result.patient.MiddleI:''}`,amount:money(pdf.payment.amountCents),date:pdf.payment.date,checkNum:pdf.payment.trace,note,claimRaw:pdf.claimRaw,sha256:pdf.sha256,paymentType:config.paymentType||DEFAULT_CONFIG.paymentType,paymentTypeDefNum:result.paymentTypeDefNum||null,splits:result.splits,mode:'preview-only'};
+  return {patNum:String(result.patient.PatNum),patientName:`${result.patient.LName}, ${result.patient.FName}`,splitPatientName:`${result.patient.LName}, ${result.patient.FName}${result.patient.MiddleI?' '+result.patient.MiddleI:''}`,amount:money(pdf.payment.amountCents),date:pdf.payment.date,checkNum:(pdf.payment?.trace||pdf.claimRaw||'').trim(),note,claimRaw:pdf.claimRaw,sha256:pdf.sha256,paymentType:config.paymentType||DEFAULT_CONFIG.paymentType,paymentTypeDefNum:result.paymentTypeDefNum||null,splits:result.splits,mode:'preview-only'};
 }
 
 export function sourceDocumentPath(snapshot, result) {

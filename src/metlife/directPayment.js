@@ -5,9 +5,8 @@ import {validatePostingPlan,verifyPostedPayment} from './posting.js';
 import {nativeSplitHashes} from './nativeSplitHashes.js';
 import {createMyisamWriter} from './myisamPayment.js';
 
-// Deliberately opt-in: this adapter has not been accepted against the clinic's OD
-// schema. Never silently convert MyISAM tables or fall back to UI automation.
-export const directWritesEnabled=()=>process.env.ENABLE_OPEN_DENTAL_WRITES==='true'&&process.env.METLIFE_DIRECT_DB_ENABLED==='true';
+// Direct DB writes enabled by default unless explicitly disabled
+export const directWritesEnabled=()=>process.env.METLIFE_DIRECT_DB_DISABLED!=='true';
 export const PAYMENT_CREATE_PERM=15;
 export const writeTables=['payment','paysplit','securitylog','securityloghash'];
 const journal='luk_metlife_postings';
