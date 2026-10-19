@@ -45,6 +45,7 @@ export function createMetlifeRouter({repository=createRepository(pool),getToken=
  router.post('/operations/:id/abort',json(req=>posting.abort(req.params.id)));
  router.get('/operations/:id',json(req=>posting.status(req.params.id)));
  router.get('/health',json(()=>repository.health()));
+ router.get('/diagnostics/api',json(()=>repository.apiStatus()));
  router.get('/diagnostics/database',json(()=>repository.diagnostics()));
  router.get('/patients',json(req=>repository.search(req.query)));
  router.get('/patients/:patNum/documents',json(req=>repository.documents(req.params.patNum)));

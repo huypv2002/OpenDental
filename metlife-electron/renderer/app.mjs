@@ -12,12 +12,18 @@ function field(label,value,cls=''){return `<div><span class="field-label">${esc(
 function addEvent(message){if(!message||message===lastMessage)return;lastMessage=message;events.unshift({at:new Date().toLocaleTimeString('vi-VN'),message});$('#events').innerHTML=events.map(e=>`<div class="event"><time>${esc(e.at)}</time>${esc(e.message)}</div>`).join('');}
 function render(s){
  state=s;if(!selected||!s.items.some(i=>i.id===selected))selected=s.items[0]?.id||null;
- $('#version').textContent=`v${s.version}`;$('#status-text').textContent=customerMessage(s.status.message);$('#runtime').textContent='MetLife · Dữ liệu phòng khám';
+ $('#version').textContent=`v${s.version}`;$('#edition-label').textContent=s.editionName;renderEditionGuide(s.edition);$('#status-text').textContent=customerMessage(s.status.message);$('#runtime').textContent='MetLife · '+s.editionName;
  $('#folder-path').textContent=s.status.folder||'Chưa chọn thư mục';$('#folder-path').title=s.status.folder||'';$('#watch').checked=s.status.watching;
  $('#count-total').textContent=s.items.length;$('#count-ready').textContent=s.items.filter(i=>!i.result.blocks.length).length;$('#count-blocked').textContent=s.items.filter(i=>i.result.blocks.length).length;$('#count-snapshots').textContent=s.snapshots.length;
  $('#pending-save-banner').hidden=!s.pendingSave;
  addEvent(customerMessage(s.status.message));for(const e of s.status.errors)addEvent(customerMessage(e));
  renderPatients();renderList();renderDetail();updateButtons();
+}
+let guideEdition=null;
+function renderEditionGuide(id){
+ if(guideEdition===id)return;guideEdition=id;
+ const client=id==='client';
+ $('#settings').innerHTML=`<div class="hero"><div><h1>${client?'Hướng dẫn tự điền trên Open Dental':'Hướng dẫn lưu thanh toán'}</h1><p>Kiểm tra đúng bệnh nhân, tài liệu và từng dịch vụ trước khi thực hiện.</p></div></div><div class="card settings-card"><h2>Các bước thực hiện</h2><ol><li>Tìm và chọn đúng bệnh nhân.</li><li>Mở PDF trong Finished Claims và đối chiếu đầy đủ thông tin.</li><li>${client?'Mở Open Dental trên cùng máy, giữ màn hình không khóa. Bấm <b>Tự điền trên OD · Chưa lưu</b> và chờ tool hoàn tất.':'Bấm <b>Lưu khoản thanh toán</b> sau khi đối chiếu chính xác.'}</li><li>${client?'Kiểm tra bản nháp trên Open Dental rồi tự lưu hoặc đóng. Tool không bấm lưu.':'Chờ thông báo xác minh thành công. Nếu chưa xác minh, bấm <b>Kiểm tra kết quả</b>; không gửi lại khoản thanh toán.'}</li></ol><p>${client?'Không thao tác chuột hoặc bàn phím khi tool đang điền. Sau khi tự lưu hoặc đóng trên Open Dental, kết thúc bản nháp trong tool và mở lại hồ sơ để đối chiếu.':'Khoản thanh toán dùng loại Insurance Paid. Làm mới Account trong Open Dental để xem sau khi có thông báo lưu thành công.'}</p></div>`;
 }
 function renderPatients(){
  const b=state.patientBrowser||{patients:[],documents:[]};
@@ -50,8 +56,8 @@ function renderDetail(){
  <h3 class="section-title">Note dự kiến</h3><div class="note-preview">${esc(noteOf(p))}</div>
  <h3 class="section-title">Thông tin bệnh nhân OD</h3><div class="field-grid">${field('Patient ID / Chart',r.patient?`${r.patient.PatNum} / ${r.patient.ChartNumber||'—'}`:'—')}${field('Họ tên OD',r.patient?`${r.patient.LName}, ${r.patient.FName} ${r.patient.MiddleI||''}`:'—')}${field('Ngày sinh OD',r.patient?.Birthdate)}${field('Subscriber ID / Carrier',r.plan?`${r.plan.SubscriberID||'—'} / ${r.plan.CarrierName||'—'}`:'—')}${field('Tên nhóm / Group',r.plan?`${r.plan.GroupName||''} / ${r.plan.GroupNum}`:'—')}${field('Tổng phân bổ',usd(r.splits.reduce((n,s)=>n+s.amountCents,0)))}</div>
  <h3 class="section-title">Phân bổ thanh toán theo dịch vụ</h3><table><thead><tr><th>Code / Ngày</th><th>Răng</th><th>Bác sĩ</th><th>Mô tả OD</th><th class="num">Số tiền</th></tr></thead><tbody>${r.splits.map(s=>`<tr><td>${esc(s.code)}<br>${esc(s.date)}</td><td>${esc(s.tooth||'—')}</td><td>${esc(s.providerAbbr)}</td><td>${esc(s.description)}</td><td class="num">${usd(s.amountCents)}</td></tr>`).join('')}</tbody></table>
- <div class="actions"><button class="primary" data-action="fill-preview" data-blocked="${blocked||!!state.preview||!!state.pendingSave}">Tự điền trên OD · Chưa lưu</button><button data-action="save-payment" data-blocked="${blocked||!!state.preview||!!state.pendingSave||!item.remote||!state.patientBrowser.connected}">Lưu trực tiếp</button>${state.preview?'<button data-action="close-preview">Đóng bản nháp OD</button>':''}<button class="small danger" data-action="remove">Bỏ khỏi hàng đợi</button></div>
- <p class="action-note">Tự điền chỉ mở và điền bản nháp trên Open Dental, chưa lưu. Lưu trực tiếp là thao tác riêng qua kết nối dữ liệu; hãy đóng bản nháp trước khi chọn cách này. Nếu chưa rõ kết quả lưu, bấm Kiểm tra kết quả trước khi thử lại.</p>`;
+ <div class="actions">${state.edition==='client'?`<button class="primary" data-action="fill-preview" data-blocked="${blocked||!!state.preview||!!state.pendingSave}">Tự điền trên OD · Chưa lưu</button>${state.preview?'<button data-action="close-preview">Đóng bản nháp OD</button>':''}`:`<button class="primary" data-action="save-payment" data-blocked="${blocked||!!state.pendingSave||!item.remote||!state.patientBrowser.connected||!state.apiPaymentReady}">Lưu khoản thanh toán</button>`}<button class="small danger" data-action="remove">Bỏ khỏi hàng đợi</button></div>
+ <p class="action-note">${state.edition==='client'?'Chỉ tự điền bản nháp trên Open Dental, chưa lưu. Kiểm tra rồi tự lưu hoặc đóng trong Open Dental.':(state.apiPaymentReady?'Khoản thanh toán được gửi qua kết nối dữ liệu và xác minh lại trước khi báo thành công. Nếu chưa rõ kết quả, bấm Kiểm tra kết quả; không lưu lại.':'Chức năng lưu chưa được kích hoạt. Vui lòng liên hệ bộ phận hỗ trợ.')}</p>`;
  updateButtons();
 }
 async function renderPdf(id,container){

@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {readPatientContext} from './context.js';
 import {createDirectPaymentWriter,directWritesEnabled} from './directPayment.js';
 import {databaseDiagnostics} from './databaseDiagnostics.js';
+import {createOdApiPaymentWriter,apiPaymentStatus} from './odApiPayment.js';
 import {myisamReceipt} from './myisamPayment.js';
 export const validId=s=>/^[1-9]\d{0,17}$/.test(String(s??''));
 const like=s=>`%${s.replace(/[\\%_]/g,m=>'\\'+m)}%`;
@@ -24,6 +25,8 @@ export function searchSql(query={}) {
 export function createRepository(pool){return {
  diagnostics:()=>databaseDiagnostics(pool),
  postDirect:createDirectPaymentWriter(pool),
+ postApi:createOdApiPaymentWriter(pool),
+ apiStatus:()=>apiPaymentStatus(pool),
  async directReceipt(id){
   try{const [rows]=await pool.execute('SELECT CAST(PayNum AS CHAR) AS payNum FROM luk_metlife_postings WHERE OperationId=?',[id]);if(rows[0])return rows[0];}
   catch(e){if(e.code!=='ER_NO_SUCH_TABLE')throw e;}

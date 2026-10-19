@@ -1,3 +1,5 @@
+const edition=process.argv[2]||'client';
+if(!['client','api-od'].includes(edition))throw new Error('Invalid test edition');
 const fixtureGroup=process.env.METLIFE_TEST_GROUP||'G123';
 const fixtureClaim=process.env.METLIFE_TEST_CLAIM||'1234567890 99';
 const {_electron:electron}=require('playwright');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const os=require('node:os');const http=require('node:http');
@@ -11,12 +13,13 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   calls.push(req.url);if(req.headers.authorization!=='Bearer '+token&&req.headers['x-luk-desktop']!=='metlife'){res.writeHead(401);return res.end('{}');}
   const url=new URL(req.url,'http://localhost');let data;
   if(url.pathname==='/api/metlife/operations'&&req.method==='POST'){
-   let body='';for await(const chunk of req)body+=chunk;const parsed=JSON.parse(body);assert.equal(parsed.transport,'direct-db');preparedPlan={...parsed.draft,paymentTypeDefNum:'10',mode:'save-authorized'};data={operationId:'11111111-1111-4111-8111-111111111111',plan:preparedPlan};
+   let body='';for await(const chunk of req)body+=chunk;const parsed=JSON.parse(body);assert.equal(parsed.transport,'od-api');preparedPlan={...parsed.draft,paymentTypeDefNum:'10',mode:'save-authorized'};data={operationId:'11111111-1111-4111-8111-111111111111',plan:preparedPlan};
   }
   else if(url.pathname.endsWith('/post'))data={posted:true,payNum:'777'};
   else if(url.pathname.endsWith('/verify'))data=scenario==='verified'?{verified:true,payNum:'777',splitNums:['1','2','3'],amount:'442.00'}:{verified:false,reason:'fixture uncertain'};
   else if(url.pathname.endsWith('/abort'))data={released:false};
-  else if(/^\/api\/metlife\/operations\/[^/]+$/.test(url.pathname))data={state:'unverified',transport:'direct-db'};
+  else if(/^\/api\/metlife\/operations\/[^/]+$/.test(url.pathname))data={state:'unverified',transport:'od-api'};
+  else if(url.pathname.endsWith('/diagnostics/api'))data={ready:scenario!=='not-configured',configured:scenario!=='not-configured',supportsExactAllocation:true,version:'25.1.11.0'};
   else if(url.pathname.endsWith('/diagnostics/database'))data={readOnly:true,capturedAt:new Date().toISOString(),ready:false,schemaProblems:['payment dùng MyISAM; adapter hiện cần InnoDB.'],configurationProblems:[],tables:[{TABLE_NAME:'payment',ENGINE:'MyISAM'}],columns:[],preferences:[],limitations:[]};
   else if(url.pathname.endsWith('/health'))data={db:true};
   else if(url.pathname==='/api/metlife/patients')data={patients:[patient,{...patient,PatNum:'1279',FName:'OTHER'}],page:0,hasMore:false};
@@ -29,7 +32,8 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const url=`http://127.0.0.1:${server.address().port}`;
  const pairing=path.join(temp,'connection.json');fs.writeFileSync(pairing,JSON.stringify({url,token}));
- const a=await electron.launch({env:{...process.env,METLIFE_SERVER_URL:url},args:[root,`--user-data-dir=${temp}/userdata`],...(process.env.METLIFE_ELECTRON_PATH?{executablePath:process.env.METLIFE_ELECTRON_PATH}:{}),timeout:30000});
+ const a=await electron.launch({env:{...process.env,METLIFE_SERVER_URL:url},args:[root,`--user-data-dir=${temp}/userdata`,`--metlife-edition=${edition}`],...(process.env.METLIFE_ELECTRON_PATH?{executablePath:process.env.METLIFE_ELECTRON_PATH}:{}),timeout:30000});
+ const userData=await a.evaluate(({app})=>app.getPath('userData'));
  let page;
  try{
   page=await a.firstWindow();page.setDefaultTimeout(30000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -53,17 +57,22 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
    require('./lib/windows.cjs').runWindows=async(_resources,request)=>{globalThis.odTestActions.push(request.action);if(request.action==='save-preview')throw new Error('Auto fill must never click Save');return {ok:true,windowHandle:'999',paymentTypeApplied:true,splitsApplied:true,saveInvoked:request.action==='save-preview'};};
   },root);
   const fill=page.locator('[data-action="fill-preview"]'),save=page.locator('[data-action="save-payment"]');
-  assert.equal(await fill.isEnabled(),true);await fill.click();
-  await page.waitForFunction(()=>document.querySelector('#status-text').textContent.includes('Chưa lưu')&&document.body.getAttribute('aria-busy')!=='true');
-  assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),['fill-preview']);
-  assert.ok(!calls.includes('/api/metlife/operations'));
-  assert.equal(await save.isDisabled(),true);assert.equal(await fill.isDisabled(),true);
-  await page.click('[data-action="close-preview"]');
-  await page.waitForFunction(()=>document.body.getAttribute('aria-busy')!=='true');
-  assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),['fill-preview','close-preview']);
-  await a.evaluate(()=>{globalThis.odTestActions=[];});
-  await page.click('[data-tab="patients"]');await page.click('[data-document="55"]');
-  await page.waitForFunction(()=>document.body.getAttribute('aria-busy')!=='true');
+  if(edition==='client'){
+   assert.equal(await save.count(),0);
+   const denied=await page.evaluate(()=>window.metlife.call('save-payment','not-an-item'));
+   assert.equal(denied.ok,false);assert.ok(!calls.includes('/api/metlife/operations'));
+   assert.equal(await fill.isEnabled(),true);await fill.click();
+   await page.waitForFunction(()=>document.querySelector('#status-text').textContent.includes('Chưa lưu')&&document.body.getAttribute('aria-busy')!=='true');
+   assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),['fill-preview']);
+   assert.ok(!calls.includes('/api/metlife/operations'));assert.equal(await fill.isDisabled(),true);
+   await page.click('[data-action="close-preview"]');await page.waitForFunction(()=>document.body.getAttribute('aria-busy')!=='true');
+   assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),['fill-preview','close-preview']);
+   console.log('Client-only edition: preview and close only; no Save button, no posting request, no OD Save invocation.');
+   return;
+  }
+  assert.equal(await fill.count(),0);
+  const denied=await page.evaluate(()=>window.metlife.call('fill-preview','not-an-item'));
+  assert.equal(denied.ok,false);assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),[]);
   assert.equal(await page.locator('#detail table:nth-of-type(2) tbody tr').count(),3);
   await save.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(root,'test-results/direct-db-splits.png')});
   assert.equal(await save.isEnabled(),true);await save.click();
@@ -76,9 +85,16 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   await page.waitForFunction(()=>!document.querySelector('#pending-save-banner').hidden);
   await page.waitForFunction(()=>document.body.getAttribute('aria-busy')!=='true');
   assert.equal(await save.isDisabled(),true);assert.match(await page.locator('#status-text').innerText(),/không lưu lại/i);
-  assert.ok(fs.existsSync(path.join(temp,'userdata','pending-save.json')));
-  scenario='verified';await page.click('#verify-save');await page.waitForFunction(()=>document.querySelector('#pending-save-banner').hidden).catch(async e=>{console.error('Recovery status:',await page.locator('#status-text').innerText(), 'Calls:',calls);throw e;});assert.ok(!fs.existsSync(path.join(temp,'userdata','pending-save.json')));
-  assert.equal(await page.locator('[data-action="fill-preview"]').count(),1);await page.click('[data-tab="settings"]');assert.match(await page.locator('#settings').innerText(),/Hướng dẫn/);
+  assert.ok(fs.existsSync(path.join(userData,'pending-save.json')));
+  scenario='verified';await page.click('#verify-save');await page.waitForFunction(()=>document.querySelector('#pending-save-banner').hidden).catch(async e=>{console.error('Recovery status:',await page.locator('#status-text').innerText(), 'Calls:',calls);throw e;});assert.ok(!fs.existsSync(path.join(userData,'pending-save.json')));
+  scenario='not-configured';const postsBefore=calls.filter(x=>x.endsWith('/post')).length;
+  await page.click('[data-tab="patients"]');await page.click('[data-document="55"]');await page.waitForFunction(()=>document.body.getAttribute('aria-busy')!=='true');
+  assert.equal(await save.isDisabled(),true);
+  assert.match(await page.locator('.action-note').innerText(),/chưa được kích hoạt/i);
+  const rejected=await page.evaluate(async()=>{const state=await window.metlife.call('state');return window.metlife.call('save-payment',state.data.items[0].id);});
+  assert.equal(rejected.ok,false);assert.equal(calls.filter(x=>x.endsWith('/post')).length,postsBefore);assert.deepEqual(await a.evaluate(()=>globalThis.odTestActions),[]);
+  await page.screenshot({path:path.join(root,'test-results/api-not-configured.png')});
+  assert.equal(await page.locator('[data-action="fill-preview"]').count(),0);await page.click('[data-tab="settings"]');assert.match(await page.locator('#settings').innerText(),/Hướng dẫn/);
   for(const tab of ['patients','queue','settings','activity']){await page.click(`[data-tab="${tab}"]`);assert.doesNotMatch(await page.locator('body').innerText(),/\b(DB|SQL|JSON|schema|SERVER|Bridge|ProcNum|DocNum|PlanNum|InsSubNum|InnoDB|MyISAM|snapshot|OCR|Electron)\b/i);}
   assert.deepEqual(errors,[]);console.log('Independent preview and request save UI passed: synthetic PDF, detailed review, post request, zero Windows automation calls, verified readback, uncertain journal and retry block. Simulated SERVER; no clinic writes.');
  }catch(e){console.error('Synthetic UI failure:',e.message,'Status:',page?await page.locator('#status-text').innerText().catch(()=>'?'):'no page','Calls:',calls);throw e;}finally{await a.evaluate(({app})=>app.exit(0)).catch(()=>{});await a.close();await new Promise(r=>server.close(r));fs.rmSync(temp,{recursive:true,force:true});}

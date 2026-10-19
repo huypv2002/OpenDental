@@ -4,6 +4,14 @@ const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {createHash}=require('node:crypto');
 const windows=require('./lib/windows.cjs');
+const {resolveEdition,assertEditionAction}=require('./lib/edition.cjs');
+const edition=resolveEdition({packaged:app.isPackaged,metadata:require('./package.json').metlifeEdition,argv:process.argv});
+const profileBase=app.getPath('userData');
+app.setName(edition.productName);
+const profilePath=path.join(profileBase,edition.profile);
+require('node:fs').mkdirSync(profilePath,{recursive:true});
+app.setPath('userData',profilePath);
+if(process.platform==='win32')app.setAppUserModelId(edition.appId);
 let win,workspace,folder='',watchTimer=null,busy=false,scanBusy=false,activeDraft=null;
 const resources=()=>app.isPackaged?path.join(process.resourcesPath,'windows'):path.join(__dirname,'windows');
 const rootUrl=pathToFileURL(path.join(__dirname,'renderer/index.html')).href;
@@ -13,9 +21,11 @@ const status={message:'Sẵn sàng nhập PDF MetLife.',watching:false,platform:
 const stamps=new Map();
 let serverClient=null;
 let pendingSave=null;
+let apiPaymentStatus={ready:false};
+async function refreshApiStatus(){if(edition.id==='api-od')apiPaymentStatus=await serverClient.apiStatus().catch(()=>({ready:false}));}
 const patientBrowser={connected:false,url:'',patients:[],page:0,hasMore:false,selectedPatient:null,documents:[],openedId:null};
 async function audit(event,data={}){const dest=path.join(app.getPath('userData'),'audit.jsonl');await fs.appendFile(dest,JSON.stringify({at:new Date().toISOString(),event,...data})+'\n',{mode:0o600});}
-function state(){return {...workspace.state(),patientBrowser:{...patientBrowser},pendingSave:pendingSave?{...pendingSave}:null,status:{...status},version:app.getVersion()};}
+function state(){return {...workspace.state(),patientBrowser:{...patientBrowser},pendingSave:pendingSave?{...pendingSave}:null,status:{...status},version:app.getVersion(),edition:edition.id,editionName:edition.displayName,apiPaymentReady:apiPaymentStatus.ready===true};}
 function notify(){if(win&&!win.isDestroyed())win.webContents.send('metlife:state',state());}
 async function scan(){
  if(scanBusy)return;scanBusy=true;status.errors=[];notify();
@@ -42,9 +52,10 @@ async function connectLocal(){
  const client=await autoConnect([...(pendingSave?[pendingSave.serverUrl]:[]),process.env.METLIFE_SERVER_URL||'http://SERVER:3008']);
  if(pendingSave&&pendingSave.serverUrl!==client.connection.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi đang chờ.');
  if(serverClient&&serverClient.connection.url!==client.connection.url){workspace.snapshots.clear();Object.assign(patientBrowser,{patients:[],selectedPatient:null,documents:[],openedId:null});}
- serverClient=client;Object.assign(patientBrowser,{connected:true,url:client.connection.url});status.message='Đã kết nối SERVER. Tìm bệnh nhân để bắt đầu.';notify();
+ serverClient=client;await refreshApiStatus();Object.assign(patientBrowser,{connected:true,url:client.connection.url});status.message='Đã kết nối SERVER. Tìm bệnh nhân để bắt đầu.';notify();
 }
 async function call(op,arg){
+ assertEditionAction(edition,op);
  switch(op){
   case 'state':return state();
   case 'reconnect-server':await connectLocal();break;
@@ -63,7 +74,7 @@ async function call(op,arg){
    if(pendingSave&&pendingSave.serverUrl!==c.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi chưa xác minh.');
    await client.health();if(!safeStorage.isEncryptionAvailable())throw new Error('Kho bảo vệ thông tin kết nối chưa sẵn sàng trên máy này.');
    await fs.writeFile(path.join(app.getPath('userData'),'server-connection.enc'),safeStorage.encryptString(JSON.stringify(c)),{mode:0o600});
-   serverClient=client;workspace.snapshots.clear();Object.assign(patientBrowser,{connected:true,url:c.url,patients:[],selectedPatient:null,documents:[],openedId:null});status.message='Đã kết nối SERVER. Có thể tìm bệnh nhân và mở FINISHED CLAM.';break;
+   serverClient=client;await refreshApiStatus();workspace.snapshots.clear();Object.assign(patientBrowser,{connected:true,url:c.url,patients:[],selectedPatient:null,documents:[],openedId:null});status.message='Đã kết nối SERVER. Có thể tìm bệnh nhân và mở FINISHED CLAM.';break;
   }
   case 'disconnect-server':{
    if(activeDraft||pendingSave)throw new Error('Hoàn tất bản nháp/lượt ghi trước khi ngắt kết nối SERVER.');
@@ -88,7 +99,7 @@ async function call(op,arg){
    if(!doc)throw new Error('Chọn PDF thuộc FINISHED CLAM của bệnh nhân.');
    const context=await serverClient.context(patNum);const {validateSnapshot}=await import('./lib/reconcile.mjs');validateSnapshot(context);
    if(String(context.patNum)!==patNum)throw new Error('SERVER trả sai bệnh nhân.');
-   workspace.snapshots.set(patNum,context);
+   workspace.snapshots.set(patNum,context);await refreshApiStatus();
    const bytes=await serverClient.pdf(patNum,doc.DocNum),id=await workspace.addBytes(bytes,doc.FileName,{patNum,docNum:String(doc.DocNum),serverUrl:serverClient.connection.url});
    patientBrowser.openedId=id;status.message='Đã mở PDF và lấy dữ liệu OD mới tự động. Kiểm tra đối chiếu trước khi lưu.';break;
   }
@@ -152,6 +163,7 @@ async function call(op,arg){
    status.message='Đã tự điền trên Open Dental. Chưa lưu. Kiểm tra bản nháp trên OD; bạn tự quyết định lưu hoặc đóng bản nháp.';break;
   }
   case 'save-payment':{
+   await refreshApiStatus();if(!apiPaymentStatus.ready)throw new Error('Chức năng lưu chưa được kích hoạt. Vui lòng liên hệ bộ phận hỗ trợ.');
    if(activeDraft||pendingSave)throw new Error('Còn bản nháp hoặc lượt ghi chưa xác minh. Hoàn tất lượt trước.');
    const id=idArg(arg),item=workspace.items.get(id);
    if(!item.remote||!serverClient||item.remote.serverUrl!==serverClient.connection.url)throw new Error('Lưu cần PDF đã chọn từ SERVER hiện tại.');
@@ -162,7 +174,7 @@ async function call(op,arg){
    workspace.snapshots.set(item.remote.patNum,fresh);
    const draft=workspace.plan(id);
    if(JSON.stringify(reviewed)!==JSON.stringify(draft))throw new Error('Thông tin OD đã đổi. Kiểm tra lại bảng đối chiếu mới trước khi lưu.');
-   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft,transport:'direct-db'});
+   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft,transport:'od-api'});
    pendingSave={operationId:prepared.operationId,serverUrl:serverClient.connection.url,itemId:id,at:new Date().toISOString(),state:'started'};
    await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
    notify();
@@ -190,14 +202,14 @@ async function call(op,arg){
   case 'verify-save':{
    if(!pendingSave||!serverClient||pendingSave.serverUrl!==serverClient.connection.url)throw new Error('Kết nối đúng SERVER của lượt ghi đang chờ.');
    const operation=await serverClient.operation(pendingSave.operationId);
-   if(operation.transport==='od-ui'&&operation.state==='prepared'){
+   if(edition.id==='client'&&operation.transport==='od-ui'&&operation.state==='prepared'){
     const inspected=await windows.runWindows(resources(),{action:'inspect'});
     if(Array.isArray(inspected.modals)&&inspected.modals.length===0){
      const aborted=await serverClient.abort(pendingSave.operationId);
      if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;activeDraft=null;workspace.preview=null;status.message='Lượt trước chưa lưu. Mở lại hồ sơ để đối chiếu.';break;}
     }
    }
-   if(operation.transport==='direct-db'&&['prepared','failed-no-write','aborted-no-change'].includes(operation.state)){
+   if(['direct-db','od-api'].includes(operation.transport)&&['prepared','failed-no-write','aborted-no-change'].includes(operation.state)){
     const aborted=await serverClient.abort(pendingSave.operationId);
     if(aborted.released){await fs.unlink(path.join(app.getPath('userData'),'pending-save.json')).catch(()=>{});pendingSave=null;status.message='SERVER xác nhận lượt trước chưa ghi dữ liệu. Tải lại hồ sơ để đối chiếu.';break;}
    }
@@ -239,7 +251,7 @@ app.whenReady().then(async()=>{
  try{const saved=JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'pending-save.json'),'utf8'));if(typeof saved.operationId==='string'&&typeof saved.serverUrl==='string')pendingSave=saved;}catch{}
  const {loadConfig}=await import('./lib/config.mjs');
  try{workspace.config=loadConfig(JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'settings.json'),'utf8')));}catch{}
- win=new BrowserWindow({width:1400,height:920,minWidth:1050,minHeight:700,title:'LUK MetLife Assistant',webPreferences:{devTools:!app.isPackaged,preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
+ win=new BrowserWindow({width:1400,height:920,minWidth:1050,minHeight:700,title:edition.productName,webPreferences:{devTools:!app.isPackaged,preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(e,url)=>{if(url!==rootUrl)e.preventDefault();});
  ipcMain.handle('metlife:call',async(event,op,arg)=>{
   if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||event.senderFrame.url!==rootUrl)throw new Error('Untrusted sender');

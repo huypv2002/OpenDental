@@ -1,3 +1,16 @@
+## Bản hiện tại 0.5.0 — hai ứng dụng độc lập
+
+- **LUK MetLife Client**: chỉ tự điền và đóng bản nháp OD, không có nút gửi thanh toán. Chạy source: `npm run start:client` (hoặc `npm start`).
+- **LUK MetLife API**: chỉ gửi thanh toán qua API OD, không có tự điền và không đóng gói bộ điều khiển OD. Chạy source: `npm run start:api`.
+
+Mỗi bản có EXE, app ID, thư mục dữ liệu và khóa single-instance riêng. Có thể mở cả hai. Bản đóng gói khóa edition trong metadata, không cho đổi bằng tham số khởi chạy. Quyền thao tác được kiểm tra ở main process.
+
+**Trạng thái phòng khám:** chưa có key API và OD 24.3 chưa đáp ứng phân bổ từng procedure theo endpoint Partial. Vì vậy Client dùng được chức năng tự điền; bản API chỉ xem/đối chiếu, khóa Lưu cho tới khi được cấu hình hợp lệ. Không có bước ghi SQL hay Save trên client thay thế cho API. Không triển khai bỏ key hoặc sửa CDT.
+
+Cấu hình nội bộ SERVER tham khảo `.env.metlife-api.example` ở repo gốc. Key chỉ đặt trên SERVER. Backend yêu cầu OD >=25.1.11, API được bật và cặp key được cấp quyền Payments; mặc định tắt. Sau POST tạo payment, lưu PayNum vào journal trước PUT Partial; mất phản hồi giữ trạng thái chưa xác minh, không tự retry. Nghiệm thu clone với API thật vẫn chưa được thực hiện.
+
+Build: `npm run dist:win` tạo hai EXE ở `dist/client` và `dist/api-od`. Các mục 0.4.x dưới đây là lịch sử, không mô tả bản hiện tại.
+
 ## Bản hiện tại 0.4.2 — tách Tự điền và Lưu trực tiếp
 
 **Tự điền trên OD · Chưa lưu** chỉ mở và điền bản nháp trên client OD, không bấm Save, không gọi endpoint post/prepare. Người dùng kiểm tra rồi tự lưu hoặc đóng trên OD.

@@ -78,3 +78,14 @@ test('UI Save authorization rejects financial drift and does not advance a prepa
   context=before();assert.equal((await c.abort(op.operationId)).released,true);
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
+test('API partial failure persists created receipt and blocks replay/abort after coordinator restart',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-api-post-'));let context=before(),apiCalls=0;
+ const repository={context:async()=>context,pdf:async()=>({sha256:hash}),postApi:async(_op,progress)=>{apiCalls++;await progress({payNum:'88',stage:'created'});throw Object.assign(new Error('Synthetic partial request failure'),{noWrite:false});}};
+ try{
+  const c=createPostingCoordinator({repository,directory:dir});const op=await c.prepare({patNum:'99',docNum:'1',draft:draft(),transport:'od-api'});
+  await assert.rejects(c.post(op.operationId));
+  const saved=JSON.parse(await fs.readFile(path.join(dir,op.operationId+'.json'),'utf8'));assert.equal(saved.receipt.payNum,'88');assert.equal(saved.receipt.stage,'created');
+  const restart=createPostingCoordinator({repository,directory:dir});await assert.rejects(restart.post(op.operationId));assert.equal(apiCalls,1);assert.equal((await restart.abort(op.operationId)).released,false);
+  context=posted(saved.plan);assert.equal((await restart.verify(op.operationId)).verified,true);
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+});

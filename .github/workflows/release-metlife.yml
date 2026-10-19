@@ -65,10 +65,16 @@ jobs:
       - run: npm run test:connect --prefix metlife-electron
       - run: npm run test:ui --prefix metlife-electron
       - run: npm run dist:win --prefix metlife-electron
+      - run: node metlife-electron/scripts/verify-editions.cjs
       - uses: actions/upload-artifact@v4
         with:
-          name: LUK-MetLife-0.4.2-Windows
-          path: metlife-electron/dist/*.exe
+          name: LUK-MetLife-Client-0.5.0-Windows
+          path: metlife-electron/dist/client/*.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LUK-MetLife-API-OD-0.5.0-Windows
+          path: metlife-electron/dist/api-od/*.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

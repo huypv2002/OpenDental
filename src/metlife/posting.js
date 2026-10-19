@@ -50,7 +50,7 @@ export function createPostingCoordinator({repository,directory}){
  return {
   prepare:args=>serial(async()=>{
    await ensureDirectory();const {patNum,docNum,draft,transport='od-ui'}=args||{};
-   if(!['od-ui','direct-db'].includes(transport))throw new Error('Invalid posting transport');
+   if(!['od-ui','direct-db','od-api'].includes(transport))throw new Error('Invalid posting transport');
    if(!validId(patNum)||!validId(docNum)||String(draft?.patNum)!==String(patNum))throw new Error('Invalid document identity');
    const lock=path.join(dir,'patient-'+patNum+'.lock');let handle;
    try{handle=await fs.open(lock,'wx',0o600);}catch(e){if(e.code==='EEXIST')throw new Error('Bệnh nhân đang có lượt ghi chưa xác minh. Kiểm tra lượt trước; không ghi lại.');throw e;}
@@ -87,11 +87,12 @@ export function createPostingCoordinator({repository,directory}){
   post:id=>serial(async()=>{
    const op=await read(id);
    if(op.state==='verified')return op.result;
-   if(op.transport!=='direct-db'||op.state!=='prepared'||!repository.postDirect)throw new Error('Lượt ghi không sẵn sàng. Kiểm tra kết quả, không gửi lại.');
+   const writer=op.transport==='od-api'?repository.postApi:op.transport==='direct-db'?repository.postDirect:null;
+   if(!writer||op.state!=='prepared')throw new Error('Lượt ghi không sẵn sàng. Kiểm tra kết quả, không gửi lại.');
    const pdf=await repository.pdf(op.patNum,op.docNum);
    if(pdf.sha256!==op.plan.sha256)throw new Error('PDF changed before posting');
    op.state='posting';await save(op);
-   try{op.receipt=await repository.postDirect(op);op.state='posted';await save(op);return {posted:true,...op.receipt};}
+   try{op.receipt=await writer(op,async receipt=>{op.receipt=receipt;await save(op);});op.state='posted';await save(op);return {posted:true,...op.receipt};}
    catch(e){op.state=e.noWrite?'failed-no-write':'unverified';op.error=e.message;await save(op);throw e;}
   }),
   verify:id=>serial(async()=>{
@@ -110,7 +111,7 @@ export function createPostingCoordinator({repository,directory}){
   abort:id=>serial(async()=>{
    const op=await read(id);if(op.state==='aborted-no-change')return {released:true};if(op.state==='verified')return {released:false,reason:'Already verified'};
    if(op.transport==='od-ui'&&['ui-saving','unverified'].includes(op.state))return {released:false,reason:'Đã cấp quyền Save trên OD; chỉ kiểm tra kết quả, không ghi lại.'};
-   if(op.transport==='direct-db'&&!['prepared','failed-no-write'].includes(op.state))return {released:false,reason:'Transaction có thể đã commit; chỉ xác minh, không ghi lại.'};
+   if(['direct-db','od-api'].includes(op.transport)&&!['prepared','failed-no-write'].includes(op.state))return {released:false,reason:'Transaction có thể đã commit; chỉ xác minh, không ghi lại.'};
    const after=await repository.context(op.patNum);
    // Only release a pre-save failure when financial records are byte-for-byte unchanged.
    const financial=s=>JSON.stringify({payment:s.tables.payment,paysplit:s.tables.paysplit,claimpayment:s.tables.claimpayment,claimproc:s.tables.claimproc});

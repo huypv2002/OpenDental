@@ -47,6 +47,7 @@ export class MetlifeClient{
  operation(id){return this.request(`/operations/${encodeURIComponent(id)}`);}
  pending(patNum){return this.request(`/patients/${encodeURIComponent(patNum)}/pending`);}
  health(){return this.request('/health');}
+ apiStatus(){return this.request('/diagnostics/api');}
  diagnostics(){return this.request('/diagnostics/database');}
  search(q,kind='all',page=0){return this.request('/patients?'+new URLSearchParams({q,kind,page:String(page)}));}
  documents(patNum){return this.request(`/patients/${encodeURIComponent(patNum)}/documents`);}

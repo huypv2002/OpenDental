@@ -95,3 +95,11 @@ Sau khi đã cấp quyền Save, mất kết nối hoặc readback chưa khớp 
 Tự điền chỉ mở và điền bản nháp trên OD, chưa Save. Lưu trực tiếp gọi request direct-db, không dùng UI. Không gộp hai thao tác hoặc tự thay đường request bằng Save trên client. Đường request vẫn bị CDT của SERVER từ chối xác minh assembly; dùng tự điền và kiểm tra/lưu thủ công trên OD trong thời gian xử lý backend.
 
 Để chạy source trên R5: đóng tool đang chạy, `git pull origin main` từ repo, `cd metlife-electron`, `npm start`; kiểm tra phiên bản 0.4.2 và hai nút riêng.
+
+## Bản 0.5.0: Client và API OD riêng
+
+Theo lựa chọn cuối của người dùng, không phát hành thêm bản DB Request. Hai EXE: LUK MetLife Client (tự điền, chưa lưu) và LUK MetLife API (chỉ request API OD). App ID và dữ liệu cục bộ tách biệt; giao diện khách không có công cụ chẩn đoán hoặc trường key.
+
+Từ `metlife-electron`, dùng `npm run start:client` hoặc `npm run start:api`. SERVER cần pull/restart để có `/api/metlife/diagnostics/api` và transport `od-api`. Cấu hình mẫu trong `.env.metlife-api.example`, mặc định tắt; không đưa key vào app. OD 24.3 hiện tại và trạng thái chưa có key khiến bản API khóa nút Lưu. Bản này chưa được nghiệm thu API thật; không phải giải pháp bỏ kiểm tra key hoặc CDT.
+
+Tài liệu OD tại thời điểm 2026-10-19: quyền Payments thuộc mức 35 USD/tháng/location, phí do developer trả; Read All miễn phí không bao gồm ghi payment. Nguồn: https://www.opendental.com/site/apipermissions.html .
