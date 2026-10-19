@@ -1,10 +1,12 @@
-// Read-only patient context, reused by the MetLife API. No file export or DB writes.
+// Read-only patient context. Capture every column of OD tables used to plan and
+// verify a payment. No file export or DB writes.
 export const contextTables=['patient','patplan','inssub','insplan','carrier','document','definition','procedurelog','procedurecode','claim','claimproc','claimpayment','payment','paysplit','adjustment','preference','provider'];
+export const captureTables=[...contextTables,'clinic','securitylog','securityloghash'];
 export async function readPatientContext(pool, patArg, {connection=null,forUpdate=false}={}) {
  if(!/^[1-9]\d{0,17}$/.test(String(patArg))) throw new Error('Invalid PatNum');
  const pat=String(patArg),conn=connection||await pool.getConnection();
  const execute=(sql,values)=>conn.execute({sql,dateStrings:true,supportBigNumbers:true,bigNumberStrings:true},values);
-const names=contextTables;
+const names=captureTables;
 const snapshot={capturedAt:new Date().toISOString(),patNum:pat,label:'live-metlife-api',readOnly:true,schema:[],tables:{},warnings:[]};
 let tx=false;
 try {
@@ -16,7 +18,7 @@ try {
  async function read(table, fields, key, values) {
   const available=cols.get(table);
   if (!available?.size) {snapshot.warnings.push(`Missing table ${table}`);return [];}
-  const selected=fields.split(',').filter(f=>available.has(f));
+  const selected=fields==='*'?[...available]:fields.split(',').filter(f=>available.has(f));
   if (!selected.length || !available.has(key)) {snapshot.warnings.push(`Missing fields in ${table}`);return [];}
   const vals=[...new Set(values.filter(v=>v!==null && v!==undefined && String(v)!=='0').map(String))];
   if (!vals.length) return [];
@@ -30,27 +32,30 @@ try {
   return rows;
  }
  const t=snapshot.tables;
- t.patient=await read('patient','PatNum,ChartNumber,FName,LName,MiddleI,Birthdate,Guarantor,PatStatus,ImageFolder,BalTotal,EstBalance,ClinicNum','PatNum',[pat]);
+ t.patient=await read('patient','*','PatNum',[pat]);
  if (t.patient.length!==1) throw new Error('Patient did not resolve to exactly one row.');
  t.preference=await read('preference','PrefName,ValueString','PrefName',['ProgramVersion','DataBaseVersion','DocPath','AtoZfolderUsed','AtoZfolder','AtoZFolder','ImageStore','ClaimPaymentBatchOnly','RigorousAccounting']);
- t.definition=await read('definition','DefNum,Category,ItemName,ItemOrder,IsHidden,ItemValue','Category',[10,18,32]);
- t.document=await read('document','DocNum,PatNum,DocCategory,FileName,Description,DateCreated,DateTStamp,ImgType,Note','PatNum',[pat]);
- t.patplan=await read('patplan','PatPlanNum,PatNum,InsSubNum,Ordinal,IsPending','PatNum',[pat]);
- t.inssub=await read('inssub','InsSubNum,PlanNum,Subscriber,SubscriberID','InsSubNum',t.patplan.map(r=>r.InsSubNum));
- t.subscriberpatient=await read('patient','PatNum,FName,LName,MiddleI','PatNum',t.inssub.map(r=>r.Subscriber));
- t.insplan=await read('insplan','PlanNum,CarrierNum,GroupNum,GroupName,PlanType,FeeSched,EmployerNum','PlanNum',t.inssub.map(r=>r.PlanNum));
- t.carrier=await read('carrier','CarrierNum,CarrierName,ElectID','CarrierNum',t.insplan.map(r=>r.CarrierNum));
- t.procedurelog=await read('procedurelog','ProcNum,PatNum,CodeNum,ProcDate,ProcStatus,ProcFee,ToothNum,Surf,ProvNum,ClinicNum','PatNum',[pat]);
- t.provider=await read('provider','ProvNum,Abbr,FName,LName','ProvNum',t.procedurelog.map(r=>r.ProvNum));
- t.procedurecode=await read('procedurecode','CodeNum,ProcCode,Descript,AbbrDesc','CodeNum',t.procedurelog.map(r=>r.CodeNum));
- t.claim=await read('claim','ClaimNum,PatNum,PlanNum,InsSubNum,DateService,DateSent,DateReceived,ClaimStatus,ClaimType,ClaimIdentifier,ClaimFee,InsPayEst,InsPayAmt,DedApplied,WriteOff,ClaimNote','PatNum',[pat]);
- t.claimproc=await read('claimproc','ClaimProcNum,ProcNum,ClaimNum,PatNum,PlanNum,InsSubNum,ProvNum,Status,FeeBilled,InsPayEst,InsPayAmt,DedApplied,WriteOff,ClaimPaymentNum,DateCP,ProcDate,CodeSent,Remarks','PatNum',[pat]);
- t.claimpayment=await read('claimpayment','ClaimPaymentNum,CheckDate,DateIssued,CheckAmt,CheckNum,BankBranch,CarrierName,PayType,Note,IsPartial,SecDateEntry,SecDateTEdit','ClaimPaymentNum',t.claimproc.map(r=>r.ClaimPaymentNum));
- t.paysplit=await read('paysplit','SplitNum,PayNum,PatNum,ProcNum,ProvNum,ClinicNum,SplitAmt,DatePay,DateEntry,UnearnedType,AdjNum,PayPlanNum,PayPlanChargeNum,FkcType,FkToothNum,SecurityHash','PatNum',[pat]);
- const own=await read('payment','PayNum,PatNum,PayDate,DateEntry,PayAmt,PayType,CheckNum,BankBranch,PayNote,DepositNum,SecDateTEdit','PatNum',[pat]);
- const splitPayments=await read('payment','PayNum,PatNum,PayDate,DateEntry,PayAmt,PayType,CheckNum,BankBranch,PayNote,DepositNum,SecDateTEdit','PayNum',t.paysplit.map(r=>r.PayNum));
+ t.definition=await read('definition','*','Category',[10,18,32]);
+ t.document=await read('document','*','PatNum',[pat]);
+ t.patplan=await read('patplan','*','PatNum',[pat]);
+ t.inssub=await read('inssub','*','InsSubNum',t.patplan.map(r=>r.InsSubNum));
+ t.subscriberpatient=await read('patient','*','PatNum',t.inssub.map(r=>r.Subscriber));
+ t.insplan=await read('insplan','*','PlanNum',t.inssub.map(r=>r.PlanNum));
+ t.carrier=await read('carrier','*','CarrierNum',t.insplan.map(r=>r.CarrierNum));
+ t.procedurelog=await read('procedurelog','*','PatNum',[pat]);
+ t.provider=await read('provider','*','ProvNum',t.procedurelog.map(r=>r.ProvNum));
+ t.procedurecode=await read('procedurecode','*','CodeNum',t.procedurelog.map(r=>r.CodeNum));
+ t.claim=await read('claim','*','PatNum',[pat]);
+ t.claimproc=await read('claimproc','*','PatNum',[pat]);
+ t.claimpayment=await read('claimpayment','*','ClaimPaymentNum',t.claimproc.map(r=>r.ClaimPaymentNum));
+ t.paysplit=await read('paysplit','*','PatNum',[pat]);
+ const own=await read('payment','*','PatNum',[pat]);
+ const splitPayments=await read('payment','*','PayNum',t.paysplit.map(r=>r.PayNum));
  t.payment=[...new Map([...own,...splitPayments].map(r=>[String(r.PayNum),r])).values()];
- t.adjustment=await read('adjustment','AdjNum,PatNum,AdjDate,AdjAmt,AdjType,ProcNum,ProvNum,AdjNote','PatNum',[pat]);
+ t.adjustment=await read('adjustment','*','PatNum',[pat]);
+ t.clinic=await read('clinic','*','ClinicNum',[t.patient[0].ClinicNum]);
+ t.securitylog=await read('securitylog','*','PatNum',[pat]);
+ t.securityloghash=await read('securityloghash','*','SecurityLogNum',t.securitylog.map(r=>r.SecurityLogNum));
  if(tx){await conn.rollback();tx=false;}
  return snapshot;
 

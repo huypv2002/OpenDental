@@ -13,15 +13,15 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   calls.push(req.url);if(req.headers.authorization!=='Bearer '+token&&req.headers['x-luk-desktop']!=='metlife'){res.writeHead(401);return res.end('{}');}
   const url=new URL(req.url,'http://localhost');let data;
   if(url.pathname==='/api/metlife/operations'&&req.method==='POST'){
-   let body='';for await(const chunk of req)body+=chunk;const parsed=JSON.parse(body);assert.equal(parsed.transport,'od-api');preparedPlan={...parsed.draft,paymentTypeDefNum:'10',mode:'save-authorized'};data={operationId:'11111111-1111-4111-8111-111111111111',plan:preparedPlan};
+   let body='';for await(const chunk of req)body+=chunk;const parsed=JSON.parse(body);assert.equal(parsed.transport,'direct-db');preparedPlan={...parsed.draft,paymentTypeDefNum:'10',mode:'save-authorized'};data={operationId:'11111111-1111-4111-8111-111111111111',plan:preparedPlan};
   }
   else if(url.pathname.endsWith('/post'))data={posted:true,payNum:'777'};
   else if(url.pathname.endsWith('/verify'))data=scenario==='verified'?{verified:true,payNum:'777',splitNums:['1','2','3'],amount:'442.00'}:{verified:false,reason:'fixture uncertain'};
   else if(url.pathname.endsWith('/abort'))data={released:false};
-  else if(/^\/api\/metlife\/operations\/[^/]+$/.test(url.pathname))data={state:'unverified',transport:'od-api'};
-  else if(url.pathname.endsWith('/diagnostics/api'))data={ready:scenario!=='not-configured',configured:scenario!=='not-configured',supportsExactAllocation:true,version:'25.1.11.0'};
-  else if(url.pathname.endsWith('/diagnostics/database'))data={readOnly:true,capturedAt:new Date().toISOString(),ready:false,schemaProblems:['payment dùng MyISAM; adapter hiện cần InnoDB.'],configurationProblems:[],tables:[{TABLE_NAME:'payment',ENGINE:'MyISAM'}],columns:[],preferences:[],limitations:[]};
-  else if(url.pathname.endsWith('/health'))data={db:true};
+  else if(/^\/api\/metlife\/operations\/[^/]+$/.test(url.pathname))data={state:'unverified',transport:'direct-db'};
+  else if(url.pathname.endsWith('/diagnostics/api'))data={ready:false,configured:false,supportsExactAllocation:false,version:'24.3.61.0'};
+  else if(url.pathname.endsWith('/diagnostics/database'))data={readOnly:true,capturedAt:new Date().toISOString(),ready:scenario!=='not-configured',schemaProblems:[],configurationProblems:[],tables:[],columns:[],preferences:[],limitations:[]};
+  else if(url.pathname.endsWith('/health'))data={db:true,directPaymentEnabled:scenario!=='not-configured'};
   else if(url.pathname==='/api/metlife/patients')data={patients:[patient,{...patient,PatNum:'1279',FName:'OTHER'}],page:0,hasMore:false};
   else if(url.pathname.endsWith('/99/documents'))data={documents:[{DocNum:'55',PatNum:'99',FileName:filename,Description:'Test document',DateCreated:'2026-09-17'}]};
   else if(url.pathname.endsWith('/99/pending'))data={pending:false};

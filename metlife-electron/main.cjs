@@ -21,11 +21,15 @@ const status={message:'Sẵn sàng nhập PDF MetLife.',watching:false,platform:
 const stamps=new Map();
 let serverClient=null;
 let pendingSave=null;
-let apiPaymentStatus={ready:false};
-async function refreshApiStatus(){if(edition.id==='api-od')apiPaymentStatus=await serverClient.apiStatus().catch(()=>({ready:false}));}
+let paymentSaveReady=false;
+async function refreshSaveStatus(){
+ if(edition.id!=='api-od'||!serverClient){paymentSaveReady=false;return;}
+ const health=await serverClient.health().catch(()=>({}));
+ paymentSaveReady=health.directPaymentEnabled===true;
+}
 const patientBrowser={connected:false,url:'',patients:[],page:0,hasMore:false,selectedPatient:null,documents:[],openedId:null};
 async function audit(event,data={}){const dest=path.join(app.getPath('userData'),'audit.jsonl');await fs.appendFile(dest,JSON.stringify({at:new Date().toISOString(),event,...data})+'\n',{mode:0o600});}
-function state(){return {...workspace.state(),patientBrowser:{...patientBrowser},pendingSave:pendingSave?{...pendingSave}:null,status:{...status},version:app.getVersion(),edition:edition.id,editionName:edition.displayName,apiPaymentReady:apiPaymentStatus.ready===true};}
+function state(){return {...workspace.state(),patientBrowser:{...patientBrowser},pendingSave:pendingSave?{...pendingSave}:null,status:{...status},version:app.getVersion(),edition:edition.id,editionName:edition.displayName,paymentSaveReady,apiPaymentReady:paymentSaveReady};}
 function notify(){if(win&&!win.isDestroyed())win.webContents.send('metlife:state',state());}
 async function scan(){
  if(scanBusy)return;scanBusy=true;status.errors=[];notify();
@@ -52,7 +56,7 @@ async function connectLocal(){
  const client=await autoConnect([...(pendingSave?[pendingSave.serverUrl]:[]),process.env.METLIFE_SERVER_URL||'http://SERVER:3008']);
  if(pendingSave&&pendingSave.serverUrl!==client.connection.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi đang chờ.');
  if(serverClient&&serverClient.connection.url!==client.connection.url){workspace.snapshots.clear();Object.assign(patientBrowser,{patients:[],selectedPatient:null,documents:[],openedId:null});}
- serverClient=client;await refreshApiStatus();Object.assign(patientBrowser,{connected:true,url:client.connection.url});status.message='Đã kết nối SERVER. Tìm bệnh nhân để bắt đầu.';notify();
+ serverClient=client;await refreshSaveStatus();Object.assign(patientBrowser,{connected:true,url:client.connection.url});status.message='Đã kết nối SERVER. Tìm bệnh nhân để bắt đầu.';notify();
 }
 async function call(op,arg){
  assertEditionAction(edition,op);
@@ -74,7 +78,7 @@ async function call(op,arg){
    if(pendingSave&&pendingSave.serverUrl!==c.url)throw new Error('Cần kết nối đúng SERVER của lượt ghi chưa xác minh.');
    await client.health();if(!safeStorage.isEncryptionAvailable())throw new Error('Kho bảo vệ thông tin kết nối chưa sẵn sàng trên máy này.');
    await fs.writeFile(path.join(app.getPath('userData'),'server-connection.enc'),safeStorage.encryptString(JSON.stringify(c)),{mode:0o600});
-   serverClient=client;await refreshApiStatus();workspace.snapshots.clear();Object.assign(patientBrowser,{connected:true,url:c.url,patients:[],selectedPatient:null,documents:[],openedId:null});status.message='Đã kết nối SERVER. Có thể tìm bệnh nhân và mở FINISHED CLAM.';break;
+   serverClient=client;await refreshSaveStatus();workspace.snapshots.clear();Object.assign(patientBrowser,{connected:true,url:c.url,patients:[],selectedPatient:null,documents:[],openedId:null});status.message='Đã kết nối SERVER. Có thể tìm bệnh nhân và mở FINISHED CLAM.';break;
   }
   case 'disconnect-server':{
    if(activeDraft||pendingSave)throw new Error('Hoàn tất bản nháp/lượt ghi trước khi ngắt kết nối SERVER.');
@@ -99,7 +103,7 @@ async function call(op,arg){
    if(!doc)throw new Error('Chọn PDF thuộc FINISHED CLAM của bệnh nhân.');
    const context=await serverClient.context(patNum);const {validateSnapshot}=await import('./lib/reconcile.mjs');validateSnapshot(context);
    if(String(context.patNum)!==patNum)throw new Error('SERVER trả sai bệnh nhân.');
-   workspace.snapshots.set(patNum,context);await refreshApiStatus();
+   workspace.snapshots.set(patNum,context);await refreshSaveStatus();
    const bytes=await serverClient.pdf(patNum,doc.DocNum),id=await workspace.addBytes(bytes,doc.FileName,{patNum,docNum:String(doc.DocNum),serverUrl:serverClient.connection.url});
    patientBrowser.openedId=id;status.message='Đã mở PDF và lấy dữ liệu OD mới tự động. Kiểm tra đối chiếu trước khi lưu.';break;
   }
@@ -163,7 +167,7 @@ async function call(op,arg){
    status.message='Đã tự điền trên Open Dental. Chưa lưu. Kiểm tra bản nháp trên OD; bạn tự quyết định lưu hoặc đóng bản nháp.';break;
   }
   case 'save-payment':{
-   await refreshApiStatus();if(!apiPaymentStatus.ready)throw new Error('Chức năng lưu chưa được kích hoạt. Vui lòng liên hệ bộ phận hỗ trợ.');
+   await refreshSaveStatus();if(!paymentSaveReady)throw new Error('Chức năng lưu chưa được kích hoạt. Vui lòng liên hệ bộ phận hỗ trợ.');
    if(activeDraft||pendingSave)throw new Error('Còn bản nháp hoặc lượt ghi chưa xác minh. Hoàn tất lượt trước.');
    const id=idArg(arg),item=workspace.items.get(id);
    if(!item.remote||!serverClient||item.remote.serverUrl!==serverClient.connection.url)throw new Error('Lưu cần PDF đã chọn từ SERVER hiện tại.');
@@ -174,7 +178,7 @@ async function call(op,arg){
    workspace.snapshots.set(item.remote.patNum,fresh);
    const draft=workspace.plan(id);
    if(JSON.stringify(reviewed)!==JSON.stringify(draft))throw new Error('Thông tin OD đã đổi. Kiểm tra lại bảng đối chiếu mới trước khi lưu.');
-   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft,transport:'od-api'});
+   const prepared=await serverClient.prepare({patNum:item.remote.patNum,docNum:item.remote.docNum,draft,transport:'direct-db'});
    pendingSave={operationId:prepared.operationId,serverUrl:serverClient.connection.url,itemId:id,at:new Date().toISOString(),state:'started'};
    await fs.writeFile(path.join(app.getPath('userData'),'pending-save.json'),JSON.stringify(pendingSave),{mode:0o600});
    notify();

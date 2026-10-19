@@ -61,6 +61,18 @@ test('unconfigured API is disabled',async()=>{
  const app=express();app.use(createMetlifeRouter({getToken:()=>'',repository:{}}));const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
  try{assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/health`)).status,503);}finally{await new Promise(r=>server.close(r));}
 });
+test('live context captures every column of payment and paysplit',async()=>{
+ const {readPatientContext}=await import('./context.js');
+ const conn={query:async()=>{},rollback:async()=>{},release(){},execute:async({sql},values)=>{
+  if(sql.includes('INFORMATION_SCHEMA.COLUMNS'))return [[{TABLE_NAME:'patient',COLUMN_NAME:'PatNum'},{TABLE_NAME:'patient',COLUMN_NAME:'ClinicNum'},{TABLE_NAME:'patient',COLUMN_NAME:'FName'},{TABLE_NAME:'patient',COLUMN_NAME:'LName'},{TABLE_NAME:'payment',COLUMN_NAME:'PayNum'},{TABLE_NAME:'payment',COLUMN_NAME:'PayAmt'},{TABLE_NAME:'payment',COLUMN_NAME:'Receipt'},{TABLE_NAME:'paysplit',COLUMN_NAME:'SplitNum'},{TABLE_NAME:'paysplit',COLUMN_NAME:'SecurityHash'},{TABLE_NAME:'paysplit',COLUMN_NAME:'PatNum'},{TABLE_NAME:'preference',COLUMN_NAME:'PrefName'},{TABLE_NAME:'preference',COLUMN_NAME:'ValueString'},{TABLE_NAME:'definition',COLUMN_NAME:'DefNum'},{TABLE_NAME:'definition',COLUMN_NAME:'Category'},{TABLE_NAME:'procedurelog',COLUMN_NAME:'ProcNum'},{TABLE_NAME:'procedurelog',COLUMN_NAME:'PatNum'},{TABLE_NAME:'securitylog',COLUMN_NAME:'SecurityLogNum'},{TABLE_NAME:'securitylog',COLUMN_NAME:'PatNum'}]];
+  if(sql.includes('FROM `patient`')&&sql.includes('`FName`'))return [[{PatNum:'99',ClinicNum:'0',FName:'TEST',LName:'PERSON'}]];
+  if(sql.includes('FROM `payment`')){assert.match(sql,/`Receipt`/);return [[]];}
+  if(sql.includes('FROM `paysplit`')){assert.match(sql,/`SecurityHash`/);return [[]];}
+  return [[]];
+ }};
+ const snapshot=await readPatientContext({getConnection:async()=>conn},'99');
+ assert.equal(snapshot.tables.patient[0].FName,'TEST');assert.ok(snapshot.schema.some(c=>c.COLUMN_NAME==='Receipt'));
+});
 test('live context uses read-only transaction, string dates/IDs and cleans up query failure',async()=>{
  const {readPatientContext}=await import('./context.js');const queries=[];let released=false,rolled=false;
  const conn={query:async q=>queries.push(q),execute:async options=>{assert.equal(options.dateStrings,true);assert.equal(options.bigNumberStrings,true);throw new Error('fixture-stop');},rollback:async()=>{rolled=true;},release:()=>{released=true;}};

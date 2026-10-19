@@ -1,6 +1,6 @@
 import {contextTables,readPatientContext} from './context.js';
 import {validatePostingPlan,verifyPostedPayment} from './posting.js';
-import {paymentRows,financialInsert} from './directPayment.js';
+import {paymentRows,financialInsert,insertPaymentCreateLog,writeTables} from './directPayment.js';
 import {nativeSplitHashes} from './nativeSplitHashes.js';
 export const myisamJournal='luk_metlife_myisam_jobs';
 const execute=(conn,sql,args=[])=>conn.execute({sql,dateStrings:true,supportBigNumbers:true,bigNumberStrings:true},args);
@@ -18,9 +18,10 @@ export function createMyisamWriter(pool,{readContext=readPatientContext,hashSpli
  return async(op,entryUser,conn)=>{
   let locked=false,mayHaveWritten=false;
   try{
-   const [meta]=await execute(conn,`SELECT TABLE_NAME,ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${contextTables.map(()=>'?').join(',')})`,contextTables);
-   if(contextTables.some(t=>!['MYISAM','INNODB'].includes(meta.find(m=>m.TABLE_NAME===t)?.ENGINE?.toUpperCase())))throw new Error('MyISAM adapter thiếu bảng hoặc gặp engine chưa hỗ trợ.');
-   const [columns]=await execute(conn,"SELECT TABLE_NAME,COLUMN_NAME,COLUMN_DEFAULT,IS_NULLABLE,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('payment','paysplit')");
+   const lockedNames=[...new Set([...contextTables,...writeTables])];
+   const [meta]=await execute(conn,`SELECT TABLE_NAME,ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${lockedNames.map(()=>'?').join(',')})`,lockedNames);
+   if(lockedNames.some(t=>!['MYISAM','INNODB'].includes(meta.find(m=>m.TABLE_NAME===t)?.ENGINE?.toUpperCase())))throw new Error('MyISAM adapter thiếu bảng hoặc gặp engine chưa hỗ trợ.');
+   const [columns]=await execute(conn,`SELECT TABLE_NAME,COLUMN_NAME,COLUMN_DEFAULT,IS_NULLABLE,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${writeTables.map(()=>'?').join(',')})`,writeTables);
    if(!columns.some(c=>c.TABLE_NAME==='paysplit'&&c.COLUMN_NAME==='SecurityHash'))throw new Error('MyISAM adapter cần schema OD 24.3 có SecurityHash.');
    const [versions]=await execute(conn,"SELECT PrefName,ValueString FROM preference WHERE PrefName IN ('ProgramVersion','DataBaseVersion')");
    if(['ProgramVersion','DataBaseVersion'].some(n=>!/^24\.3\.\d+\.\d+$/.test(versions.find(v=>v.PrefName===n)?.ValueString||'')))throw new Error('MyISAM adapter chỉ hỗ trợ phiên bản OD/DB 24.3 đã đối chiếu.');
@@ -33,8 +34,8 @@ export function createMyisamWriter(pool,{readContext=readPatientContext,hashSpli
    // A short lock wait fails before clinical mutations; session state is restored.
    await conn.query('SET SESSION lock_wait_timeout=5');
    await conn.query('SET SESSION autocommit=1');
-   const lockedTables=[...contextTables,...(entryUser==='0'?[]:['userod']),myisamJournal];
-   await conn.query('LOCK TABLES '+lockedTables.map(t=>'`'+t+'` '+(['payment','paysplit',myisamJournal].includes(t)?'WRITE':'READ')).join(','));locked=true;
+   const lockedTables=[...new Set([...contextTables,...writeTables,...(entryUser==='0'?[]:['userod']),myisamJournal])];
+   await conn.query('LOCK TABLES '+lockedTables.map(t=>'`'+t+'` '+(writeTables.includes(t)||t===myisamJournal?'WRITE':'READ')).join(','));locked=true;
    const [existing]=await execute(conn,`SELECT OperationId,State,IntentJson FROM ${myisamJournal} WHERE OperationId=? OR (PatNum=? AND PdfHash=?)`,[op.id,op.patNum,op.plan.sha256]);
    if(existing.length){
     const old=existing.find(r=>r.OperationId===op.id);
@@ -75,6 +76,7 @@ export function createMyisamWriter(pool,{readContext=readPatientContext,hashSpli
    mayHaveWritten=true;
    await execute(conn,paymentStatement.sql,paymentStatement.values);
    for(const statement of splitStatements)await execute(conn,statement.sql,statement.values);
+   await insertPaymentCreateLog(conn,plan,fresh,entryUser,columns);
    const after=await readContext(pool,op.patNum,{connection:conn});
    const result=verifyMyisamIntent(after,intent);
    if(!result.verified)throw new Error('MyISAM readback không khớp; giữ khóa để kiểm tra, không ghi lại.');

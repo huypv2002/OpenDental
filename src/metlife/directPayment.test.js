@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {createDirectPaymentWriter,paymentRows,insertFinancialRow} from './directPayment.js';
+import {createDirectPaymentWriter,paymentRows,insertFinancialRow,odSecurityLogHash,paymentCreateLogText} from './directPayment.js';
 import {createPostingCoordinator,validatePostingPlan} from './posting.js';
 const hash='a'.repeat(64);
 function context(){return {capturedAt:new Date().toISOString(),patNum:'99',warnings:[],tables:{patient:[{PatNum:'99',ClinicNum:'2'}],definition:[{DefNum:'10',Category:10,ItemName:'Insurance Paid',IsHidden:0}],procedurelog:[{PatNum:'99',ProcNum:'51',CodeNum:'1',ProvNum:'3',ClinicNum:'2',ProcStatus:2,ProcDate:'2026-09-13',ToothNum:'13'}],procedurecode:[{CodeNum:'1',ProcCode:'D2392',Descript:'Composite'}],provider:[{ProvNum:'3',Abbr:'DOC'}],claimproc:[],payment:[],paysplit:[],claimpayment:[]}};}
@@ -11,7 +11,8 @@ function draft(){return {patNum:'99',sha256:hash,amount:'35.00',date:'2026-09-24
 function fixture(options={}){
  const before=context(),plan=validatePostingPlan(before,draft()),calls=[],rows={payment:[],paysplit:[]};let id=80,receipt=null;
  const maps=paymentRows(plan,'7','2');
- const columns=Object.entries({payment:{...maps.payment,PayNum:0,DateEntry:''},paysplit:{...maps.splits[0],PayNum:0,SplitNum:0,DateEntry:''}}).flatMap(([table,map])=>Object.keys(map).map(k=>({TABLE_NAME:table,COLUMN_NAME:k,COLUMN_DEFAULT:null,IS_NULLABLE:'NO',EXTRA:k===(table==='payment'?'PayNum':'SplitNum')?'auto_increment':''})));
+ const audit={securitylog:{SecurityLogNum:0,PermType:15,UserNum:0,LogText:'',PatNum:'99',CompName:'',FKey:0,LogSource:0,DefNum:0,DefNumError:0,DateTPrevious:''},securityloghash:{SecurityLogHashNum:0,SecurityLogNum:0,LogHash:''}};
+ const columns=Object.entries({payment:{...maps.payment,PayNum:0,DateEntry:''},paysplit:{...maps.splits[0],PayNum:0,SplitNum:0,DateEntry:''},...audit}).flatMap(([table,map])=>Object.keys(map).map(k=>({TABLE_NAME:table,COLUMN_NAME:k,COLUMN_DEFAULT:k==='LogDateTime'?'CURRENT_TIMESTAMP':null,IS_NULLABLE:'NO',EXTRA:{payment:'PayNum',paysplit:'SplitNum',securitylog:'SecurityLogNum',securityloghash:'SecurityLogHashNum'}[table]===k?'auto_increment':''})));
  const conn={
   query:async sql=>{calls.push(sql);},beginTransaction:async()=>calls.push('begin'),
   execute:async({sql},args)=>{
@@ -26,9 +27,15 @@ function fixture(options={}){
     const table=sql.match(/INSERT INTO `(\w+)`/)[1];
     if(options.failSplit&&table==='paysplit')throw new Error('injected split failure');
     const names=sql.match(/\((.*?)\) VALUES/)[1].replaceAll('`','').split(',');
-    const row=Object.fromEntries(names.map((n,i)=>[n,args[i]??'2026-10-18']));row[table==='payment'?'PayNum':'SplitNum']=String(++id);rows[table].push(row);return [{}];
+    const row=Object.fromEntries(names.map((n,i)=>[n,args[i]??'2026-10-18']));
+    const pk={payment:'PayNum',paysplit:'SplitNum',securitylog:'SecurityLogNum',securityloghash:'SecurityLogHashNum'}[table];
+    row[pk]=String(++id);(rows[table]||(rows[table]=[])).push(row);return [{}];
    }
    if(sql.includes('LAST_INSERT_ID'))return [[{id:String(id)}]];
+   if(sql.includes('FROM `securitylog`')){
+    const row=(rows.securitylog||[]).at(-1)||{};
+    return [[{PermType:row.PermType??15,UserNum:row.UserNum??0,LogDateTime:row.LogDateTime||'2026-10-18 12:00:00',LogText:row.LogText||'Payment created',PatNum:row.PatNum||'99',DateTPrevious:row.DateTPrevious||'0001-01-01 00:00:00'}]];
+   }
    if(sql.startsWith('INSERT INTO luk_metlife_postings')){receipt={PayNum:args[4],PlanJson:args[5]};return [{}];}
    throw new Error('Unexpected fixture SQL: '+sql);
   },
@@ -43,6 +50,7 @@ function fixture(options={}){
 test('direct transaction writes exact procedure split and journal before commit',async()=>{
  const f=fixture();const r=await f.writer(f.args);
  assert.equal(r.payNum,'81');assert.equal(f.rows.paysplit[0].PayNum,'81');assert.equal(f.rows.paysplit[0].SplitAmt,'35.00');assert.equal(f.rows.paysplit[0].ProcNum,'51');assert.equal(f.rows.payment[0].SecUserNumEntry,'0');assert.equal(f.rows.paysplit[0].SecUserNumEntry,'0');assert.ok(!f.calls.some(s=>s.includes('FROM userod')));
+ assert.equal(Number(f.rows.securitylog[0].PermType),15);assert.match(f.rows.securitylog[0].LogText,/Insurance Paid/);assert.equal(f.rows.securityloghash.length,1);
  assert.ok(f.calls.findIndex(s=>s.startsWith('INSERT INTO luk_metlife_postings'))<f.calls.indexOf('commit'));
  assert.equal(f.calls.at(-1),'release');
  const writes=f.calls.filter(s=>s.startsWith('INSERT')).length;assert.equal((await f.writer(f.args)).replayed,true);assert.equal(f.calls.filter(s=>s.startsWith('INSERT')).length,writes);
@@ -94,4 +102,11 @@ test('unused OD user environment setting does not block default posting or assig
 });
 test('an explicit authenticated entry user is still validated when supplied by an integration',async()=>{
  const f=fixture({entryUser:7});await f.writer(f.args);assert.equal(f.rows.payment[0].SecUserNumEntry,'7');assert.ok(f.calls.some(s=>s.includes('FROM userod')));
+});
+test('PaymentCreate securitylog text and SHA-256 hash match OD 24.3 concatenation',()=>{
+ const plan={amount:'35.00'},text=paymentCreateLogText(plan,{LName:'PERSON',FName:'TEST'},'');
+ assert.equal(text,"Payment created for PERSON, TEST with payment type 'Insurance Paid', amount '$35.00'");
+ const hash=odSecurityLogHash({permType:15,userNum:0,logDateTime:'2026-10-18 12:00:00',logText:text,patNum:'99',dateTPrevious:'0001-01-01 00:00:00'});
+ assert.match(hash,/^[A-Za-z0-9+/]+=*$/);
+ assert.equal(hash,odSecurityLogHash({permType:15,userNum:0,logDateTime:'2026-10-18 12:00:00',logText:text,patNum:'99',dateTPrevious:''}));
 });

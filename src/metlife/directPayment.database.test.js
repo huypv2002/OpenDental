@@ -23,6 +23,8 @@ test('MariaDB: commit/readback, idempotency, rollback on second split, lost COMM
   const before=await readPatientContext(pool,'99'),plan=validatePostingPlan(before,draft),op={id:randomUUID(),patNum:'99',docNum:'1',before,plan};
   const result=await writer(op);assert.match(result.payNum,/^\d+$/);assert.equal((await writer(op)).replayed,true);
   const after=await readPatientContext(pool,'99');assert.equal(verifyPostedPayment(before,after,plan).verified,true);assert.equal(after.tables.payment.length,1);assert.equal(after.tables.paysplit.length,1);
+  const [logs]=await pool.query('SELECT PermType,LogText FROM securitylog');assert.equal(logs.length,1);assert.equal(Number(logs[0].PermType),15);assert.match(logs[0].LogText,/Insurance Paid/);
+  const [hashes]=await pool.query('SELECT LogHash FROM securityloghash');assert.equal(hashes.length,1);assert.match(hashes[0].LogHash,/^[A-Za-z0-9+/]+=*$/);
   const [createdRows]=await pool.query('SELECT SecUserNumEntry FROM payment UNION ALL SELECT SecUserNumEntry FROM paysplit');assert.equal(createdRows.length,2);assert.ok(createdRows.every(r=>Number(r.SecUserNumEntry)===0));
   const report=await databaseDiagnostics(pool,{enabled:()=>true});assert.equal(report.ready,true);
   // Fail after the payment and first split were inserted. All rows must roll back.
