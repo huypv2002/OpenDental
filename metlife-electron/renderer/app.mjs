@@ -320,7 +320,11 @@ function renderHistoryDetail(item){
 
   ${splitsHtml}
 
-  ${item.Message?`<div class="notice ${item.Status==='SUCCESS'?'ok':''}"><b>Thông báo hệ thống:</b> ${esc(item.Message)}</div>`:''}
+  ${item.Message?`
+   <div class="notice ${item.Status==='SUCCESS'?'ok':'failed'}" style="margin-top:12px;padding:12px;border-radius:8px;border:1px solid ${item.Status==='SUCCESS'?'#86efac':'#fca5a5'};background:${item.Status==='SUCCESS'?'#f0fdf4':'#fef2f2'};color:${item.Status==='SUCCESS'?'#166534':'#991b1b'};">
+    <b>${item.Status==='SUCCESS'?'✓ Xử lý thành công:':'⚠️ Lần quét này thất bại:'}</b> ${esc(item.Message)}
+    <div style="margin-top:4px;font-size:12px;opacity:0.85;">Thời gian ghi nhận: ${esc(item.ProcessedAt||item.CreatedAt||'N/A')}${item.Status!=='SUCCESS'?' — Hãy bấm nút "⚡ Quét thư mục Server ngay" ở trên để hệ thống tự động thử lại file lỗi với bản vá mới.':''}</div>
+   </div>`:''}
  `;
 }
 

@@ -150,10 +150,10 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
 
 export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbProcs }) {
   const procs = dbProcs || (await db.execute(
-    `SELECT pl.ProcNum, pl.ProcDate, pl.ProcFee, pc.ProcCode, pl.CodeNum
-     FROM procedurelog pl
-     JOIN procedurecode pc ON pc.CodeNum = pl.CodeNum
-     WHERE pl.PatNum = ? AND pl.ProcStatus = 2`,
+    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurecode.ProcCode, procedurelog.CodeNum
+     FROM procedurelog
+     JOIN procedurecode ON procedurecode.CodeNum = procedurelog.CodeNum
+     WHERE procedurelog.PatNum = ? AND procedurelog.ProcStatus = 2`,
     [patNum]
   ))[0];
 
@@ -233,10 +233,10 @@ export async function processSinglePdf(pool, filePath) {
 
   // 3. Find matching procedures in DB for splits
   const [dbProcs] = await pool.execute(
-    `SELECT pl.ProcNum, pl.ProcDate, pl.ProcFee, pl.ProvNum, pl.ClinicNum, pc.ProcCode, pc.Descript
-     FROM procedurelog pl
-     JOIN procedurecode pc ON pc.CodeNum = pl.CodeNum
-     WHERE pl.PatNum = ? AND pl.ProcStatus = 2`,
+    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurecode.ProcCode, procedurecode.Descript
+     FROM procedurelog
+     JOIN procedurecode ON procedurecode.CodeNum = procedurelog.CodeNum
+     WHERE procedurelog.PatNum = ? AND procedurelog.ProcStatus = 2`,
     [patNum]
   );
 
@@ -469,8 +469,30 @@ export async function scanIncomingFolder(pool, incomingDir) {
       await fs.mkdir(incomingDir, { recursive: true });
     }
 
-    const entries = await fs.readdir(incomingDir, { withFileTypes: true });
-    const pdfFiles = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+    let entries = await fs.readdir(incomingDir, { withFileTypes: true });
+    let pdfFiles = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+
+    if (pdfFiles.length === 0) {
+      // Auto-recover files from ERRORS folder if main folder is empty
+      try {
+        const errorsDir = path.join(incomingDir, 'ERRORS');
+        const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
+        const errPdfs = errEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+        if (errPdfs.length > 0) {
+          console.log(`[MetLife Auto-Processor] Tìm thấy ${errPdfs.length} file trong ERRORS. Đang tự động chuyển ra ngoài để thử lại...`);
+          for (const errFile of errPdfs) {
+            const cleanName = errFile.name.replace(/^\d{13}_/, '');
+            const src = path.join(errorsDir, errFile.name);
+            const dst = path.join(incomingDir, cleanName);
+            await fs.rename(src, dst);
+          }
+          entries = await fs.readdir(incomingDir, { withFileTypes: true });
+          pdfFiles = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+        }
+      } catch (err) {
+        // ERRORS folder might not exist yet, ignore
+      }
+    }
 
     if (pdfFiles.length === 0) {
       return { status: 'idle', count: 0, results: [] };
