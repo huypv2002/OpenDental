@@ -100,7 +100,7 @@ if ($cfgFile) {
     } catch {}
 }
 
-Write-Host "`nQuerying MariaDB [$dbHost:$dbPort / $dbName as $dbUser] for preference DatabaseIntegritiesWhiteList..."
+Write-Host "`nQuerying MariaDB [$($dbHost):$dbPort / $dbName as $dbUser] for preference DatabaseIntegritiesWhiteList..."
 $mysqlExe = "mysql.exe"
 $candidatesSql = @(
     "C:\Program Files\MariaDB 10.5\bin\mysql.exe",
