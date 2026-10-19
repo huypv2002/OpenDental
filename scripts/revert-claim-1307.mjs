@@ -46,6 +46,45 @@ try {
     try { await conn.query('UNLOCK TABLES'); } catch {}
     conn.release();
   }
+
+  // Dọn sạch journals và lock file nếu có
+  try {
+    const [delJ1] = await pool.query('DELETE FROM luk_metlife_postings WHERE PatNum = ?', [patNum]);
+    if (delJ1.affectedRows > 0) console.log(`  ✓ Đã dọn ${delJ1.affectedRows} dòng trong luk_metlife_postings.`);
+  } catch (e) {}
+  try {
+    const [delJ2] = await pool.query('DELETE FROM luk_metlife_myisam_jobs WHERE PatNum = ?', [patNum]);
+    if (delJ2.affectedRows > 0) console.log(`  ✓ Đã dọn ${delJ2.affectedRows} dòng trong luk_metlife_myisam_jobs.`);
+  } catch (e) {}
+
+  try {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const jobDir = process.env.METLIFE_JOB_DIR || path.resolve('metlife-operations');
+    await fs.unlink(path.join(jobDir, `patient-${patNum}.lock`)).catch(() => {});
+    console.log('  ✓ Đã giải phóng hoàn toàn khóa thao tác của bệnh nhân #1307.');
+  } catch (e) {}
+
+  // Tự động kích hoạt biến ghi DB trực tiếp trong .env nếu chưa có
+  try {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const envPath = path.resolve('.env');
+    let envContent = await fs.readFile(envPath, 'utf8');
+    let changed = false;
+    if (!envContent.includes('METLIFE_DIRECT_DB_ENABLED=true')) {
+      envContent += '\nMETLIFE_DIRECT_DB_ENABLED=true';
+      changed = true;
+    }
+    if (!envContent.includes('ENABLE_OPEN_DENTAL_WRITES=true')) {
+      envContent += '\nENABLE_OPEN_DENTAL_WRITES=true';
+      changed = true;
+    }
+    if (changed) {
+      await fs.writeFile(envPath, envContent + '\n');
+      console.log('  ✓ Đã tự động kích hoạt METLIFE_DIRECT_DB_ENABLED=true và ENABLE_OPEN_DENTAL_WRITES=true trong .env.');
+    }
+  } catch (e) {}
 } catch (err) {
   console.error('Lỗi khi revert:', err);
 } finally {
