@@ -113,3 +113,5 @@ Tài liệu OD tại thời điểm 2026-10-19: quyền Payments thuộc mức 3
 - Chạy source: `cd metlife-electron` rồi `npm start`; tiêu đề hiển thị v0.6.0.
 - EXE Windows mới: `LUK-MetLife-Payments-0.6.0.exe`. Không đóng gói bộ tự điền client; không thay đổi backend hash/ghi DB.
 - Kiểm thử giao diện dùng dữ liệu tổng hợp và Bridge giả lập; cần kiểm tra trên máy triển khai để xác nhận kết nối và backend thực tế.
+
+Kiểm tra CI với DB tổng hợp phát hiện hai lỗi có sẵn: danh sách khóa MyISAM thiếu bảng clinic mà context đã đọc, và chẩn đoán nhận nhầm các cột nhật ký đã hỗ trợ thành cột lạ. Đã đồng bộ danh sách khóa theo toàn bộ bảng context đọc và sửa nhận diện trường nhật ký; không đổi thuật toán hash hay giá trị thanh toán.

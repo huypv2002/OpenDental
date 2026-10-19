@@ -1,4 +1,4 @@
-import {contextTables,readPatientContext} from './context.js';
+import {captureTables,readPatientContext} from './context.js';
 import {validatePostingPlan,verifyPostedPayment} from './posting.js';
 import {paymentRows,financialInsert,insertPaymentCreateLog,writeTables} from './directPayment.js';
 import {nativeSplitHashes} from './nativeSplitHashes.js';
@@ -18,7 +18,7 @@ export function createMyisamWriter(pool,{readContext=readPatientContext,hashSpli
  return async(op,entryUser,conn)=>{
   let locked=false,mayHaveWritten=false;
   try{
-   const lockedNames=[...new Set([...contextTables,...writeTables])];
+   const lockedNames=[...new Set([...captureTables,...writeTables])];
    const [meta]=await execute(conn,`SELECT TABLE_NAME,ENGINE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${lockedNames.map(()=>'?').join(',')})`,lockedNames);
    if(lockedNames.some(t=>!['MYISAM','INNODB'].includes(meta.find(m=>m.TABLE_NAME===t)?.ENGINE?.toUpperCase())))throw new Error('MyISAM adapter thiếu bảng hoặc gặp engine chưa hỗ trợ.');
    const [columns]=await execute(conn,`SELECT TABLE_NAME,COLUMN_NAME,COLUMN_DEFAULT,IS_NULLABLE,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (${writeTables.map(()=>'?').join(',')})`,writeTables);
@@ -34,7 +34,7 @@ export function createMyisamWriter(pool,{readContext=readPatientContext,hashSpli
    // A short lock wait fails before clinical mutations; session state is restored.
    await conn.query('SET SESSION lock_wait_timeout=5');
    await conn.query('SET SESSION autocommit=1');
-   const lockedTables=[...new Set([...contextTables,...writeTables,...(entryUser==='0'?[]:['userod']),myisamJournal])];
+   const lockedTables=[...new Set([...captureTables,...writeTables,...(entryUser==='0'?[]:['userod']),myisamJournal])];
    await conn.query('LOCK TABLES '+lockedTables.map(t=>'`'+t+'` '+(writeTables.includes(t)||t===myisamJournal?'WRITE':'READ')).join(','));locked=true;
    const [existing]=await execute(conn,`SELECT OperationId,State,IntentJson FROM ${myisamJournal} WHERE OperationId=? OR (PatNum=? AND PdfHash=?)`,[op.id,op.patNum,op.plan.sha256]);
    if(existing.length){

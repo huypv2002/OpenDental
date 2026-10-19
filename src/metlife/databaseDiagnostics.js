@@ -21,7 +21,7 @@ export async function databaseDiagnostics(pool,{enabled=directWritesEnabled,hash
   const selected=columns.filter(c=>c.TABLE_NAME===table),names=new Set(selected.map(c=>c.COLUMN_NAME)),pk={payment:'PayNum',paysplit:'SplitNum',securitylog:'SecurityLogNum',securityloghash:'SecurityLogHashNum'}[table];
   if(!selected.find(c=>c.COLUMN_NAME===pk)?.EXTRA?.includes('auto_increment'))schemaProblems.push(`${table}.${pk} cần AUTO_INCREMENT.`);
   for(const field of expected[table]||[])if(!names.has(field))schemaProblems.push(`Thiếu ${table}.${field}.`);
-  const supplied=new Set([...Object.keys(table==='payment'?sample.payment:table==='paysplit'?sample.splits[0]:{}),...(extras[table]||[]),'DateEntry']);
+  const supplied=new Set([...Object.keys(table==='payment'?sample.payment:table==='paysplit'?sample.splits[0]:{}),...(extras[table]||[]),...(['securitylog','securityloghash'].includes(table)?expected[table]:[]),'DateEntry']);
   for(const col of selected)if(col.COLUMN_NAME!==pk&&!supplied.has(col.COLUMN_NAME)&&col.IS_NULLABLE==='NO'&&col.COLUMN_DEFAULT===null&&!/GENERATED|auto_increment/.test(col.EXTRA||''))schemaProblems.push(`Chưa hỗ trợ trường bắt buộc ${table}.${col.COLUMN_NAME}.`);
  }
  for(const p of preferences){
