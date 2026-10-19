@@ -23,7 +23,7 @@ if (-not $InstallDir) {
     exit 1
 }
 
-Write-Host "=== Open Dental Plugin Whitelist & Integrity Deep Inspector ==="
+Write-Host "=== Open Dental Plugin Whitelist & Integrity Deep Disassembler ==="
 Write-Host "Target Directory: $InstallDir`n"
 
 Add-Type -TypeDefinition @'
@@ -34,8 +34,8 @@ using System.Text;
 using System.Collections;
 using System.Collections.Generic;
 
-public class ODWhitelistDeepInspector {
-    public static void DeepInspect(string dir) {
+public class ODPluginDisassembler {
+    public static void Run(string dir) {
         AppDomain.CurrentDomain.AssemblyResolve += (sender, args) => {
             string asmName = new AssemblyName(args.Name).Name + ".dll";
             string p = Path.Combine(dir, asmName);
@@ -45,88 +45,114 @@ public class ODWhitelistDeepInspector {
             return null;
         };
 
-        string[] dllsToInspect = new string[] {
-            Path.Combine(dir, "WpfControlsOD.dll"),
-            Path.Combine(dir, "OpenDentBusiness.dll"),
-            Path.Combine(dir, "OpenDental.exe")
-        };
+        // 1. Find DatabaseIntegrities across all assemblies in directory
+        string[] files = Directory.GetFiles(dir, "*.dll");
+        Type dbIntegritiesType = null;
+        Assembly dbIntegritiesAsm = null;
 
-        foreach (string dll in dllsToInspect) {
-            if (!File.Exists(dll)) continue;
+        foreach (string f in files) {
+            try {
+                Assembly a = Assembly.LoadFrom(f);
+                Type[] types = null;
+                try { types = a.GetTypes(); } catch (ReflectionTypeLoadException ex) {
+                    List<Type> list = new List<Type>();
+                    foreach (Type t in ex.Types) { if (t != null) list.Add(t); }
+                    types = list.ToArray();
+                }
+                foreach (Type t in types) {
+                    if (t.Name == "DatabaseIntegrities" || t.FullName == "OpenDental.DatabaseIntegrities" || t.FullName == "OpenDentBusiness.DatabaseIntegrities") {
+                        dbIntegritiesType = t;
+                        dbIntegritiesAsm = a;
+                        Console.WriteLine("FOUND DatabaseIntegrities in: " + Path.GetFileName(f) + " -> " + t.FullName);
+                        break;
+                    }
+                }
+                if (dbIntegritiesType != null) break;
+            } catch {}
+        }
+
+        // Also check OpenDental.exe
+        if (dbIntegritiesType == null) {
+            try {
+                Assembly a = Assembly.LoadFrom(Path.Combine(dir, "OpenDental.exe"));
+                foreach (Type t in a.GetTypes()) {
+                    if (t.Name == "DatabaseIntegrities") {
+                        dbIntegritiesType = t;
+                        dbIntegritiesAsm = a;
+                        Console.WriteLine("FOUND DatabaseIntegrities in OpenDental.exe -> " + t.FullName);
+                        break;
+                    }
+                }
+            } catch {}
+        }
+
+        // 2. Dump all members and methods of DatabaseIntegrities
+        if (dbIntegritiesType != null) {
             Console.WriteLine("\n========================================================");
-            Console.WriteLine(">>> ASSEMBLY: " + Path.GetFileName(dll));
+            Console.WriteLine(">>> DISSECTING DatabaseIntegrities");
             Console.WriteLine("========================================================");
 
-            Assembly asm = null;
-            try {
-                asm = Assembly.LoadFrom(dll);
-            } catch (Exception ex) {
-                Console.WriteLine("  Error loading: " + ex.Message);
-                continue;
-            }
-
-            Type[] types = null;
-            try {
-                types = asm.GetTypes();
-            } catch (ReflectionTypeLoadException ex) {
-                List<Type> list = new List<Type>();
-                foreach (Type t in ex.Types) { if (t != null) list.Add(t); }
-                types = list.ToArray();
-            }
-
-            foreach (Type t in types) {
-                string name = t.Name;
-                bool isTarget = (
-                    name.IndexOf("Integrity", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    name.IndexOf("WhiteList", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    name.IndexOf("HqProgram", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    name.IndexOf("Plugin", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    name == "Programs"
-                );
-
-                if (!isTarget) continue;
-
-                Console.WriteLine("\n[CLASS] " + t.FullName);
-
-                // Print static fields & their values
-                foreach (FieldInfo f in t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)) {
+            foreach (FieldInfo f in dbIntegritiesType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)) {
+                Console.WriteLine("  Field: " + f.FieldType.Name + " " + f.Name);
+                if (f.IsStatic) {
                     try {
                         object val = f.GetValue(null);
-                        Console.WriteLine("  Static Field: " + f.FieldType.Name + " " + f.Name + " = " + DumpValue(val));
-                    } catch {}
+                        Console.WriteLine("    Value = " + DumpValue(val));
+                    } catch (Exception ex) { Console.WriteLine("    Value error: " + ex.Message); }
                 }
+            }
 
-                // Print static properties & their values
-                foreach (PropertyInfo p in t.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)) {
-                    if (p.CanRead && p.GetIndexParameters().Length == 0) {
-                        try {
-                            object val = p.GetValue(null, null);
-                            Console.WriteLine("  Static Prop: " + p.PropertyType.Name + " " + p.Name + " = " + DumpValue(val));
-                        } catch {}
+            foreach (PropertyInfo p in dbIntegritiesType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)) {
+                Console.WriteLine("  Prop: " + p.PropertyType.Name + " " + p.Name);
+                if (p.CanRead && p.GetGetMethod(true).IsStatic && p.GetIndexParameters().Length == 0) {
+                    try {
+                        object val = p.GetValue(null, null);
+                        Console.WriteLine("    Value = " + DumpValue(val));
+                    } catch (Exception ex) { Console.WriteLine("    Value error: " + ex.Message); }
+                }
+            }
+
+            foreach (MethodInfo m in dbIntegritiesType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)) {
+                Console.WriteLine("\n  Method: " + m.ReturnType.Name + " " + m.Name + "(" + FormatParams(m) + ")");
+                DisassembleFullMethod(dbIntegritiesAsm, m);
+            }
+
+            // Test IsPluginAllowed directly with test strings
+            MethodInfo isPluginAllowed = dbIntegritiesType.GetMethod("IsPluginAllowed", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (isPluginAllowed != null) {
+                Console.WriteLine("\n--- Testing IsPluginAllowed method invocations ---");
+                string[] testDlls = new string[] {
+                    "LukMetlifeHash.dll",
+                    "someplugin.dll",
+                    "DentalIntel.dll",
+                    "Podium.dll",
+                    "Weave.dll",
+                    "CareCredit.dll",
+                    "Plugin.dll"
+                };
+                foreach (string d in testDlls) {
+                    try {
+                        object res = isPluginAllowed.Invoke(null, new object[] { d });
+                        Console.WriteLine("    IsPluginAllowed(\"" + d + "\") => " + res);
+                    } catch (Exception ex) {
+                        Console.WriteLine("    IsPluginAllowed(\"" + d + "\") ERROR: " + ex.InnerException != null ? ex.InnerException.Message : ex.Message);
                     }
                 }
+            }
+        }
 
-                // Inspect methods
-                MethodInfo[] methods = t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                foreach (MethodInfo m in methods) {
-                    string mName = m.Name;
-                    bool dumpMethod = (
-                        mName.IndexOf("Load", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        mName.IndexOf("Plugin", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        mName.IndexOf("Whitelist", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        mName.IndexOf("Hq", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        mName.IndexOf("Integrity", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        mName.IndexOf("Check", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        mName.IndexOf("Valid", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        mName.IndexOf("Enable", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        mName.IndexOf("Disable", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        mName.IndexOf("Init", StringComparison.OrdinalIgnoreCase) >= 0
-                    );
-
-                    if (dumpMethod) {
-                        Console.WriteLine("  Method: " + m.ReturnType.Name + " " + m.Name + "(" + FormatParams(m) + ")");
-                        DisassembleMethod(asm, m);
-                    }
+        // 3. Dissect PluginLoader.LoadAllPlugins in WpfControlsOD.dll
+        string wpfPath = Path.Combine(dir, "WpfControlsOD.dll");
+        if (File.Exists(wpfPath)) {
+            Assembly wpfAsm = Assembly.LoadFrom(wpfPath);
+            Type pLoader = wpfAsm.GetType("OpenDental.PluginLoader");
+            if (pLoader != null) {
+                Console.WriteLine("\n========================================================");
+                Console.WriteLine(">>> FULL DISASSEMBLY: OpenDental.PluginLoader.LoadAllPlugins");
+                Console.WriteLine("========================================================");
+                MethodInfo loadAll = pLoader.GetMethod("LoadAllPlugins", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+                if (loadAll != null) {
+                    DisassembleFullMethod(wpfAsm, loadAll);
                 }
             }
         }
@@ -152,42 +178,39 @@ public class ODWhitelistDeepInspector {
         return val.ToString();
     }
 
-    private static void DisassembleMethod(Assembly asm, MethodInfo m) {
+    private static void DisassembleFullMethod(Assembly asm, MethodInfo m) {
         try {
             MethodBody body = m.GetMethodBody();
             if (body == null) return;
             byte[] il = body.GetILAsByteArray();
             for (int i = 0; i < il.Length - 4; i++) {
                 byte op = il[i];
-                // ldstr (0x72)
-                if (op == 0x72) {
+                if (op == 0x72) { // ldstr
                     int token = BitConverter.ToInt32(il, i + 1);
                     if ((token & 0xFF000000) == 0x70000000) {
                         try {
                             string s = asm.ManifestModule.ResolveString(token);
                             if (!string.IsNullOrEmpty(s)) {
-                                Console.WriteLine("      [String]: " + s.Replace("\r", " ").Replace("\n", " "));
+                                Console.WriteLine("      [IL String]: " + s.Replace("\r", " ").Replace("\n", " "));
                             }
                         } catch {}
                     }
-                }
-                // call (0x28) or callvirt (0x6F)
-                else if (op == 0x28 || op == 0x6F) {
+                } else if (op == 0x28 || op == 0x6F) { // call, callvirt
                     int token = BitConverter.ToInt32(il, i + 1);
                     try {
                         MethodBase called = asm.ManifestModule.ResolveMethod(token);
                         if (called != null) {
                             string cName = called.DeclaringType != null ? called.DeclaringType.Name : "";
-                            if (cName.IndexOf("Plugin", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                cName.IndexOf("Integrity", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                cName.IndexOf("Program", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                cName.IndexOf("Hq", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                cName.IndexOf("MsgBox", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                cName.IndexOf("Database", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                cName.IndexOf("Form", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                cName.IndexOf("Web", StringComparison.OrdinalIgnoreCase) >= 0) {
-                                Console.WriteLine("      [Call]: " + cName + "." + called.Name);
-                            }
+                            Console.WriteLine("      [IL Call]: " + cName + "." + called.Name);
+                        }
+                    } catch {}
+                } else if (op == 0x7B || op == 0x7E) { // ldfld, ldsfld
+                    int token = BitConverter.ToInt32(il, i + 1);
+                    try {
+                        FieldInfo f = asm.ManifestModule.ResolveField(token) as FieldInfo;
+                        if (f != null) {
+                            string cName = f.DeclaringType != null ? f.DeclaringType.Name : "";
+                            Console.WriteLine("      [IL Field]: " + cName + "." + f.Name);
                         }
                     } catch {}
                 }
@@ -197,6 +220,6 @@ public class ODWhitelistDeepInspector {
 }
 '@
 
-[ODWhitelistDeepInspector]::DeepInspect($InstallDir)
+[ODPluginDisassembler]::Run($InstallDir)
 
-Write-Host "`n=== Inspection Complete ==="
+Write-Host "`n=== Complete ==="
