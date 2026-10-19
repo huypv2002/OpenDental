@@ -3,6 +3,16 @@ param(
     [string]$InstallDir
 )
 
+# Auto-relaunch in 32-bit PowerShell (SysWOW64) for x86 Open Dental assemblies
+if ([IntPtr]::Size -eq 8) {
+    $ps32 = Join-Path $env:SystemRoot "SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+    if (Test-Path $ps32) {
+        Write-Host "Switching to 32-bit PowerShell (SysWOW64) to inspect x86 Open Dental assemblies..."
+        & $ps32 -NoProfile -ExecutionPolicy Bypass -File $MyInvocation.MyCommand.Path @args
+        exit $LASTEXITCODE
+    }
+}
+
 if (-not $InstallDir) {
     $candidates = @("${env:ProgramFiles(x86)}\Open Dental", "$env:ProgramFiles\Open Dental", 'C:\Open Dental')
     $InstallDir = $candidates | Where-Object { Test-Path (Join-Path $_ 'OpenDental.exe') } | Select-Object -First 1
@@ -13,12 +23,26 @@ if (-not $InstallDir) {
     exit 1
 }
 
-Write-Host "Analyzing Open Dental binaries in: $InstallDir"
+Write-Host "Analyzing Open Dental binaries (x86 mode) in: $InstallDir"
 
 $dllPath = Join-Path $InstallDir "OpenDental.exe"
 $bizPath = Join-Path $InstallDir "OpenDentBusiness.dll"
 
 $assemblies = @($dllPath, $bizPath)
+
+# 1. Raw string scanner as immediate fallback
+function Search-RawBinary($filePath, $pattern) {
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($filePath)
+        $textUnicode = [System.Text.Encoding]::Unicode.GetString($bytes)
+        $idx = $textUnicode.IndexOf($pattern, [System.StringComparison]::OrdinalIgnoreCase)
+        if ($idx -ge 0) {
+            $start = [Math]::Max(0, $idx - 60)
+            $len = [Math]::Min($textUnicode.Length - $start, 150)
+            Write-Host "    [Raw Unicode Match]:" $textUnicode.Substring($start, $len).Replace("`r"," ").Replace("`n"," ")
+        }
+    } catch {}
+}
 
 Add-Type -TypeDefinition @'
 using System;
@@ -29,16 +53,40 @@ using System.Collections.Generic;
 public class PluginWhitelistAnalyzer {
     public static void Analyze(string assemblyPath) {
         Console.WriteLine("\n[+] Inspecting: " + Path.GetFileName(assemblyPath));
-        Assembly asm = Assembly.LoadFrom(assemblyPath);
-        foreach (Type t in asm.GetTypes()) {
+        string dir = Path.GetDirectoryName(assemblyPath);
+        AppDomain.CurrentDomain.AssemblyResolve += (sender, args) => {
+            string name = new AssemblyName(args.Name).Name + ".dll";
+            string p = Path.Combine(dir, name);
+            if (File.Exists(p)) {
+                try { return Assembly.LoadFrom(p); } catch {}
+            }
+            return null;
+        };
+
+        Assembly asm = null;
+        try {
+            asm = Assembly.LoadFrom(assemblyPath);
+        } catch (Exception ex) {
+            Console.WriteLine("    Load error: " + ex.Message);
+            return;
+        }
+
+        Type[] types;
+        try {
+            types = asm.GetTypes();
+        } catch (ReflectionTypeLoadException ex) {
+            List<Type> list = new List<Type>();
+            foreach (Type t in ex.Types) { if (t != null) list.Add(t); }
+            types = list.ToArray();
+        }
+
+        foreach (Type t in types) {
             MethodInfo[] methods = t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly);
             foreach (MethodInfo m in methods) {
                 try {
                     MethodBody body = m.GetMethodBody();
                     if (body == null) continue;
                     byte[] il = body.GetILAsByteArray();
-                    // Search for ldstr instructions
-                    // In IL, ldstr opcode is 0x72 followed by a 4-byte metadata token (0x70XXXXXX)
                     for (int i = 0; i < il.Length - 4; i++) {
                         if (il[i] == 0x72) {
                             int token = BitConverter.ToInt32(il, i + 1);
@@ -62,6 +110,8 @@ public class PluginWhitelistAnalyzer {
 
 foreach ($path in $assemblies) {
     if (Test-Path $path) {
+        Search-RawBinary $path "whitelisted"
         [PluginWhitelistAnalyzer]::Analyze($path)
     }
 }
+
