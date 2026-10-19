@@ -30,7 +30,7 @@ function renderPatients(){
  const b=state.patientBrowser||{patients:[],documents:[]};
  $('#server-status').textContent=b.connected?'Đã kết nối dữ liệu phòng khám. Tìm bệnh nhân để xem Finished Claims.':'Chưa kết nối dữ liệu phòng khám. Bấm Kết nối lại nếu cần.';
  $('#connect-server').textContent='Kết nối lại';
- $('#patient-results').innerHTML=b.patients.map(p=>`<tr class="${String(b.selectedPatient?.PatNum)===String(p.PatNum)?'patient-selected':''}"><td><b class="patient-name">${esc(p.LName)}, ${esc(p.FName)}</b><br><small>Patient ID ${esc(p.PatNum)}${p.ChartNumber?' · Chart '+esc(p.ChartNumber):''}</small></td><td>${esc(p.Birthdate||'—')}</td><td class="patient-insurance">${(p.insurance||[]).map(i=>`${esc(i.CarrierName)}<br>Subscriber: ${esc(i.SubscriberID||'—')}<br>Group: ${esc(i.GroupNum||'—')}`).join('<hr>')||'—'}</td><td><button class="small" data-patient="${esc(p.PatNum)}" data-action="patient-documents">Xem hồ sơ</button></td></tr>`).join('');
+ $('#patient-results').innerHTML=b.patients.map(p=>`<tr data-patient="${esc(p.PatNum)}" tabindex="0" aria-label="Xem hồ sơ ${esc(p.LName)}, ${esc(p.FName)} · Patient ID ${esc(p.PatNum)}" class="${String(b.selectedPatient?.PatNum)===String(p.PatNum)?'patient-selected':''}"><td><b class="patient-name">${esc(p.LName)}, ${esc(p.FName)}</b><br><small>Patient ID ${esc(p.PatNum)}${p.ChartNumber?' · Chart '+esc(p.ChartNumber):''}</small></td><td>${esc(p.Birthdate||'—')}</td><td class="patient-insurance">${(p.insurance||[]).map(i=>`${esc(i.CarrierName)}<br>Subscriber: ${esc(i.SubscriberID||'—')}<br>Group: ${esc(i.GroupNum||'—')}`).join('<hr>')||'—'}</td></tr>`).join('');
  $('#patient-results-empty').hidden=!!b.patients.length;
  $('#patients-prev').dataset.blocked=String(!b.connected||!b.page);$('#patients-next').dataset.blocked=String(!b.connected||!b.hasMore);$('#refresh-documents').dataset.blocked=String(!b.selectedPatient);
  const p=b.selectedPatient;$('#documents-patient').textContent=p?`${p.LName}, ${p.FName} · Patient ID ${p.PatNum}`:'Chọn bệnh nhân để xem tài liệu';
@@ -91,13 +91,21 @@ window.metlife.onState(render);
 try{render(await request('state'));}catch(e){toast(customerMessage(e.message));}
 setInterval(()=>{if(!working)request('state').then(render).catch(()=>{});},60000);
 
-async function searchPatients(page=0){const q=$('#patient-search-query').value.trim(),kind=$('#patient-search-kind').value;if(!q){toast('Nhập tên hoặc mã bệnh nhân / bảo hiểm.');return;}lastSearch={q,kind,page};await action('search-patients',lastSearch);}
+async function searchPatients(page=0){
+ if(working)return;
+ const q=$('#patient-search-query').value.trim(),kind=$('#patient-search-kind').value;
+ if(!q){toast('Nhập tên hoặc mã bệnh nhân / bảo hiểm.');return;}
+ lastSearch={q,kind,page};
+ const result=await action('search-patients',lastSearch),browser=result?.patientBrowser;
+ if(browser?.patients.length===1&&!browser.hasMore)await action('patient-documents',String(browser.patients[0].PatNum));
+}
 $('#search-patients').addEventListener('click',()=>searchPatients());
 $('#patient-search-query').addEventListener('keydown',e=>{if(e.key==='Enter')searchPatients();});
 $('#patients-prev').addEventListener('click',()=>searchPatients(Math.max(0,(state.patientBrowser.page||0)-1)));
 $('#patients-next').addEventListener('click',()=>searchPatients((state.patientBrowser.page||0)+1));
 $('#refresh-documents').addEventListener('click',()=>action('patient-documents',state.patientBrowser.selectedPatient?.PatNum));
 $('#patient-results').addEventListener('click',e=>{const b=e.target.closest('[data-patient]');if(b)action('patient-documents',b.dataset.patient);});
+$('#patient-results').addEventListener('keydown',e=>{if(!['Enter',' '].includes(e.key))return;const row=e.target.closest('[data-patient]');if(row){e.preventDefault();action('patient-documents',row.dataset.patient);}});
 $('#patient-documents').addEventListener('click',e=>{const b=e.target.closest('[data-document]');if(b)action('open-document',b.dataset.document);});
 
 $('#connect-server').addEventListener('click',()=>action('reconnect-server'));

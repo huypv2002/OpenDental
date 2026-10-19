@@ -22,7 +22,7 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   else if(url.pathname.endsWith('/diagnostics/api'))data={ready:false,configured:false,supportsExactAllocation:false,version:'24.3.61.0'};
   else if(url.pathname.endsWith('/diagnostics/database'))data={readOnly:true,capturedAt:new Date().toISOString(),ready:scenario!=='not-configured',schemaProblems:[],configurationProblems:[],tables:[],columns:[],preferences:[],limitations:[]};
   else if(url.pathname.endsWith('/health'))data={db:true,directPaymentEnabled:scenario!=='not-configured'};
-  else if(url.pathname==='/api/metlife/patients')data={patients:[patient,{...patient,PatNum:'1279',FName:'OTHER'}],page:0,hasMore:false};
+  else if(url.pathname==='/api/metlife/patients')data={patients:url.searchParams.get('q')==='99'?[patient]:[patient,{...patient,PatNum:'1279',FName:'OTHER'}],page:0,hasMore:false};
   else if(url.pathname.endsWith('/99/documents'))data={documents:[{DocNum:'55',PatNum:'99',FileName:filename,Description:'Test document',DateCreated:'2026-09-17'}]};
   else if(url.pathname.endsWith('/99/pending'))data={pending:false};
   else if(url.pathname.endsWith('/99/context'))data={readOnly:true,capturedAt:new Date().toISOString(),patNum:'99',warnings:[],tables:{...tables,payment:duplicate?tables.payment:[]}};
@@ -39,8 +39,15 @@ const {_electron:electron}=require('playwright');const assert=require('node:asse
   page=await a.firstWindow();page.setDefaultTimeout(30000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.waitForSelector('#patient-search-query');
   await page.waitForFunction(()=>document.querySelector('#server-status').textContent.startsWith('Đã kết nối'));
+  await page.fill('#patient-search-query','99');await page.click('#search-patients');
+  await page.waitForSelector('[data-document="55"]');
+  assert.equal(await page.locator('#patient-results tr').count(),1);
+  assert.equal(await page.locator('#patient-results button').count(),0);
+  assert.match(await page.locator('#documents-patient').innerText(),/99/);
+  const autoDocumentCalls=calls.filter(x=>x.endsWith('/99/documents')).length;assert.equal(autoDocumentCalls,1);
   await page.click('[data-tab="patients"]');await page.selectOption('#patient-search-kind','groupNumber');await page.fill('#patient-search-query',fixtureGroup);await page.click('#search-patients');
   await page.waitForSelector('[data-patient="99"]');assert.equal(await page.locator('#patient-results tr').count(),2);
+  assert.equal(calls.filter(x=>x.endsWith('/99/documents')).length,autoDocumentCalls);
   await page.screenshot({path:path.join(root,'test-results/patient-search.png')});
   await page.click('[data-patient="99"]');await page.waitForSelector('[data-document="55"]');assert.match(await page.locator('#documents-patient').innerText(),/99/);
   await page.screenshot({path:path.join(root,'test-results/patient-documents.png')});
