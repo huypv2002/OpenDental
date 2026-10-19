@@ -392,11 +392,11 @@ export async function processSinglePdf(pool, filePath) {
         [split.amount, patNum, split.date, eobDate, split.ProcNum, split.ProvNum, split.ClinicNum, payNum, split.SecurityHash]
       );
 
-      // Update matching claimproc
+      // Ensure claimproc does not trigger a duplicate unfinalized InsPay line in Open Dental
       if (split.ProcNum > 0) {
         await conn.execute(
-          `UPDATE claimproc SET InsPayAmt = ?, Status = 1, DateCP = ? WHERE PatNum = ? AND ProcNum = ?`,
-          [split.amount, eobDate, patNum, split.ProcNum]
+          `UPDATE claimproc SET InsPayAmt = 0, Status = 0, ClaimPaymentNum = 0, DateCP = '0001-01-01' WHERE PatNum = ? AND ProcNum = ?`,
+          [patNum, split.ProcNum]
         );
       }
     }
