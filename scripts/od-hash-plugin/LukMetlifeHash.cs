@@ -94,7 +94,9 @@ namespace LukMetlifeHash {
         return;
        }
        if (c.Request.HttpMethod == "GET") {
-        byte[] health = Encoding.UTF8.GetBytes("{\"ok\":true,\"service\":\"LukMetlifeHash\",\"process\":\"OpenDental\",\"assembly\":\"" + Escape(System.Reflection.Assembly.GetEntryAssembly()?.FullName ?? "") + "\"}");
+        System.Reflection.Assembly entry = System.Reflection.Assembly.GetEntryAssembly();
+        string entryName = (entry != null) ? entry.FullName : "";
+        byte[] health = Encoding.UTF8.GetBytes("{\"ok\":true,\"service\":\"LukMetlifeHash\",\"process\":\"OpenDental\",\"assembly\":\"" + Escape(entryName) + "\"}");
         c.Response.ContentType = "application/json";
         c.Response.OutputStream.Write(health, 0, health.Length);
         c.Response.Close();
