@@ -148,14 +148,14 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
   }
 }
 
-export async function autoPopulateProcedureFees(conn, { patNum, eobProcedures }) {
-  const [procs] = await conn.execute(
+export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbProcs }) {
+  const procs = dbProcs || (await db.execute(
     `SELECT pl.ProcNum, pl.ProcDate, pl.ProcFee, pc.ProcCode, pl.CodeNum
      FROM procedurelog pl
      JOIN procedurecode pc ON pc.CodeNum = pl.CodeNum
      WHERE pl.PatNum = ? AND pl.ProcStatus = 2`,
     [patNum]
-  );
+  ))[0];
 
   const updatedFees = [];
 
@@ -165,7 +165,7 @@ export async function autoPopulateProcedureFees(conn, { patNum, eobProcedures })
 
     // Find matching completed procedure
     let match = procs.find(
-      (p) => p.ProcCode === item.code && (!item.date || p.ProcDate?.toISOString?.()?.slice(0, 10) === item.date)
+      (p) => p.ProcCode === item.code && (!item.date || (p.ProcDate?.toISOString?.()?.slice(0, 10) || String(p.ProcDate).slice(0, 10)) === item.date)
     );
     if (!match) {
       match = procs.find((p) => p.ProcCode === item.code);
@@ -174,8 +174,8 @@ export async function autoPopulateProcedureFees(conn, { patNum, eobProcedures })
     if (match) {
       const currentFee = Number(match.ProcFee || 0);
       if (currentFee === 0) {
-        await conn.execute('UPDATE procedurelog SET ProcFee = ? WHERE ProcNum = ?', [submittedFee, match.ProcNum]);
-        await conn.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [submittedFee, match.ProcNum]);
+        await db.execute('UPDATE procedurelog SET ProcFee = ? WHERE ProcNum = ?', [submittedFee, match.ProcNum]);
+        await db.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [submittedFee, match.ProcNum]);
         updatedFees.push(`${item.code}: $0.00 -> $${submittedFee}`);
         match.ProcFee = submittedFee;
       }
@@ -183,12 +183,16 @@ export async function autoPopulateProcedureFees(conn, { patNum, eobProcedures })
   }
 
   // Update claim.ClaimFee if claim exists
-  const [claims] = await conn.execute('SELECT ClaimNum FROM claim WHERE PatNum = ?', [patNum]);
+  const [claims] = await db.execute('SELECT ClaimNum FROM claim WHERE PatNum = ?', [patNum]);
   for (const c of claims) {
-    await conn.execute(
-      'UPDATE claim SET ClaimFee = IFNULL((SELECT SUM(FeeBilled) FROM claimproc WHERE ClaimNum = ?), ClaimFee) WHERE ClaimNum = ?',
-      [c.ClaimNum, c.ClaimNum]
+    const [sums] = await db.execute(
+      'SELECT SUM(FeeBilled) AS TotalFee FROM claimproc WHERE ClaimNum = ?',
+      [c.ClaimNum]
     );
+    const totalFee = sums[0]?.TotalFee;
+    if (totalFee !== null && totalFee !== undefined) {
+      await db.execute('UPDATE claim SET ClaimFee = ? WHERE ClaimNum = ?', [totalFee, c.ClaimNum]);
+    }
   }
 
   return updatedFees;
@@ -235,6 +239,13 @@ export async function processSinglePdf(pool, filePath) {
      WHERE pl.PatNum = ? AND pl.ProcStatus = 2`,
     [patNum]
   );
+
+  // Auto-fix 0.00 ProcFee BEFORE locking tables
+  const updatedFees = await autoPopulateProcedureFees(pool, {
+    patNum,
+    eobProcedures: parsed.procedures,
+    dbProcs
+  });
 
   const splitsPlan = [];
   for (const eobProc of parsed.procedures) {
@@ -284,18 +295,11 @@ export async function processSinglePdf(pool, filePath) {
   // 6. DB Transaction with LOCK TABLES for MariaDB MyISAM integrity
   const conn = await pool.getConnection();
   let payNum = 0;
-  let updatedFees = [];
 
   try {
     await conn.query(
-      'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE, procedurelog WRITE, procedurecode READ, definition READ'
+      'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE'
     );
-
-    // Auto-fix 0.00 ProcFee
-    updatedFees = await autoPopulateProcedureFees(conn, {
-      patNum,
-      eobProcedures: parsed.procedures
-    });
 
     // Revert any previous attempt for this check to avoid duplicates
     const [existingPayments] = await conn.execute(
