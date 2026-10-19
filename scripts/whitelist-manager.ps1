@@ -141,7 +141,7 @@ if (-not $targetHost) {
 
 if (-not $targetHost) { $targetHost = "127.0.0.1" }
 
-Write-Host "Target MariaDB Server: $targetHost:$targetPort (Database: $targetName, User: $targetUser)"
+Write-Host "Target MariaDB Server: $($targetHost):$targetPort (Database: $targetName, User: $targetUser)"
 if ($targetHost -ne "127.0.0.1" -and $targetHost -ne "localhost") {
     Write-Host "[NOTE] Connecting from client machine to SERVER MariaDB at $targetHost"
 } else {
@@ -246,7 +246,7 @@ function Update-PrefVal([string]$cipher) {
             }
             $passArg = if ($targetPass) { "-p$targetPass" } else { "" }
             & $mysqlExe -h $targetHost -P $targetPort -u $targetUser $passArg $targetName -e "source $tmpFile"
-            return $LASTEXITCODE -eq 0 ? 1 : 0
+            if ($LASTEXITCODE -eq 0) { return 1 } else { return 0 }
         } finally {
             if (Test-Path $tmpFile) { Remove-Item -LiteralPath $tmpFile -Force }
         }
