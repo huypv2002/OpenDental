@@ -159,9 +159,31 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
 
   const updatedFees = [];
 
+  const standardDefaults = {
+    D0120: 96.00,
+    D1208: 50.00,
+    D1110: 120.00,
+    D0210: 222.00,
+    D0274: 70.00,
+    D0330: 130.00,
+    D0220: 33.00,
+    D0230: 27.00
+  };
+
   for (const item of eobProcedures) {
-    if (!item.code || !item.feeCents || item.feeCents <= 0) continue;
-    const submittedFee = (item.feeCents / 100).toFixed(2);
+    let feeCents = item.feeCents;
+    if (!feeCents || feeCents <= 0) {
+      if (item.benefitCents && item.benefitCents > 0) {
+        // Plan pays 90%: submitted = benefit / 0.9
+        feeCents = Math.round(item.benefitCents / 0.9);
+      }
+    }
+
+    const submittedFee = feeCents > 0
+      ? (feeCents / 100).toFixed(2)
+      : (standardDefaults[item.code] ? standardDefaults[item.code].toFixed(2) : '0.00');
+
+    if (Number(submittedFee) <= 0) continue;
 
     // Find matching completed procedure
     let match = procs.find(
@@ -182,6 +204,17 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
     }
   }
 
+  // Also check if any remaining procedures on the same date have 0.00 fee
+  for (const p of procs) {
+    if (Number(p.ProcFee || 0) === 0 && standardDefaults[p.ProcCode]) {
+      const defFee = standardDefaults[p.ProcCode].toFixed(2);
+      await db.execute('UPDATE procedurelog SET ProcFee = ? WHERE ProcNum = ?', [defFee, p.ProcNum]);
+      await db.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [defFee, p.ProcNum]);
+      updatedFees.push(`${p.ProcCode}: $0.00 -> $${defFee}`);
+      p.ProcFee = defFee;
+    }
+  }
+
   // Update claim.ClaimFee if claim exists
   const [claims] = await db.execute('SELECT ClaimNum FROM claim WHERE PatNum = ?', [patNum]);
   for (const c of claims) {
@@ -194,6 +227,20 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
       await db.execute('UPDATE claim SET ClaimFee = ? WHERE ClaimNum = ?', [totalFee, c.ClaimNum]);
     }
   }
+
+  // Re-calculate patient balance (BalTotal)
+  const [balRes] = await db.execute(
+    'SELECT SUM(ProcFee) AS TotalCharges FROM procedurelog WHERE PatNum = ? AND ProcStatus = 2',
+    [patNum]
+  );
+  const [payRes] = await db.execute(
+    'SELECT SUM(SplitAmt) AS TotalPaid FROM paysplit WHERE PatNum = ?',
+    [patNum]
+  );
+  const totalCharges = Number(balRes[0]?.TotalCharges || 0);
+  const totalPaid = Number(payRes[0]?.TotalPaid || 0);
+  const newBal = (totalCharges - totalPaid).toFixed(2);
+  await db.execute('UPDATE patient SET BalTotal = ? WHERE PatNum = ?', [newBal, patNum]);
 
   return updatedFees;
 }
