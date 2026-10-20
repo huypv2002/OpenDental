@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { extractPdf } from '../metlife/parser.js';
 import { parseLiberty } from './parser.js';
 import { nativeSplitHashes } from '../metlife/nativeSplitHashes.js';
@@ -214,21 +215,15 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       );
 
       // Insert Payment
+      const payNote = payload.payNote || `Check # ${checkNumber} | Claim: ${claimNumber} | Group: ${groupNum} | Carrier: LIBERTY Dental Plan`;
       const [payRes] = await conn.execute(
         `INSERT INTO payment (
-          PayType, PatNum, ClinicNum, PayDate, PayAmt, CheckNum,
-          BankExchangeRate, PayNote, DateEntry, IsRecurring, ProcessToken,
-          Receipt, PaymentStatus
-        ) VALUES (?, ?, ?, ?, ?, ?, 1.0, ?, CURDATE(), 0, '', '', 0)`,
-        [
-          selectedPayType.DefNum,
-          patNum,
-          clinicNum,
-          checkDate,
-          totalBenefit,
-          checkNumber,
-          payload.payNote
-        ]
+          PayType, PayDate, PayAmt, CheckNum, BankBranch, PayNote, IsSplit, PatNum,
+          ClinicNum, DateEntry, DepositNum, Receipt, IsRecurringCC, SecUserNumEntry,
+          PaymentSource, ProcessStatus, RecurringChargeDate, ExternalId, PaymentStatus,
+          IsCcCompleted, MerchantFee
+        ) VALUES (?, ?, ?, ?, '', ?, 1, ?, ?, CURDATE(), 0, '', 0, 0, 0, 0, '0001-01-01', ?, 0, 0, 0.00)`,
+        [selectedPayType.DefNum, checkDate, totalBenefit, checkNumber, payNote, patNum, clinicNum, claimNumber]
       );
       payNum = payRes.insertId;
 
@@ -236,48 +231,57 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       for (const split of payload.splits) {
         await conn.execute(
           `INSERT INTO paysplit (
-            SplitNum, SplitAmt, PatNum, ProcDate, DatePay, ProcNum,
-            ProvNum, PayNum, ClinicNum, DateEntry, UnearnedType,
-            SecDateTEdit, SecDateTEntry, SecurityHash
-          ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 0, NOW(), NOW(), ?)`,
-          [
-            split.amount,
-            patNum,
-            split.date,
-            checkDate,
-            split.ProcNum,
-            split.ProvNum,
-            payNum,
-            split.ClinicNum,
-            split.SecurityHash
-          ]
+            SplitAmt, PatNum, ProcDate, DatePay, ProcNum, ProvNum, ClinicNum, PayNum,
+            DateEntry, SecUserNumEntry, SecurityHash, UnearnedType, IsDiscount, DiscountType,
+            PayPlanNum, FSplitNum, AdjNum, PayPlanChargeNum, PayPlanDebitType
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 0, ?, 0, 0, 0, 0, 0, 0, 0, 0)`,
+          [split.amount, patNum, split.date, checkDate, split.ProcNum, split.ProvNum, split.ClinicNum, payNum, split.SecurityHash]
         );
+
+        // Ensure claimproc does not trigger a duplicate unfinalized InsPay line in Open Dental
+        if (split.ProcNum > 0) {
+          await conn.execute(
+            `UPDATE claimproc SET InsPayAmt = 0, Status = 0, ClaimPaymentNum = 0, DateCP = '0001-01-01' WHERE PatNum = ? AND ProcNum = ?`,
+            [patNum, split.ProcNum]
+          );
+        }
       }
-
-      // SecurityLog
-      const logText = `Payment Create: ${totalBenefit}, ${selectedPayType.ItemName}, PatNum: ${patNum}`;
-      const logHash = odSecurityLogHash(logText);
-      const [logRes] = await conn.execute(
-        `INSERT INTO securitylog (
-          PermType, UserNum, LogDateTime, LogText, PatNum, CompName,
-          FKey, LogHash
-        ) VALUES (27, 0, NOW(), ?, ?, 'SERVER', ?, ?)`,
-        [logText, patNum, payNum, logHash]
-      );
-      const secLogNum = logRes.insertId;
-
-      try {
-        await conn.execute(
-          'INSERT INTO securityloghash (SecurityLogNum, LogHash) VALUES (?, ?)',
-          [secLogNum, logHash]
-        );
-      } catch {}
 
       // Update matching claim to Received ('R')
       await conn.execute(
-        "UPDATE claim SET ClaimStatus = 'R', DateReceived = ? WHERE PatNum = ? AND ClaimStatus = 'W' LIMIT 1",
+        `UPDATE claim SET ClaimStatus = 'R', DateReceived = ? WHERE PatNum = ?`,
         [checkDate, patNum]
       );
+
+      // Audit SecurityLog & SecurityLogHash
+      const logText = `Payment created for ${patient.LName}, ${patient.FName} with payment type '${selectedPayType.ItemName}', amount '$${totalBenefit}'`;
+      const [logRes] = await conn.execute(
+        `INSERT INTO securitylog (
+          PermType, UserNum, LogText, PatNum, CompName, DateTPrevious
+        ) VALUES (15, 0, ?, ?, ?, '0001-01-01 00:00:00')`,
+        [logText, patNum, (os.hostname() || 'SERVER').slice(0, 255)]
+      );
+      const securityLogNum = logRes.insertId;
+
+      const [logRows] = await conn.execute(
+        "SELECT PermType, UserNum, DATE_FORMAT(LogDateTime,'%Y-%m-%d %H:%i:%s') AS LogDateTime, LogText, PatNum, IFNULL(DATE_FORMAT(DateTPrevious,'%Y-%m-%d %H:%i:%s'),'') AS DateTPrevious FROM securitylog WHERE SecurityLogNum = ?",
+        [securityLogNum]
+      );
+      if (logRows.length === 1) {
+        const row = logRows[0];
+        const logHash = odSecurityLogHash({
+          permType: row.PermType,
+          userNum: row.UserNum,
+          logDateTime: row.LogDateTime,
+          logText: row.LogText,
+          patNum: row.PatNum,
+          dateTPrevious: row.DateTPrevious
+        });
+        await conn.execute(
+          'INSERT INTO securityloghash (SecurityLogNum, LogHash) VALUES (?, ?)',
+          [securityLogNum, logHash]
+        );
+      }
 
       // Re-calculate BalTotal
       const [balRes] = await conn.execute(
