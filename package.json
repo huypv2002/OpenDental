@@ -9,7 +9,7 @@
     "metlife:inspect": "node scripts/inspect-metlife-db.mjs",
     "test:metlife:database": "node --test src/metlife/directPayment.database.test.js",
     "metlife:configure": "node scripts/configure-metlife.mjs",
-    "test:metlife": "node --test src/metlife/*.test.js"
+    "test:metlife": "node --test src/metlife/*.test.js src/liberty/*.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'src/metlife/**'
+      - 'src/liberty/**'
       - 'scripts/inspect-metlife-db.mjs'
       - 'scripts/inspect-metlife-od-context.ps1'
       - 'scripts/inspect-metlife-od-host.ps1'

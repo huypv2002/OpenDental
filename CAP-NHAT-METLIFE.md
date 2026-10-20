@@ -135,3 +135,13 @@ Tài liệu OD tại thời điểm 2026-10-19: quyền Payments thuộc mức 3
 Kiểm tra CI với DB tổng hợp phát hiện hai lỗi có sẵn: danh sách khóa MyISAM thiếu bảng clinic mà context đã đọc, và chẩn đoán nhận nhầm các cột nhật ký đã hỗ trợ thành cột lạ. Đã đồng bộ danh sách khóa theo toàn bộ bảng context đọc và sửa nhận diện trường nhật ký; không đổi thuật toán hash hay giá trị thanh toán.
 
 Sửa khôi phục kết nối: đọc lại cấu hình được mã hóa khi mở app (kể cả profile Client cũ), ghi nhớ địa chỉ kết nối thành công; ưu tiên địa chỉ của lượt đang chờ hoặc METLIFE_SERVER_URL nếu đặt rõ. Không tự chuyển sang máy chủ khác khi đang xác minh thanh toán. Kiểm tra khởi động lại không còn biến môi trường đã qua với dịch vụ giả lập.
+
+## 2026-10-21 — Liberty báo tiến trình và hoàn tất giống MetLife
+
+File đã vào `PROCESSED` nhưng console chỉ dừng ở dòng bắt đầu claim là do Liberty chưa có log hoàn tất sau bước lưu trữ PDF. Đã bổ sung tiến trình đối chiếu bệnh nhân, lưu PDF, chuẩn bị phân bổ, chờ kết nối/khóa, ghi thanh toán, cập nhật số dư và ghi lịch sử. Mỗi claim có log riêng; chỉ in `✓ HOÀN THÀNH` toàn file sau khi chuyển vào `PROCESSED`. Bộ quét cũng báo tổng số file thành công/lỗi sau mỗi lượt có file.
+
+PDF Liberty mới trong Finished Claims dùng tiền tố `LIBERTY_` và mô tả Liberty; lịch sử lưu đường dẫn `archivePath` như MetLife để mở lại PDF đã xử lý. Luồng ghi Payment/Splits và hash không thay đổi trong bản sửa này.
+
+Cập nhật tại SERVER: `git pull origin main`, dừng tiến trình Node cũ bằng Ctrl+C rồi chạy lại `npm start` trong thư mục Bridge. Giữ nguyên các file đã ở `PROCESSED`; không cần đưa chúng trở lại hàng đợi để lấy log mới.
+
+Kiểm thử: parser các PDF được cung cấp, luồng Liberty một/nhiều claim với DB giả lập, lỗi lịch sử và lỗi chuyển file không báo thành công, mặc định nhãn MetLife vẫn giữ nguyên. Chưa ghi thử trên DB thật của phòng khám trong lần sửa này.

@@ -102,7 +102,7 @@ export async function resolvePatient(pool, { fileName, parsed }) {
   throw new Error(`Không xác định được bệnh nhân trong Open Dental cho file: ${fileName} (Tên: ${parsed.patient || 'N/A'})`);
 }
 
-export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, claimNumber }) {
+export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, claimNumber, carrier = 'MetLife' }) {
   try {
     const [prefs] = await pool.execute(
       "SELECT PrefName, ValueString FROM preference WHERE LOWER(PrefName) IN ('docpath','atozfolderused','atozfolder','imagestore')"
@@ -126,7 +126,8 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
     await fs.mkdir(destDir, { recursive: true });
 
     const safeClaim = (claimNumber || 'EOB').replace(/[^a-zA-Z0-9]/g, '_');
-    const destFileName = `METLIFE_${safeClaim}_${Date.now()}.pdf`;
+    const prefix = carrier === 'LIBERTY Dental Plan' ? 'LIBERTY' : 'METLIFE';
+    const destFileName = `${prefix}_${safeClaim}_${Date.now()}.pdf`;
     const fullDestPath = path.join(destDir, destFileName);
 
     await fs.writeFile(fullDestPath, fileBytes);
@@ -139,8 +140,8 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
 
     const [docRes] = await pool.execute(
       `INSERT INTO document (DocCategory, PatNum, FileName, Description, DateCreated)
-       VALUES (?, ?, ?, 'MetLife EOB Finished Claim', NOW())`,
-      [docCategory, patient.PatNum, destFileName]
+       VALUES (?, ?, ?, ?, NOW())`,
+      [docCategory, patient.PatNum, destFileName, `${carrier} EOB Finished Claim`]
     );
 
     return { docNum: docRes.insertId, savedPath: fullDestPath };
@@ -606,6 +607,8 @@ export async function scanIncomingFolder(pool, incomingDir) {
       }
     }
 
+    const succeeded = results.filter(r => r.success).length;
+    console.log(`[Auto-Processor] ✓ QUÉT HOÀN TẤT: ${results.length} file, ${succeeded} thành công, ${results.length - succeeded} lỗi.`);
     const finalRes = { status: 'completed', count: results.length, results };
     lastScanResult = finalRes;
     return finalRes;

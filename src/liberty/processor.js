@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { extractPdf } from '../metlife/parser.js';
 import { parseLiberty } from './parser.js';
 import { nativeSplitHashes } from '../metlife/nativeSplitHashes.js';
 import { odSecurityLogHash } from '../metlife/directPayment.js';
@@ -141,20 +140,23 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient }
   };
 }
 
-export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }) {
+export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, log = console.log } = {}) {
   const parsed = parseLiberty(extracted);
   if (parsed.errors && parsed.errors.length > 0) {
     throw new Error(`Lỗi định dạng Liberty: ${parsed.errors.join('; ')}`);
   }
 
-  console.log(`[Liberty Auto-Processor] Phát hiện ${parsed.claimsCount} claim trong check #${parsed.check.number}`);
+  log(`[Liberty Auto-Processor] Phát hiện ${parsed.claimsCount} claim trong check #${parsed.check.number}`);
 
   const processedClaims = [];
   const incomingDir = path.dirname(filePath);
+  const processedDir = path.join(incomingDir, 'PROCESSED');
+  const archivePath = path.join(processedDir, `${Date.now()}_${fileName}`);
 
   for (const claim of parsed.claims) {
-    console.log(`[Liberty Auto-Processor] Đang xử lý claim #${claim.claimNumber} cho bệnh nhân ${claim.patient.lastName}, ${claim.patient.firstName}...`);
+    log(`[Liberty Auto-Processor] Đang xử lý claim #${claim.claimNumber} cho bệnh nhân ${claim.patient.lastName}, ${claim.patient.firstName}...`);
 
+    log(`[Liberty Auto-Processor] Claim #${claim.claimNumber}: đối chiếu bệnh nhân...`);
     const patient = await resolveLibertyPatient(pool, { claim });
     const patNum = patient.PatNum;
     const clinicNum = patient.ClinicNum || 0;
@@ -164,18 +166,22 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     const checkDate = parsed.check.date || new Date().toISOString().slice(0, 10);
     const totalBenefit = (claim.totals.planPaidCents / 100).toFixed(2);
 
+    log(`[Liberty Auto-Processor] Claim #${claimNumber}: lưu PDF vào Finished Claims...`);
     // Import PDF to AtoZ
     const aToZResult = await importPdfToAtoZ(pool, {
       patient,
       fileBytes,
       fileName,
-      claimNumber
+      claimNumber,
+      carrier: 'LIBERTY Dental Plan'
     });
 
     // Prepare payload
-    const payload = await prepareLibertyClaimPayload(pool, { claim, check: parsed.check, patient });
+    log(`[Liberty Auto-Processor] Claim #${claimNumber}: đối chiếu dịch vụ, cập nhật phí và chuẩn bị phân bổ...`);
+    const payload = await preparePayload(pool, { claim, check: parsed.check, patient });
 
     // Select Payment Type
+    log(`[Liberty Auto-Processor] Claim #${claimNumber}: chọn loại thanh toán...`);
     const [payTypes] = await pool.execute(
       'SELECT DefNum, ItemName FROM definition WHERE Category = 10 AND IsHidden = 0 ORDER BY ItemOrder'
     );
@@ -186,14 +192,17 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       { DefNum: 10, ItemName: 'Insurance Paid' };
 
     // DB Transaction with LOCK TABLES
+    log(`[Liberty Auto-Processor] Claim #${claimNumber}: chờ kết nối ghi thanh toán...`);
     const conn = await pool.getConnection();
     let payNum = 0;
 
     try {
+      log(`[Liberty Auto-Processor] Claim #${claimNumber}: chờ khóa bảng thanh toán...`);
       await conn.query(
         'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE'
       );
 
+      log(`[Liberty Auto-Processor] Claim #${claimNumber}: ghi thanh toán $${totalBenefit}, ${payload.splits.length} phân bổ...`);
       // Revert duplicate payments for this check & claim
       const [existingPayments] = await conn.execute(
         'SELECT PayNum FROM payment WHERE PatNum = ? AND (CheckNum = ? OR CheckNum = ?)',
@@ -289,6 +298,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       conn.release();
     }
 
+    log(`[Liberty Auto-Processor] Claim #${claimNumber}: đã ghi Payment #${payNum}, đã mở khóa; cập nhật số dư...`);
     // Re-calculate BalTotal after releasing table locks
     try {
       const [balRes] = await pool.execute(
@@ -305,9 +315,11 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       console.warn('[Liberty] Warning calculating BalTotal:', e.message);
     }
 
+    log(`[Liberty Auto-Processor] Claim #${claimNumber}: ghi lịch sử xử lý...`);
     // Record in history table
     const details = JSON.stringify({
       carrier: 'LIBERTY Dental Plan',
+      archivePath,
       patient: `${patient.LName}, ${patient.FName}`,
       patNum,
       claimNumber,
@@ -353,25 +365,29 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       ]
     );
 
+    log(`[Liberty Auto-Processor] ✓ CLAIM HOÀN TẤT: #${claimNumber} -> PayNum: ${payNum}, DocNum: ${aToZResult.docNum}, $${totalBenefit}`);
     processedClaims.push({
       claimNumber,
       patNum,
       patientName: `${patient.LName}, ${patient.FName}`,
       payNum,
+      docNum: aToZResult.docNum,
       amount: totalBenefit
     });
   }
 
   // Move PDF to PROCESSED
-  const processedDir = path.join(incomingDir, 'PROCESSED');
+  log(`[Liberty Auto-Processor] Chuyển ${fileName} vào PROCESSED...`);
   await fs.mkdir(processedDir, { recursive: true });
-  const archivePath = path.join(processedDir, `${Date.now()}_${fileName}`);
   await fs.rename(filePath, archivePath);
+  log(`[Liberty Auto-Processor] ✓ HOÀN THÀNH: ${fileName} -> ${processedClaims.length} claim, ${processedClaims.map(c => `PayNum: ${c.payNum}, DocNum: ${c.docNum}`).join('; ')} -> PROCESSED`);
 
   return {
     success: true,
     carrier: 'LIBERTY Dental Plan',
     fileName,
+    archivePath,
+    claimsCount: processedClaims.length,
     claims: processedClaims
   };
 }
