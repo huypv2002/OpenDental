@@ -120,3 +120,52 @@ test('parseLiberty parses full Liberty Dental Plan PDF with multi-claim payload'
   assert.equal(c2.paymentPayload.amount, '250.00');
   assert.equal(c2.paymentPayload.splits.length, 7);
 });
+
+test('parseLiberty parses single-claim Liberty PDF (Lee, Liza - Check #110372)', async () => {
+  const samplePdfPath = '/Users/phamvanhuy/.gemini/antigravity-ide/brain/4a57ede7-764d-426c-9039-24fe987b472e/.user_uploaded/media_1792523692379.pdf';
+  let buffer;
+  try {
+    buffer = await fs.readFile(samplePdfPath);
+  } catch (err) {
+    return;
+  }
+
+  const extracted = await extractPdf(buffer);
+  const parsed = parseLiberty(extracted);
+
+  assert.equal(parsed.errors.length, 0, `Unexpected errors: ${parsed.errors.join('; ')}`);
+  assert.equal(parsed.carrier, 'LIBERTY Dental Plan');
+  assert.equal(parsed.check.number, '110372');
+  assert.equal(parsed.check.date, '2026-10-07');
+  assert.equal(parsed.check.netPaymentFormatted, '167.00');
+  assert.equal(parsed.claimsCount, 1);
+
+  const c = parsed.claims[0];
+  assert.equal(c.claimNumber, '77486188');
+  assert.equal(c.patient.lastName, 'Lee');
+  assert.equal(c.patient.firstName, 'Liza');
+  assert.equal(c.patient.memberId, '827W06553-01');
+  assert.equal(c.totals.planPaidCents, 16700);
+  assert.equal(c.procedures.length, 5);
+
+  assert.equal(c.procedures[0].code, 'D0150');
+  assert.equal(c.procedures[0].benefitCents, 3800);
+
+  assert.equal(c.procedures[1].code, 'D0220');
+  assert.equal(c.procedures[1].tooth, '13');
+  assert.equal(c.procedures[1].benefitCents, 1400);
+
+  assert.equal(c.procedures[2].code, 'D0230');
+  assert.equal(c.procedures[2].tooth, '23');
+  assert.equal(c.procedures[2].benefitCents, 1200);
+
+  assert.equal(c.procedures[3].code, 'D0274');
+  assert.equal(c.procedures[3].benefitCents, 3500);
+
+  assert.equal(c.procedures[4].code, 'D0330');
+  assert.equal(c.procedures[4].benefitCents, 6800);
+
+  assert.equal(c.paymentPayload.amount, '167.00');
+  assert.equal(c.paymentPayload.splits.length, 5);
+});
+
