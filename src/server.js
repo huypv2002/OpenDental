@@ -990,18 +990,18 @@ const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(`Open Dental bridge listening on http://0.0.0.0:${config.port}`);
 });
 
-let metlifeAutoProcessor = null;
+let insuranceAutoProcessor = null;
 if (process.env.METLIFE_AUTO_SCAN !== 'false') {
   try {
-    metlifeAutoProcessor = startAutoProcessor({ pool });
+    insuranceAutoProcessor = startAutoProcessor({ pool });
   } catch (err) {
-    console.warn('[MetLife Auto-Processor] Could not start auto processor:', err.message);
+    console.warn('[Insurance Auto-Processor] Could not start auto processor:', err.message);
   }
 }
 
 async function shutdown() {
-  if (metlifeAutoProcessor?.stop) {
-    try { metlifeAutoProcessor.stop(); } catch {}
+  if (insuranceAutoProcessor?.stop) {
+    try { insuranceAutoProcessor.stop(); } catch {}
   }
   server.close(async () => {
     await closePool();

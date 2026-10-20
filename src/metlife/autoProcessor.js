@@ -780,12 +780,23 @@ export async function getHistoryPdf(pool, historyId, incomingDir) {
 
 export function startAutoProcessor({ pool, incomingDir, intervalMs = 30000 }) {
   const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
-  console.log(`[MetLife Auto-Processor] Khởi chạy bộ quét tự động MetLife tại: ${dir} (chu kỳ: ${intervalMs / 1000}s)`);
+  const parentDir = path.dirname(dir);
+  const libertyDir = path.join(parentDir, 'LIBERTY');
+
+  console.log(`[Insurance Auto-Processor] Khởi chạy bộ quét EOB tự động (Hỗ trợ cả MetLife & LIBERTY Dental Plan)`);
+  console.log(`[Insurance Auto-Processor] Thư mục theo dõi:`);
+  console.log(`  - MetLife: ${dir}`);
+  console.log(`  - Liberty: ${libertyDir}`);
+  console.log(`  - Chu kỳ quét: ${intervalMs / 1000}s/lần`);
+
+  // Ensure folders exist so staff can easily see them in Explorer
+  try { fs.mkdir(dir, { recursive: true }).catch(() => {}); } catch {}
+  try { fs.mkdir(libertyDir, { recursive: true }).catch(() => {}); } catch {}
 
   // Initial scan after 3s
   setTimeout(() => {
     scanIncomingFolder(pool, dir).catch((e) => {
-      console.warn('[MetLife Auto-Processor] Initial scan warning:', e.message);
+      console.warn('[Auto-Processor] Initial scan warning:', e.message);
     });
   }, 3000);
 
@@ -793,7 +804,7 @@ export function startAutoProcessor({ pool, incomingDir, intervalMs = 30000 }) {
   if (autoScanIntervalId) clearInterval(autoScanIntervalId);
   autoScanIntervalId = setInterval(() => {
     scanIncomingFolder(pool, dir).catch((e) => {
-      console.warn('[MetLife Auto-Processor] Periodic scan warning:', e.message);
+      console.warn('[Auto-Processor] Periodic scan warning:', e.message);
     });
   }, intervalMs);
 
