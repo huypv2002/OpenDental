@@ -191,7 +191,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
 
     try {
       await conn.query(
-        'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE, procedurelog WRITE'
+        'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE'
       );
 
       // Revert duplicate payments for this check & claim
