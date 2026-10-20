@@ -191,7 +191,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
 
     try {
       await conn.query(
-        'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE'
+        'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE, procedurelog WRITE'
       );
 
       // Revert duplicate payments for this check & claim
@@ -283,21 +283,26 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
         );
       }
 
-      // Re-calculate BalTotal
-      const [balRes] = await conn.execute(
+      await conn.query('UNLOCK TABLES');
+    } finally {
+      try { await conn.query('UNLOCK TABLES'); } catch {}
+      conn.release();
+    }
+
+    // Re-calculate BalTotal after releasing table locks
+    try {
+      const [balRes] = await pool.execute(
         'SELECT SUM(ProcFee) AS TotalCharges FROM procedurelog WHERE PatNum = ? AND ProcStatus = 2',
         [patNum]
       );
-      const [paySumRes] = await conn.execute(
+      const [paySumRes] = await pool.execute(
         'SELECT SUM(SplitAmt) AS TotalPaid FROM paysplit WHERE PatNum = ?',
         [patNum]
       );
       const newBal = (Number(balRes[0]?.TotalCharges || 0) - Number(paySumRes[0]?.TotalPaid || 0)).toFixed(2);
-      await conn.execute('UPDATE patient SET BalTotal = ? WHERE PatNum = ?', [newBal, patNum]);
-
-    } finally {
-      await conn.query('UNLOCK TABLES');
-      conn.release();
+      await pool.execute('UPDATE patient SET BalTotal = ? WHERE PatNum = ?', [newBal, patNum]);
+    } catch (e) {
+      console.warn('[Liberty] Warning calculating BalTotal:', e.message);
     }
 
     // Record in history table
