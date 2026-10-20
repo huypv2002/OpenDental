@@ -223,10 +223,19 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
 
 export async function processSinglePdf(pool, filePath) {
   const fileName = path.basename(filePath);
-  console.log(`\n[MetLife Auto-Processor] Bắt đầu xử lý: ${fileName}...`);
+  console.log(`\n[Auto-Processor] Bắt đầu xử lý: ${fileName}...`);
 
   const fileBytes = await fs.readFile(filePath);
   const extracted = await extractPdf(fileBytes);
+  const fullText = extracted.pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n');
+
+  // Carrier auto-detection: Liberty vs MetLife
+  const isLiberty = /LIBERTY Dental Plan/i.test(fullText) || /PAYMENT DETAILS/i.test(fullText);
+  if (isLiberty) {
+    const { processLibertyPdf } = await import('../liberty/processor.js');
+    return await processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted });
+  }
+
   const parsed = parseMetlife(extracted);
 
   if (parsed.errors && parsed.errors.length > 0) {
@@ -498,60 +507,83 @@ export async function scanIncomingFolder(pool, incomingDir) {
   await ensureMetlifeHistoryTable(pool);
 
   try {
+    const candidateDirs = [incomingDir];
     try {
-      await fs.access(incomingDir);
-    } catch {
-      // Create folder if not existing
-      await fs.mkdir(incomingDir, { recursive: true });
-    }
+      const parentDir = path.dirname(incomingDir);
+      const libertyDir = path.join(parentDir, 'LIBERTY');
+      if (libertyDir.toLowerCase() !== incomingDir.toLowerCase()) {
+        candidateDirs.push(libertyDir);
+      }
+    } catch {}
 
-    let entries = await fs.readdir(incomingDir, { withFileTypes: true });
-    let pdfFiles = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+    const allPdfFiles = [];
 
-    if (pdfFiles.length === 0) {
-      // Auto-recover files from ERRORS folder if main folder is empty
+    for (const cDir of candidateDirs) {
       try {
-        const errorsDir = path.join(incomingDir, 'ERRORS');
-        const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
-        const errPdfs = errEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
-        if (errPdfs.length > 0) {
-          console.log(`[MetLife Auto-Processor] Tìm thấy ${errPdfs.length} file trong ERRORS. Đang tự động chuyển ra ngoài để thử lại...`);
-          for (const errFile of errPdfs) {
-            const cleanName = errFile.name.replace(/^\d{13}_/, '');
-            const src = path.join(errorsDir, errFile.name);
-            const dst = path.join(incomingDir, cleanName);
-            await fs.rename(src, dst);
+        await fs.access(cDir);
+      } catch {
+        try {
+          await fs.mkdir(cDir, { recursive: true });
+        } catch {}
+      }
+
+      let entries = [];
+      try {
+        entries = await fs.readdir(cDir, { withFileTypes: true });
+      } catch {}
+
+      let pdfs = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+
+      if (pdfs.length === 0) {
+        // Auto-recover files from ERRORS folder if main folder is empty
+        try {
+          const errorsDir = path.join(cDir, 'ERRORS');
+          const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
+          const errPdfs = errEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+          if (errPdfs.length > 0) {
+            console.log(`[Auto-Processor] Tìm thấy ${errPdfs.length} file trong ${errorsDir}. Đang tự động chuyển ra ngoài để thử lại...`);
+            for (const errFile of errPdfs) {
+              const cleanName = errFile.name.replace(/^\d{13}_/, '');
+              const src = path.join(errorsDir, errFile.name);
+              const dst = path.join(cDir, cleanName);
+              await fs.rename(src, dst);
+            }
+            entries = await fs.readdir(cDir, { withFileTypes: true });
+            pdfs = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
           }
-          entries = await fs.readdir(incomingDir, { withFileTypes: true });
-          pdfFiles = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
-        }
-      } catch (err) {
-        // ERRORS folder might not exist yet, ignore
+        } catch {}
+      }
+
+      for (const p of pdfs) {
+        allPdfFiles.push({
+          fullPath: path.join(cDir, p.name),
+          fileName: p.name,
+          dir: cDir
+        });
       }
     }
 
-    if (pdfFiles.length === 0) {
+    if (allPdfFiles.length === 0) {
       const emptyRes = { status: 'idle', count: 0, results: [] };
       lastScanResult = emptyRes;
       return emptyRes;
     }
 
-    console.log(`[MetLife Auto-Processor] Phát hiện ${pdfFiles.length} file PDF mới trong ${incomingDir}...`);
+    console.log(`[Auto-Processor] Phát hiện ${allPdfFiles.length} file PDF mới cần xử lý (MetLife / Liberty)...`);
     const results = [];
 
-    for (const file of pdfFiles) {
-      const fullPath = path.join(incomingDir, file.name);
+    for (const file of allPdfFiles) {
       try {
-        const res = await processSinglePdf(pool, fullPath);
+        const res = await processSinglePdf(pool, file.fullPath);
         results.push(res);
       } catch (err) {
-        console.error(`[MetLife Auto-Processor] ✗ Lỗi khi xử lý ${file.name}:`, err.message);
+        console.error(`[Auto-Processor] ✗ Lỗi khi xử lý ${file.fileName}:`, err.message);
 
         // Move to ERRORS
         try {
-          const errorsDir = path.join(incomingDir, 'ERRORS');
+          const errorsDir = path.join(file.dir, 'ERRORS');
           await fs.mkdir(errorsDir, { recursive: true });
-          await fs.rename(fullPath, path.join(errorsDir, `${Date.now()}_${file.name}`));
+          await fs.rename(file.fullPath, path.join(errorsDir, `${Date.now()}_${file.fileName}`));
         } catch {}
 
         // Record failure
@@ -562,13 +594,13 @@ export async function scanIncomingFolder(pool, incomingDir) {
               TotalAmount, ProceduresCount, FeesUpdated, PayNum, DocNum, Status,
               Message, Details, ProcessedAt
             ) VALUES (?, '', 0, 'Chưa rõ', '', '', 0.00, 0, '', 0, 0, 'FAILED', ?, '', NOW())`,
-            [file.name, `Lỗi xử lý tự động: ${err.message}`]
+            [file.fileName, `Lỗi xử lý tự động: ${err.message}`]
           );
         } catch {}
 
         results.push({
           success: false,
-          fileName: file.name,
+          fileName: file.fileName,
           error: err.message
         });
       }
@@ -584,24 +616,33 @@ export async function scanIncomingFolder(pool, incomingDir) {
 
 export async function getProcessorStatus(pool, incomingDir) {
   const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+  const candidateDirs = [dir];
+  try {
+    const parentDir = path.dirname(dir);
+    const libertyDir = path.join(parentDir, 'LIBERTY');
+    if (libertyDir.toLowerCase() !== dir.toLowerCase()) candidateDirs.push(libertyDir);
+  } catch {}
+
   let incomingCount = 0;
   let processedCount = 0;
   let errorsCount = 0;
 
-  try {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    incomingCount = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
-  } catch {}
+  for (const cDir of candidateDirs) {
+    try {
+      const entries = await fs.readdir(cDir, { withFileTypes: true });
+      incomingCount += entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
+    } catch {}
 
-  try {
-    const pEntries = await fs.readdir(path.join(dir, 'PROCESSED'), { withFileTypes: true });
-    processedCount = pEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
-  } catch {}
+    try {
+      const pEntries = await fs.readdir(path.join(cDir, 'PROCESSED'), { withFileTypes: true });
+      processedCount += pEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
+    } catch {}
 
-  try {
-    const eEntries = await fs.readdir(path.join(dir, 'ERRORS'), { withFileTypes: true });
-    errorsCount = eEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
-  } catch {}
+    try {
+      const eEntries = await fs.readdir(path.join(cDir, 'ERRORS'), { withFileTypes: true });
+      errorsCount += eEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
+    } catch {}
+  }
 
   let historyStats = { total: 0, success: 0, failed: 0, totalAmount: '0.00' };
   try {
@@ -625,6 +666,7 @@ export async function getProcessorStatus(pool, incomingDir) {
 
   return {
     incomingDir: dir,
+    candidateDirs,
     isScanning,
     lastScanTime,
     lastScanResult,
@@ -641,21 +683,27 @@ export async function getProcessorStatus(pool, incomingDir) {
 
 export async function retryErrorFiles(pool, incomingDir) {
   const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
-  const errorsDir = path.join(dir, 'ERRORS');
-  let moved = 0;
-
+  const candidateDirs = [dir];
   try {
-    const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
-    const errPdfs = errEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
-    for (const errFile of errPdfs) {
-      const cleanName = errFile.name.replace(/^\d{13}_/, '');
-      const src = path.join(errorsDir, errFile.name);
-      const dst = path.join(dir, cleanName);
-      await fs.rename(src, dst);
-      moved++;
-    }
-  } catch (e) {
-    console.warn('[MetLife Auto-Processor] Could not read ERRORS folder:', e.message);
+    const parentDir = path.dirname(dir);
+    const libertyDir = path.join(parentDir, 'LIBERTY');
+    if (libertyDir.toLowerCase() !== dir.toLowerCase()) candidateDirs.push(libertyDir);
+  } catch {}
+
+  let moved = 0;
+  for (const cDir of candidateDirs) {
+    const errorsDir = path.join(cDir, 'ERRORS');
+    try {
+      const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
+      const errPdfs = errEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+      for (const errFile of errPdfs) {
+        const cleanName = errFile.name.replace(/^\d{13}_/, '');
+        const src = path.join(errorsDir, errFile.name);
+        const dst = path.join(cDir, cleanName);
+        await fs.rename(src, dst);
+        moved++;
+      }
+    } catch {}
   }
 
   const scanResult = await scanIncomingFolder(pool, dir);
