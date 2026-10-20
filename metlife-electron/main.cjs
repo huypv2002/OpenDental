@@ -95,6 +95,10 @@ async function call(op,arg){
    await fs.unlink(path.join(app.getPath('userData'),'server-connection.enc')).catch(()=>{});serverClient=null;
    Object.assign(patientBrowser,{connected:false,url:'',patients:[],selectedPatient:null,documents:[],openedId:null});workspace.snapshots.clear();status.message='Đã ngắt kết nối SERVER.';break;
   }
+  case 'server-status':{
+   if(!serverClient)throw new Error('Chưa kết nối SERVER.');
+   return await serverClient.status();
+  }
   case 'server-history':{
    if(!serverClient)throw new Error('Chưa kết nối SERVER.');
    return await serverClient.history();
@@ -105,6 +109,43 @@ async function call(op,arg){
    status.message=`Đã quét thư mục SERVER: ${r.count||0} claim phát hiện.`;
    notify();
    return r;
+  }
+  case 'retry-errors':{
+   if(!serverClient)throw new Error('Chưa kết nối SERVER.');
+   const r=await serverClient.retryErrors();
+   status.message=`Đã chuyển ${r.movedCount||0} file lỗi để quét lại.`;
+   notify();
+   return r;
+  }
+  case 'history-pdf':{
+   if(!serverClient)throw new Error('Chưa kết nối SERVER.');
+   const bytes=await serverClient.historyPdf(arg);
+   return new Uint8Array(bytes);
+  }
+  case 'open-system-pdf':{
+   let bytes;
+   if(arg?.historyId){
+    if(!serverClient)throw new Error('Chưa kết nối SERVER.');
+    bytes=await serverClient.historyPdf(arg.historyId);
+   }else if(arg?.patNum&&arg?.docNum){
+    if(!serverClient)throw new Error('Chưa kết nối SERVER.');
+    bytes=await serverClient.pdf(arg.patNum,arg.docNum);
+   }else{
+    throw new Error('Thiếu thông tin tài liệu.');
+   }
+   const tmpDir=app.getPath('temp');
+   const safeName=(arg.fileName||`EOB_${Date.now()}.pdf`).replace(/[^a-zA-Z0-9._-]/g,'_');
+   const tmpFile=path.join(tmpDir,safeName);
+   await fs.writeFile(tmpFile,Buffer.from(bytes));
+   const error=await shell.openPath(tmpFile);
+   if(error)throw new Error(error);
+   return true;
+  }
+  case 'open-share-folder':{
+   const shareDir=arg||'\\\\SERVER\\SHARE\\INSURANCE CLAIM\\METLIFE';
+   const error=await shell.openPath(shareDir);
+   if(error)throw new Error(error);
+   return true;
   }
   case 'search-patients':{
    if(!serverClient)throw new Error('Kết nối SERVER một lần để tìm bệnh nhân.');

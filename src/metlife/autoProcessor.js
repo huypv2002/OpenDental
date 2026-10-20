@@ -7,6 +7,8 @@ import { odSecurityLogHash } from './directPayment.js';
 
 let isScanning = false;
 let autoScanIntervalId = null;
+let lastScanTime = null;
+let lastScanResult = null;
 
 export async function ensureMetlifeHistoryTable(pool) {
   try {
@@ -434,7 +436,19 @@ export async function processSinglePdf(pool, filePath) {
     docNum: aToZResult.docNum,
     totalBenefit,
     updatedFees,
-    splits: splitsPlan.map((s) => ({ code: s.code, amount: s.amount, procNum: s.ProcNum }))
+    splits: splitsPlan.map((s) => ({ code: s.code, amount: s.amount, procNum: s.ProcNum })),
+    eobPayment: parsed.payment || null,
+    subscriber: parsed.subscriber || '',
+    procedures: (parsed.procedures || []).map((p) => ({
+      code: p.code,
+      date: p.date || '',
+      tooth: p.tooth || '',
+      status: p.status || '',
+      feeCents: p.feeCents || 0,
+      benefitCents: p.benefitCents || 0,
+      remarks: p.remarks || []
+    })),
+    archivePath
   });
 
   const feesUpdatedStr = updatedFees.join(', ') || 'Không cần bù (đã có phí)';
@@ -480,6 +494,7 @@ export async function scanIncomingFolder(pool, incomingDir) {
   }
 
   isScanning = true;
+  lastScanTime = new Date().toISOString();
   await ensureMetlifeHistoryTable(pool);
 
   try {
@@ -516,7 +531,9 @@ export async function scanIncomingFolder(pool, incomingDir) {
     }
 
     if (pdfFiles.length === 0) {
-      return { status: 'idle', count: 0, results: [] };
+      const emptyRes = { status: 'idle', count: 0, results: [] };
+      lastScanResult = emptyRes;
+      return emptyRes;
     }
 
     console.log(`[MetLife Auto-Processor] Phát hiện ${pdfFiles.length} file PDF mới trong ${incomingDir}...`);
@@ -557,10 +574,160 @@ export async function scanIncomingFolder(pool, incomingDir) {
       }
     }
 
-    return { status: 'completed', count: results.length, results };
+    const finalRes = { status: 'completed', count: results.length, results };
+    lastScanResult = finalRes;
+    return finalRes;
   } finally {
     isScanning = false;
   }
+}
+
+export async function getProcessorStatus(pool, incomingDir) {
+  const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+  let incomingCount = 0;
+  let processedCount = 0;
+  let errorsCount = 0;
+
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    incomingCount = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
+  } catch {}
+
+  try {
+    const pEntries = await fs.readdir(path.join(dir, 'PROCESSED'), { withFileTypes: true });
+    processedCount = pEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
+  } catch {}
+
+  try {
+    const eEntries = await fs.readdir(path.join(dir, 'ERRORS'), { withFileTypes: true });
+    errorsCount = eEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
+  } catch {}
+
+  let historyStats = { total: 0, success: 0, failed: 0, totalAmount: '0.00' };
+  try {
+    const [rows] = await pool.execute(`
+      SELECT 
+        COUNT(*) AS total,
+        SUM(CASE WHEN Status = 'SUCCESS' THEN 1 ELSE 0 END) AS success,
+        SUM(CASE WHEN Status != 'SUCCESS' THEN 1 ELSE 0 END) AS failed,
+        SUM(CASE WHEN Status = 'SUCCESS' THEN TotalAmount ELSE 0 END) AS totalAmount
+      FROM luk_metlife_history
+    `);
+    if (rows && rows[0]) {
+      historyStats = {
+        total: Number(rows[0].total || 0),
+        success: Number(rows[0].success || 0),
+        failed: Number(rows[0].failed || 0),
+        totalAmount: Number(rows[0].totalAmount || 0).toFixed(2)
+      };
+    }
+  } catch {}
+
+  return {
+    incomingDir: dir,
+    isScanning,
+    lastScanTime,
+    lastScanResult,
+    uptimeSeconds: Math.floor(process.uptime()),
+    counts: {
+      incoming: incomingCount,
+      processed: processedCount,
+      errors: errorsCount
+    },
+    historyStats,
+    serverTime: new Date().toISOString()
+  };
+}
+
+export async function retryErrorFiles(pool, incomingDir) {
+  const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+  const errorsDir = path.join(dir, 'ERRORS');
+  let moved = 0;
+
+  try {
+    const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
+    const errPdfs = errEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+    for (const errFile of errPdfs) {
+      const cleanName = errFile.name.replace(/^\d{13}_/, '');
+      const src = path.join(errorsDir, errFile.name);
+      const dst = path.join(dir, cleanName);
+      await fs.rename(src, dst);
+      moved++;
+    }
+  } catch (e) {
+    console.warn('[MetLife Auto-Processor] Could not read ERRORS folder:', e.message);
+  }
+
+  const scanResult = await scanIncomingFolder(pool, dir);
+  return { movedCount: moved, scanResult };
+}
+
+export async function getHistoryPdf(pool, historyId, incomingDir) {
+  const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+  const [rows] = await pool.execute(
+    'SELECT Id, FileName, PatNum, DocNum, Details FROM luk_metlife_history WHERE Id = ?',
+    [historyId]
+  );
+  if (!rows || !rows.length) {
+    throw new Error(`Không tìm thấy bản ghi lịch sử #${historyId}.`);
+  }
+  const item = rows[0];
+
+  // 1. Try reading from Open Dental AtoZ if DocNum > 0
+  if (item.DocNum > 0 && item.PatNum > 0) {
+    try {
+      const [docs] = await pool.execute(
+        'SELECT d.FileName, p.ImageFolder FROM document d JOIN patient p ON p.PatNum = d.PatNum WHERE d.DocNum = ?',
+        [item.DocNum]
+      );
+      if (docs && docs.length) {
+        const [prefs] = await pool.execute(
+          "SELECT PrefName, ValueString FROM preference WHERE LOWER(PrefName) IN ('docpath','atozfolderused','atozfolder','imagestore')"
+        );
+        const pref = (name) => prefs.find((r) => r.PrefName.toLowerCase() === name)?.ValueString;
+        const root = pref('docpath') || pref('atozfolder');
+        if (root) {
+          const folder = docs[0].ImageFolder;
+          const fileName = docs[0].FileName;
+          const firstLetter = (folder[0] || 'P').toUpperCase();
+          const filePath = path.join(root, firstLetter, folder, fileName);
+          const bytes = await fs.readFile(filePath);
+          return { filename: fileName, bytes };
+        }
+      }
+    } catch (e) {
+      console.warn('[getHistoryPdf] AtoZ read failed, falling back to local files:', e.message);
+    }
+  }
+
+  // 2. Try Details archivePath
+  let details = null;
+  try { if (item.Details) details = JSON.parse(item.Details); } catch {}
+  if (details?.archivePath) {
+    try {
+      const bytes = await fs.readFile(details.archivePath);
+      return { filename: item.FileName, bytes };
+    } catch {}
+  }
+
+  // 3. Try checking PROCESSED, ERRORS, incomingDir
+  const searchDirs = [
+    path.join(dir, 'PROCESSED'),
+    path.join(dir, 'ERRORS'),
+    dir
+  ];
+  for (const sDir of searchDirs) {
+    try {
+      const files = await fs.readdir(sDir);
+      const match = files.find((f) => f === item.FileName || f.endsWith('_' + item.FileName) || f.endsWith(item.FileName));
+      if (match) {
+        const bytes = await fs.readFile(path.join(sDir, match));
+        return { filename: item.FileName, bytes };
+      }
+    } catch {}
+  }
+
+  throw new Error(`Không tìm thấy file PDF cho giao dịch #${historyId} (${item.FileName}).`);
 }
 
 export function startAutoProcessor({ pool, incomingDir, intervalMs = 30000 }) {

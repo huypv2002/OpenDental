@@ -1,114 +1,276 @@
 <!doctype html>
 <html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; worker-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
-<title>LUK MetLife Payments</title><link rel="stylesheet" href="luk-base.css"><link rel="stylesheet" href="style.css"></head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; worker-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>LUK MetLife Audit Center</title>
+<link rel="stylesheet" href="luk-base.css">
+<link rel="stylesheet" href="style.css">
+</head>
 <body>
-<header class="app-header"><div class="identity"><span class="brand-mark">L</span><div><b>LUK DENTAL</b><span>Lịch sử đối chiếu & thanh toán tự động</span></div></div><div class="header-end"><span class="pill" id="edition-label">SERVER AUTO-PILOT</span><span id="version" class="muted"></span></div></header>
-<nav aria-label="Chức năng">
-  <button class="active" data-tab="dashboard">⚡ Lịch sử tự động (Server)</button>
-  <button data-tab="patients">🔍 Tra cứu hồ sơ & Finished Claims</button>
-  <button data-tab="queue">📑 Đối chiếu thủ công</button>
-  <button data-tab="activity">📋 Nhật ký máy trạm</button>
-  <button data-tab="settings">ℹ️ Hướng dẫn</button>
-  <span class="grow"></span>
-</nav>
-<div id="pending-save-banner" class="notice" hidden>Có lượt ghi chưa xác minh. Không ghi lại. <button id="verify-save">Kiểm tra kết quả</button></div>
-<div id="workflow-feedback" role="status" hidden></div>
-<main>
-<section id="dashboard" class="page">
-  <div class="hero">
+<header class="app-header">
+  <div class="identity">
+    <span class="brand-mark">L</span>
     <div>
-      <div class="eyebrow">SERVER AUTO-PROCESSING</div>
-      <h1>Lịch sử xử lý tự động MetLife EOB</h1>
-      <p>Server tự động quét thư mục <code>D:\SHARE\INSURANCE CLAIM\METLIFE</code>, import Finished Claims, bù phí dịch vụ 0.00 và ghi nhận thanh toán vào Open Dental.</p>
+      <b>LUK DENTAL</b>
+      <span>Trung tâm Giám sát & Đối chiếu MetLife EOB (R5)</span>
     </div>
-    <div class="dashboard-controls">
-      <button id="scan-server-now" class="primary">⚡ Quét thư mục Server ngay</button>
-      <button id="refresh-history" class="small">🔄 Làm mới</button>
+  </div>
+  <div class="header-center">
+    <div id="server-live-indicator" class="live-status-pill online">
+      <span class="pulse-dot"></span>
+      <b id="server-live-title">SERVER: KẾT NỐI TỐT</b>
+      <span id="server-live-detail" class="muted">Đang tải...</span>
+    </div>
+  </div>
+  <div class="header-end">
+    <button id="header-scan-btn" class="primary small" title="Quét thư mục MetLife trên server ngay">⚡ Quét Server ngay</button>
+    <button id="header-retry-btn" class="small warning-btn" title="Chuyển các file trong thư mục ERRORS ra để quét lại" hidden>🔄 Thử lại file lỗi (<span id="error-badge-count">0</span>)</button>
+    <button id="refresh-all-btn" class="small" title="Làm mới toàn bộ dữ liệu">🔄 Làm mới</button>
+  </div>
+</header>
+
+<nav aria-label="Chức năng chính">
+  <button class="active" data-tab="dashboard">📊 Giám sát & Lịch sử EOB</button>
+  <button data-tab="patients">📁 Tra cứu bệnh nhân & Finished Claims</button>
+  <button data-tab="diagnostics">⚙️ Trạng thái Server & Chẩn đoán</button>
+  <span class="grow"></span>
+  <span id="auto-refresh-timer" class="auto-refresh-badge">⏱️ Tự động làm mới: 15s</span>
+</nav>
+
+<main>
+<!-- TAB 1: AUDIT DASHBOARD -->
+<section id="dashboard" class="page">
+  <div class="stats-row">
+    <div class="stat-card">
+      <span class="stat-label">Tổng EOB đã xử lý</span>
+      <b id="stat-total-processed" class="stat-value">0</b>
+      <small class="stat-sub">Từ thư mục MetLife</small>
+    </div>
+    <div class="stat-card success-card">
+      <span class="stat-label">Ghi thành công vào OD</span>
+      <b id="stat-success" class="stat-value text-success">0</b>
+      <small class="stat-sub">Đã tạo Payment & Finished Claims</small>
+    </div>
+    <div class="stat-card warning-card">
+      <span class="stat-label">Cần kiểm tra / Lỗi</span>
+      <b id="stat-failed" class="stat-value text-danger">0</b>
+      <small class="stat-sub">File lỗi hoặc chưa khớp dữ liệu</small>
+    </div>
+    <div class="stat-card highlight-card">
+      <span class="stat-label">Tổng tiền bảo hiểm đã ghi</span>
+      <b id="stat-total-amount" class="stat-value text-primary">$0.00</b>
+      <small class="stat-sub">Loại Insurance Paid</small>
     </div>
   </div>
 
-  <div class="stats">
-    <div class="stat"><span>Tổng EOB đã xử lý</span><b id="stat-total-processed">0</b></div>
-    <div class="stat"><span>Ghi thành công vào OD</span><b id="stat-success" style="color:#197b56">0</b></div>
-    <div class="stat"><span>Cần kiểm tra / Lỗi</span><b id="stat-failed" style="color:#b91c1c">0</b></div>
-    <div class="stat"><span>Tổng tiền bảo hiểm đã ghi</span><b id="stat-total-amount" style="color:#155bd8">$0.00</b></div>
+  <div class="dashboard-filter-bar">
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input id="history-search" type="search" placeholder="Tìm theo tên bệnh nhân, PatNum, số Claim, số Check/Trace, tên file..." aria-label="Tìm kiếm lịch sử">
+      <button id="history-search-clear" class="clear-btn" hidden>×</button>
+    </div>
+    <div class="filter-pills" role="radiogroup" aria-label="Lọc theo trạng thái">
+      <button class="filter-pill active" data-filter="all">Tất cả (<span id="filter-count-all">0</span>)</button>
+      <button class="filter-pill" data-filter="success">✓ Đã ghi OD (<span id="filter-count-success">0</span>)</button>
+      <button class="filter-pill" data-filter="failed">⚠️ Lỗi / Cần kiểm tra (<span id="filter-count-failed">0</span>)</button>
+    </div>
   </div>
 
-  <div class="dashboard-workspace">
+  <div class="dashboard-split-workspace">
+    <!-- Left: History Table -->
     <div class="card history-table-panel">
       <div class="panel-heading">
-        <b>Danh sách giao dịch tự động gần đây</b>
-        <span id="history-count" class="muted">Đang kết nối...</span>
+        <div class="heading-left">
+          <b>Danh sách giao dịch EOB</b>
+          <span id="history-count" class="muted">0 giao dịch</span>
+        </div>
       </div>
       <div class="history-scroll">
         <table class="history-table">
           <thead>
             <tr>
-              <th>Thời gian</th>
-              <th>File PDF</th>
+              <th style="width:110px;">Thời gian</th>
+              <th style="width:140px;">File EOB PDF</th>
               <th>Bệnh nhân / PatNum</th>
               <th>Claim / Check #</th>
-              <th class="num">Bảo hiểm chi trả</th>
-              <th>Bù phí (0.00)</th>
-              <th>Trạng thái</th>
+              <th class="num" style="width:110px;">Bảo hiểm trả</th>
+              <th style="width:110px;">Bù phí (0.00)</th>
+              <th style="width:105px;">Trạng thái</th>
+              <th style="width:80px;text-align:center;">Thao tác</th>
             </tr>
           </thead>
           <tbody id="history-items-tbody"></tbody>
         </table>
         <div id="history-empty" class="empty" hidden>
           <div class="document-symbol">✓</div>
-          <p>Chưa có file PDF nào được xử lý trong thư mục Server.<br>Đặt file EOB PDF (ví dụ 1307.pdf) vào thư mục Server để hệ thống tự động xử lý.</p>
+          <h3>Chưa có file EOB nào</h3>
+          <p>Đặt file EOB PDF (ví dụ <code>1307.pdf</code>) vào thư mục <code>D:\SHARE\INSURANCE CLAIM\METLIFE</code> trên server để hệ thống tự động xử lý.</p>
         </div>
       </div>
     </div>
 
+    <!-- Right: EOB Reconciliation Inspector -->
     <div class="card history-detail-panel">
       <div class="panel-heading">
-        <b>Chi tiết đối chiếu & Giao dịch Open Dental</b>
-        <span id="history-detail-badge" class="badge">Chọn giao dịch</span>
+        <div class="heading-left">
+          <b>Bảng đối chiếu & Kiểm toán chi tiết</b>
+          <span id="history-detail-badge" class="badge">Chọn giao dịch</span>
+        </div>
+        <div class="heading-actions" id="inspector-actions" hidden>
+          <button id="inspector-view-pdf-btn" class="small primary" title="Xem PDF EOB gốc trong cửa sổ ứng dụng">👁️ Xem PDF</button>
+          <button id="inspector-open-os-pdf-btn" class="small" title="Mở file PDF bằng Adobe Reader hoặc ứng dụng mặc định">📄 Mở bằng Reader</button>
+        </div>
       </div>
       <div id="history-detail-empty" class="empty">
-        <p>Bấm vào một dòng trong danh sách bên trái để kiểm tra chi tiết các dữ liệu đã lưu vào Open Dental.</p>
+        <div class="document-symbol">📋</div>
+        <h3>Chọn một giao dịch</h3>
+        <p>Bấm vào bất kỳ dòng nào ở bảng bên trái để xem đầy đủ chi tiết phân bổ từng dịch vụ, phí bù OD, kiểm tra 2 dòng thanh toán và tài liệu Finished Claims.</p>
       </div>
       <div id="history-detail-content" class="detail-body" hidden></div>
     </div>
   </div>
 </section>
 
+<!-- TAB 2: PATIENT SEARCH & FINISHED CLAIMS -->
 <section id="patients" class="page" hidden>
-<div class="hero"><div><div class="eyebrow">HỒ SƠ BỆNH NHÂN</div><h1>Chọn hồ sơ thanh toán</h1><p>Tìm hồ sơ trong Open Dental, chọn PDF, đối chiếu và lưu vào OD từ cùng một màn hình.</p></div><span class="grow"></span><button id="connect-server" class="primary">Kết nối lại</button></div>
-<div class="card patient-search"><div class="search-controls"><select id="patient-search-kind" aria-label="Tìm theo"><option value="all">Tất cả thông tin</option value="name">Tên bệnh nhân</option><option value="patientId">Patient ID / Chart Number</option><option value="subscriberId">Subscriber ID</option><option value="groupNumber">Group Number</option></select><input id="patient-search-query" maxlength="100" placeholder="Tên, Patient ID, Subscriber ID, Group Number…" aria-label="Từ khóa bệnh nhân"><button id="search-patients" class="primary">Tìm bệnh nhân</button></div><p id="server-status" class="muted">Đang kết nối dữ liệu phòng khám…</p></div>
-<div class="patient-layout"><div class="card patient-results"><div class="panel-heading"><b>Kết quả tìm kiếm</b><div><button id="patients-prev" class="small">‹ Trước</button><button id="patients-next" class="small">Tiếp ›</button></div></div><div class="patient-table-scroll"><table><thead><tr><th>Bệnh nhân / Patient ID</th><th>Ngày sinh</th><th>Subscriber ID / Group</th></tr></thead><tbody id="patient-results"></tbody></table><div id="patient-results-empty" class="empty"><p>Nhập thông tin để tìm bệnh nhân.<br>Một hợp đồng có thể có nhiều người tham gia.</p></div></div></div>
-<div class="card patient-documents"><div class="panel-heading"><div><b>Finished Claims</b><p id="documents-patient" class="muted">Chọn bệnh nhân để xem tài liệu</p></div><button id="refresh-documents" class="small">Làm mới</button></div><div id="patient-documents" class="document-list"><div class="empty"><div class="document-symbol">PDF</div><p>Chọn bệnh nhân để xem tài liệu bảo hiểm.</p></div></div></div></div>
+  <div class="hero">
+    <div>
+      <div class="eyebrow">OPEN DENTAL IMAGING ARCHIVE</div>
+      <h1>Tra cứu hồ sơ bệnh nhân & Finished Claims</h1>
+      <p>Tra cứu trực tiếp cơ sở dữ liệu Open Dental để xem toàn bộ các file EOB PDF đã được lưu trữ an toàn trong danh mục Finished Claims.</p>
+    </div>
+  </div>
+  <div class="card patient-search">
+    <div class="search-controls">
+      <select id="patient-search-kind" aria-label="Tìm theo">
+        <option value="all">Tất cả thông tin</option>
+        <option value="name">Tên bệnh nhân</option>
+        <option value="patientId">Patient ID (PatNum) / Chart #</option>
+        <option value="subscriberId">Subscriber ID</option>
+        <option value="groupNumber">Group Number</option>
+      </select>
+      <input id="patient-search-query" maxlength="100" placeholder="Nhập tên, PatNum, Subscriber ID..." aria-label="Từ khóa tìm kiếm">
+      <button id="search-patients" class="primary">Tìm bệnh nhân</button>
+    </div>
+    <p id="server-status" class="muted">Sẵn sàng tra cứu hồ sơ phòng khám.</p>
+  </div>
+  <div class="patient-layout">
+    <div class="card patient-results">
+      <div class="panel-heading">
+        <b>Kết quả tìm kiếm</b>
+        <div>
+          <button id="patients-prev" class="small">‹ Trước</button>
+          <button id="patients-next" class="small">Tiếp ›</button>
+        </div>
+      </div>
+      <div class="patient-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Bệnh nhân / PatNum</th>
+              <th>Ngày sinh</th>
+              <th>Bảo hiểm / Subscriber / Group</th>
+            </tr>
+          </thead>
+          <tbody id="patient-results"></tbody>
+        </table>
+        <div id="patient-results-empty" class="empty">
+          <p>Nhập thông tin bệnh nhân ở trên để tra cứu hồ sơ.</p>
+        </div>
+      </div>
+    </div>
+    <div class="card patient-documents">
+      <div class="panel-heading">
+        <div>
+          <b>Tài liệu Finished Claims</b>
+          <p id="documents-patient" class="muted">Chọn bệnh nhân để xem tài liệu</p>
+        </div>
+        <button id="refresh-documents" class="small">Làm mới</button>
+      </div>
+      <div id="patient-documents" class="document-list">
+        <div class="empty">
+          <div class="document-symbol">PDF</div>
+          <p>Chọn bệnh nhân để tải danh sách PDF trong Imaging.</p>
+        </div>
+      </div>
+    </div>
+  </div>
 </section>
-<section id="queue" class="page" hidden>
-<div class="hero"><div><div class="eyebrow">THANH TOÁN BẢO HIỂM</div><h1>Đối chiếu và lưu thanh toán</h1><p>Đọc MetLife, kiểm tra giao dịch trùng và đối chiếu từng dịch vụ trước khi lưu.</p></div><span class="grow"></span><button id="import-pdf">Mở PDF trên máy</button></div>
-<div class="workflow"><span><b>01</b> Chọn tài liệu</span><i>›</i><span><b>02</b> Đối chiếu OD</span><i>›</i><span><b>03</b> Kiểm tra phân bổ</span><i>›</i><span class="muted"><b>04</b> Lưu & xem kết quả</span></div>
-<div class="stats"><div class="stat"><span>PDF trong hàng đợi</span><b id="count-total">0</b></div><div class="stat"><span>Đủ dữ liệu đối chiếu</span><b id="count-ready">0</b></div><div class="stat"><span>Cần xử lý</span><b id="count-blocked">0</b></div><div class="stat"><span>Bệnh nhân đã nạp từ OD</span><b id="count-snapshots">0</b></div></div>
-<div class="workspace"><aside class="card queue-panel"><div class="panel-heading"><b>Tài liệu MetLife</b><button class="small" id="choose-folder">Chọn thư mục</button></div><div class="folder-bar"><span id="folder-path">Chưa chọn thư mục</span><div><button class="small" id="scan">Quét lại</button><label class="watch"><input id="watch" type="checkbox"> Theo dõi</label></div></div><input id="search" aria-label="Tìm PDF" placeholder="Tìm tên file, bệnh nhân, claim…"><div id="file-list" class="file-list"></div></aside>
-<div class="card detail-panel"><div id="empty" class="empty"><div class="document-symbol">PDF</div><h2>Bắt đầu với một hồ sơ MetLife</h2><p>Tìm bệnh nhân và chọn tài liệu trong Finished Claims<br>để kiểm tra thông tin trước khi lưu thanh toán.</p><button id="empty-import" class="primary">Chọn PDF MetLife</button><small>Kiểm tra đúng bệnh nhân, hợp đồng và số tiền trước khi lưu.</small></div><div id="detail" hidden></div></div></div>
+
+<!-- TAB 3: SERVER HEALTH & DIAGNOSTICS -->
+<section id="diagnostics" class="page" hidden>
+  <div class="hero">
+    <div>
+      <div class="eyebrow">HỆ THỐNG PHÒNG KHÁM</div>
+      <h1>Trạng thái máy chủ & Chẩn đoán hệ thống</h1>
+      <p>Kiểm tra tình trạng dịch vụ Open Dental Bridge, kết nối cơ sở dữ liệu, các thư mục lưu trữ chia sẻ và xem nhật ký hoạt động.</p>
+    </div>
+  </div>
+  <div class="diagnostics-grid">
+    <div class="card diag-card">
+      <div class="panel-heading"><b>Kết nối máy chủ Open Dental</b></div>
+      <div class="diag-body">
+        <div class="diag-row"><span class="diag-label">Địa chỉ máy chủ (URL):</span><b id="diag-url">Đang kết nối...</b></div>
+        <div class="diag-row"><span class="diag-label">Trạng thái:</span><span id="diag-conn-status" class="badge success">🟢 Đang hoạt động</span></div>
+        <div class="diag-row"><span class="diag-label">Thời gian máy chủ:</span><span id="diag-server-time">—</span></div>
+        <div class="diag-row"><span class="diag-label">Thời gian hoạt động (Uptime):</span><span id="diag-uptime">—</span></div>
+        <div class="diag-row"><span class="diag-label">Quét thư mục lần cuối:</span><span id="diag-last-scan">—</span></div>
+        <div class="diag-actions" style="margin-top:14px;display:flex;gap:8px;">
+          <button id="diag-reconnect-btn" class="small">Kết nối lại máy chủ</button>
+          <button id="diag-scan-btn" class="small primary">Quét thư mục ngay</button>
+          <button id="diag-retry-errors-btn" class="small">Thử lại file lỗi</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card diag-card">
+      <div class="panel-heading"><b>Thư mục chia sẻ & Số lượng file</b></div>
+      <div class="diag-body">
+        <div class="diag-row"><span class="diag-label">Thư mục nhận file EOB:</span><code id="diag-folder-incoming">D:\SHARE\INSURANCE CLAIM\METLIFE</code></div>
+        <div class="diag-row"><span class="diag-label">File đang chờ quét:</span><b id="diag-count-incoming" class="text-primary">0 file</b></div>
+        <div class="diag-row"><span class="diag-label">File đã xử lý (PROCESSED):</span><b id="diag-count-processed" class="text-success">0 file</b></div>
+        <div class="diag-row"><span class="diag-label">File lỗi (ERRORS):</span><b id="diag-count-errors" class="text-danger">0 file</b></div>
+        <div class="diag-row"><span class="diag-label">Chu kỳ quét tự động:</span><span>30 giây / lần</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card log-card" style="margin-top:18px;">
+    <div class="panel-heading">
+      <b>Nhật ký sự kiện máy trạm (Activity Log)</b>
+      <button id="clear-events-btn" class="small">Xóa nhật ký</button>
+    </div>
+    <div class="activity-card" id="events"></div>
+  </div>
 </section>
-<section id="settings" class="page" hidden></section>
-<section id="activity" class="page" hidden><div class="hero"><div><div class="eyebrow">LỊCH SỬ THAO TÁC</div><h1>Hoạt động trên máy</h1><p>Các thao tác và kết quả trong lần sử dụng hiện tại.</p></div></div><div class="card activity-card" id="events"></div></section>
 </main>
-<footer><span class="status-dot"></span><span id="status-text" role="status">Đang khởi động…</span><span class="grow"></span><span id="runtime">MetLife · Dữ liệu phòng khám</span></footer>
-<div id="confirm-modal" class="modal-backdrop" hidden>
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+
+<footer>
+  <span class="status-dot"></span>
+  <span id="status-text" role="status">Hệ thống sẵn sàng.</span>
+  <span class="grow"></span>
+  <span id="runtime">LUK MetLife Audit Center · Máy R5</span>
+</footer>
+
+<!-- MODAL: PDF VIEWER -->
+<div id="pdf-modal" class="modal-backdrop" hidden>
+  <div class="modal-card pdf-modal-card" role="dialog" aria-modal="true" aria-labelledby="pdf-modal-title">
     <div class="modal-header">
       <div>
-        <div class="eyebrow">XÁC NHẬN GHI VÀO OPEN DENTAL</div>
-        <h2 id="modal-title">Xác nhận thông tin thanh toán</h2>
+        <div class="eyebrow">XEM TÀI LIỆU EOB GỐC</div>
+        <h2 id="pdf-modal-title">Tài liệu EOB PDF</h2>
       </div>
-      <button id="modal-close" class="modal-close-btn" aria-label="Đóng popup">✕</button>
+      <div class="pdf-modal-controls">
+        <button id="pdf-modal-open-external" class="small" title="Mở file này bằng Adobe Reader trên Windows">📄 Mở bằng Adobe Reader</button>
+        <button id="pdf-modal-close" class="modal-close-btn" aria-label="Đóng popup">✕</button>
+      </div>
     </div>
-    <div class="modal-body" id="modal-body-content"></div>
-    <div class="modal-footer">
-      <button id="modal-cancel" class="small">Hủy bỏ</button>
-      <button id="modal-confirm" class="primary">✓ Xác nhận lưu vào Open Dental</button>
+    <div class="pdf-modal-body" id="pdf-modal-body">
+      <div id="pdf-modal-viewer" class="pdf-viewer-canvas-wrap">Đang tải tài liệu PDF...</div>
     </div>
   </div>
 </div>
+
 <div id="toast" role="alert" hidden></div>
 <script type="module" src="app.mjs"></script>
-</body></html>
+</body>
+</html>

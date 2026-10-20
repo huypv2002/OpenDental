@@ -46,7 +46,7 @@ test('autoPopulateProcedureFees updates 0.00 ProcFee to submitted fee from EOB',
   const executedUpdates = [];
   const conn = {
     execute: async (sql, values) => {
-      if (sql.includes('SELECT pl.ProcNum, pl.ProcDate, pl.ProcFee')) {
+      if (sql.includes('SELECT procedurelog.ProcNum') || sql.includes('SELECT pl.ProcNum')) {
         return [[
           { ProcNum: 13757, ProcDate: new Date('2026-09-20'), ProcFee: '0.00', ProcCode: 'D0120', CodeNum: 1 },
           { ProcNum: 13783, ProcDate: new Date('2026-09-20'), ProcFee: '0.00', ProcCode: 'D1208', CodeNum: 2 }
@@ -67,6 +67,18 @@ test('autoPopulateProcedureFees updates 0.00 ProcFee to submitted fee from EOB',
         executedUpdates.push({ type: 'claim', claimNum: values[1] });
         return [{ affectedRows: 1 }];
       }
+      if (sql.includes('SUM(FeeBilled)')) {
+        return [[{ TotalFee: '131.40' }]];
+      }
+      if (sql.includes('SUM(ProcFee)')) {
+        return [[{ TotalCharges: '131.40' }]];
+      }
+      if (sql.includes('SUM(SplitAmt)')) {
+        return [[{ TotalPaid: '131.40' }]];
+      }
+      if (sql.includes('UPDATE patient SET BalTotal')) {
+        return [{ affectedRows: 1 }];
+      }
       return [[]];
     }
   };
@@ -82,8 +94,8 @@ test('autoPopulateProcedureFees updates 0.00 ProcFee to submitted fee from EOB',
   });
 
   assert.equal(updatedFees.length, 2);
-  assert.match(updatedFees[0], /D0120: \$0\.00 -> \$96\.00/);
-  assert.match(updatedFees[1], /D1208: \$0\.00 -> \$50\.00/);
+  assert.match(updatedFees[0], /D0120: \$86\.40/);
+  assert.match(updatedFees[1], /D1208: \$45\.00/);
 
   assert.equal(executedUpdates.filter((u) => u.type === 'procedurelog').length, 2);
   assert.equal(executedUpdates.filter((u) => u.type === 'claimproc').length, 2);

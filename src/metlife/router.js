@@ -72,5 +72,28 @@ export function createMetlifeRouter({repository=createRepository(pool),getToken=
   console.log(`[MetLife API] Quét hoàn tất: trạng thái ${res.status}, số lượng: ${res.count??0}`);
   return res;
  }));
+ router.get('/status',json(async()=>{
+  const {getProcessorStatus}=await import('./autoProcessor.js');
+  const dir=process.env.METLIFE_INCOMING_DIR||'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+  return await getProcessorStatus(pool,dir);
+ }));
+ router.post('/retry-errors',json(async()=>{
+  console.log('[MetLife API] Nhận yêu cầu thử lại file lỗi từ client…');
+  const {retryErrorFiles}=await import('./autoProcessor.js');
+  const dir=process.env.METLIFE_INCOMING_DIR||'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+  const res=await retryErrorFiles(pool,dir);
+  return res;
+ }));
+ router.get('/history/:id/pdf',async(req,res)=>{
+  try{
+   const {getHistoryPdf}=await import('./autoProcessor.js');
+   const dir=process.env.METLIFE_INCOMING_DIR||'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+   const file=await getHistoryPdf(pool,req.params.id,dir);
+   res.set({'Content-Type':'application/pdf','Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,'X-Content-Type-Options':'nosniff'});
+   res.send(file.bytes);
+  }catch(e){
+   res.status(400).json({ok:false,error:e.message});
+  }
+ });
  return router;
 }

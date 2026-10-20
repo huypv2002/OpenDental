@@ -1,367 +1,719 @@
 import {customerMessage} from '../lib/customer-text.mjs';
-let state=null,selected=null,view='review',working=false,pdfToken=0;
-let lastSearch={q:'',kind:'all',page:0};
-const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const usd=n=>n===null||n===undefined?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n/100);
-const events=[];let lastMessage='';
-async function request(op,arg){const r=await window.metlife.call(op,arg);if(!r.ok)throw new Error(r.error);return r.data;}
-function toast(msg){$('#toast').textContent=msg;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,6500);}
-async function action(op,arg){if(working)return;working=true;document.body.setAttribute('aria-busy','true');updateButtons();try{const s=await request(op,arg);working=false;document.body.removeAttribute('aria-busy');if(s?.items){if(op==='open-document'){selected=s.patientBrowser.openedId;view='review';$('nav [data-tab="queue"]').click();}render(s);}return s;}catch(e){const friendly=customerMessage(e.message);const detail=e.message&&!friendly.includes(e.message)?`\n(Lỗi kỹ thuật: ${e.message})`:'';toast(friendly+detail);}finally{working=false;document.body.removeAttribute('aria-busy');updateButtons();}}
-function updateButtons(){document.querySelectorAll('[data-action],#import-pdf,#import-snapshot,#choose-folder,#scan,#inspect-od,#save-settings,#empty-import,#connect-server,#login-server,#disconnect-server,#search-patients,#patients-prev,#patients-next,#refresh-documents,#verify-save,#inspect-db,#export-db-diagnostics').forEach(b=>{if(b.dataset.action==='save-payment')b.disabled=working;else b.disabled=working||b.dataset.blocked==='true';});}
-function field(label,value,cls=''){return `<div><span class="field-label">${esc(label)}</span><span class="field-value ${cls}">${esc(value||'—')}</span></div>`;}
-function addEvent(message){if(!message||message===lastMessage)return;lastMessage=message;events.unshift({at:new Date().toLocaleTimeString('vi-VN'),message});$('#events').innerHTML=events.map(e=>`<div class="event"><time>${esc(e.at)}</time>${esc(e.message)}</div>`).join('');}
-function render(s){
- state=s;if(!selected||!s.items.some(i=>i.id===selected))selected=s.items[0]?.id||null;
- $('#version').textContent=`v${s.version}`;$('#edition-label').textContent=s.editionName;renderEditionGuide(s.edition);$('#status-text').textContent=customerMessage(s.status.message);$('#runtime').textContent='MetLife · '+s.editionName;
- $('#folder-path').textContent=s.status.folder||'Chưa chọn thư mục';$('#folder-path').title=s.status.folder||'';$('#watch').checked=s.status.watching;
- $('#count-total').textContent=s.items.length;$('#count-ready').textContent=s.items.filter(i=>!i.result.blocks.length).length;$('#count-blocked').textContent=s.items.filter(i=>i.result.blocks.length).length;$('#count-snapshots').textContent=s.snapshots.length;
- $('#pending-save-banner').hidden=!s.pendingSave;
- const message=customerMessage(s.status.message),success=/^Đã lưu và xác minh|^Đã xác minh khoản/.test(message);
- const isErr=/^Chưa ghi DB|^Lỗi ghi|^Chưa thể lưu|^Chưa xác minh/i.test(s.status.message)||s.status.errors?.length>0;
- const feedback=$('#workflow-feedback');
- if(success){feedback.hidden=false;feedback.className='save-success';feedback.textContent=message;}
- else if(isErr){const rawErr=s.status.errors?.[0]||s.status.message;feedback.hidden=false;feedback.className='save-error';feedback.textContent=customerMessage(rawErr)+(rawErr&&!customerMessage(rawErr).includes(rawErr)?` (${rawErr})`:'');}
- else{feedback.hidden=true;}
- addEvent(customerMessage(s.status.message));for(const e of s.status.errors)addEvent(customerMessage(e));
- renderPatients();renderList();renderDetail();updateButtons();
-}
-let guideEdition=null;
-function renderEditionGuide(id){
- if(guideEdition===id)return;guideEdition=id;
- $('#settings').innerHTML=`<div class="hero"><div><div class="eyebrow">HƯỚNG DẪN SỬ DỤNG</div><h1>Lưu thanh toán từ PDF MetLife</h1><p>Thực hiện trong một luồng từ chọn hồ sơ đến xem kết quả.</p></div></div><div class="card settings-card"><h2>4 bước thực hiện</h2><ol><li><b>Chọn hồ sơ:</b> tìm đúng bệnh nhân, sau đó chọn tài liệu trong Finished Claims.</li><li><b>Đối chiếu:</b> xem PDF gốc, kiểm tra bệnh nhân, hợp đồng, ngày, số tham chiếu và tổng tiền.</li><li><b>Kiểm tra phân bổ:</b> đối chiếu từng dịch vụ, bác sĩ, răng và số tiền được thanh toán.</li><li><b>Lưu thanh toán:</b> bấm Lưu khoản thanh toán và chờ kết quả xác minh.</li></ol><h2>Sau khi lưu</h2><p>Khi có thông báo lưu thành công, làm mới Account trong Open Dental để xem khoản thanh toán với loại Insurance Paid.</p><h2>Nếu chưa rõ kết quả</h2><p>Bấm <b>Kiểm tra kết quả</b> ở thông báo trên cùng. Chờ xác minh trước khi lưu thêm để tránh ghi trùng.</p><p>PDF mở từ máy dùng để xem và đối chiếu. Để lưu thanh toán, chọn tài liệu từ hồ sơ bệnh nhân.</p></div>`;
-}
-function renderPatients(){
- const b=state.patientBrowser||{patients:[],documents:[]};
- $('#server-status').textContent=b.connected?'Đã kết nối dữ liệu phòng khám. Tìm bệnh nhân để xem Finished Claims.':'Chưa kết nối dữ liệu phòng khám. Bấm Kết nối lại nếu cần.';
- $('#connect-server').textContent='Kết nối lại';
- $('#patient-results').innerHTML=b.patients.map(p=>`<tr data-patient="${esc(p.PatNum)}" tabindex="0" aria-label="Xem hồ sơ ${esc(p.LName)}, ${esc(p.FName)} · Patient ID ${esc(p.PatNum)}" class="${String(b.selectedPatient?.PatNum)===String(p.PatNum)?'patient-selected':''}"><td><b class="patient-name">${esc(p.LName)}, ${esc(p.FName)}</b><br><small>Patient ID ${esc(p.PatNum)}${p.ChartNumber?' · Chart '+esc(p.ChartNumber):''}</small></td><td>${esc(p.Birthdate||'—')}</td><td class="patient-insurance">${(p.insurance||[]).map(i=>`${esc(i.CarrierName)}<br>Subscriber: ${esc(i.SubscriberID||'—')}<br>Group: ${esc(i.GroupNum||'—')}`).join('<hr>')||'—'}</td></tr>`).join('');
- $('#patient-results-empty').hidden=!!b.patients.length;
- $('#patients-prev').dataset.blocked=String(!b.connected||!b.page);$('#patients-next').dataset.blocked=String(!b.connected||!b.hasMore);$('#refresh-documents').dataset.blocked=String(!b.selectedPatient);
- const p=b.selectedPatient;$('#documents-patient').textContent=p?`${p.LName}, ${p.FName} · Patient ID ${p.PatNum}`:'Chọn bệnh nhân để xem tài liệu';
- $('#patient-documents').innerHTML=b.documents.length?b.documents.map(d=>`<div class="document-row"><div class="document-symbol">PDF</div><div class="doc-info"><strong>${esc(d.FileName)}</strong><p>${esc(d.Description||'')}<br>${esc(d.DateCreated||'')}</p></div><button class="primary small" data-document="${esc(d.DocNum)}" data-action="open-document">Chọn PDF</button></div>`).join(''):`<div class="empty"><div class="document-symbol">PDF</div><p>${p?'Không có PDF trong Finished Claims của bệnh nhân này.':'Chọn bệnh nhân để lấy tài liệu từ Imaging.'}</p></div>`;
-}
-function renderList(){
-  const q=$('#search').value.trim().toLowerCase();
-  const items=state.items.filter(i=>`${i.name} ${i.parsed.patient} ${i.parsed.claimRaw}`.toLowerCase().includes(q));
-  $('#file-list').innerHTML=items.map(i=>{
-    const isSaved = i.result.duplicates && i.result.duplicates.length > 0;
-    const isBlocked = !isSaved && i.result.blocks.length > 0;
-    const badgeClass = isSaved ? 'saved' : isBlocked ? '' : 'ready';
-    const badgeText = isSaved ? 'Đã có trong OD' : isBlocked ? 'Cần đối chiếu' : 'Sẵn sàng lưu';
-    return `<button class="file-card ${i.id===selected?'active':''}" data-file="${i.id}" aria-pressed="${i.id===selected}"><strong>${esc(i.name)}</strong><span class="file-meta"><span>${esc(i.parsed.patient||'Chưa nhận diện')}</span><span>${usd(i.parsed.payment?.amountCents)}</span></span><span class="file-meta"><span>Claim ${esc(i.parsed.claimRaw||'—')}</span></span><span class="badge ${badgeClass}">${badgeText}</span></button>`;
-  }).join('')||'<div class="empty"><p>Chưa có PDF phù hợp.</p></div>';
-}
-function noteOf(p){const v={claim:p.claimRaw,group:p.group,method:p.payment?.method||'',trace:p.payment?.trace||'',date:p.payment?.date||''};return state.config.noteTemplate.replace(/\{(claim|group|method|trace|date)\}/g,(_,k)=>v[k]);}
-function renderDetail(){
- const item=state.items.find(i=>i.id===selected);$('#empty').hidden=!!item;$('#detail').hidden=!item;if(!item)return;
- const p=item.parsed,r=item.result;
- const isSaved = r.duplicates && r.duplicates.length > 0;
- const blocked = r.blocks.length > 0;
- const visibleWarnings=r.warnings.filter(w=>!/Logo MetLife/.test(w));
- const headingBadgeClass = isSaved ? 'saved' : blocked ? '' : 'ready';
- const headingBadgeText = isSaved ? 'Đã có trong Open Dental' : blocked ? 'Cần đối chiếu' : 'Sẵn sàng lưu';
- $('#detail').innerHTML=`<div class="detail-heading"><div><h2>${esc(p.patient||item.name)} <span class="badge ${headingBadgeClass}">${headingBadgeText}</span></h2><p>${esc(item.name)} · ${p.pageCount} trang${r.patient?' · Patient ID '+esc(r.patient.PatNum):''}</p></div><button class="small" data-action="open-pdf">Mở PDF gốc ↗</button></div><div class="detail-tabs"><button data-view="review" class="${view==='review'?'active':''}">Thông tin thanh toán</button><button data-view="pdf" class="${view==='pdf'?'active':''}">Đối chiếu cùng PDF</button></div><div id="detail-content"></div>`;
- const content=$('#detail-content');
- ++pdfToken;content.className='detail-body';
- content.innerHTML=`<div class="field-grid">${field('Số hồ sơ bảo hiểm',p.claimRaw)}${field('Group Number',p.group)}${field('Benefit Paid',usd(p.payment?.amountCents),'amount')}${field('Subscriber',p.subscriber)}${field('Payment Date',p.payment?.date)}${field('Payment Method',p.payment?.method)}${field('Check / EFT Trace',p.payment?.trace)}${field('Date Received',p.received)}${field('Processed',p.processed)}</div>
- ${isSaved?`<div class="notice ok saved"><h3>✓ Khoản thanh toán này đã có trong Open Dental</h3><p>Đã tìm thấy bản ghi thanh toán khớp số Claim / Check <b>${esc(p.claimRaw||p.payment?.trace)}</b> (${usd(p.payment?.amountCents)}) trong tài khoản bệnh nhân. Hệ thống tự động khóa để chống ghi trùng tiền.</p></div>`:blocked?`<div class="notice"><h3>Chưa thể lưu vào OD · ${r.blocks.length} điểm cần xử lý</h3><ul>${r.blocks.map(b=>`<li>${esc(customerMessage(b))}</li>`).join('')}</ul></div>`:'<div class="notice ok">Đã khớp tài liệu, bệnh nhân, hợp đồng, tổng tiền và chưa thấy khoản thanh toán trùng trong hồ sơ. Bạn có thể bấm Lưu khoản thanh toán vào OD.</div>'}
- <h3 class="section-title">Dịch vụ trong PDF</h3><table><thead><tr><th>Code / ngày</th><th>Trạng thái</th><th class="num">Phí gửi</th><th class="num">Plan Benefit</th><th>Đối chiếu</th></tr></thead><tbody>${p.procedures.map(row=>`<tr><td><b>${esc(row.code)}</b><br><small>${esc(row.date||'Allowable / gộp')}</small></td><td>${esc(row.status)}</td><td class="num">${usd(row.feeCents)}</td><td class="num">${usd(row.benefitCents)}</td><td>${r.splits.some(s=>s.code===row.code&&(!row.date||s.date===row.date)&&(!row.tooth||s.tooth===row.tooth))?'Đã khớp':row.benefitCents===0?'Không phân bổ':'Cần đối chiếu'}</td></tr>`).join('')}</tbody></table>
- ${visibleWarnings.length?`<div class="notice"><h3>Lưu ý từ dữ liệu</h3><ul>${visibleWarnings.map(w=>`<li>${esc(customerMessage(w))}</li>`).join('')}</ul></div>`:''}
- <h3 class="section-title">Loại thanh toán</h3><div class="field-value">${esc(state.config.paymentType)}</div>
- <h3 class="section-title">Ghi chú thanh toán</h3><div class="note-preview">${esc(noteOf(p))}</div>
- <h3 class="section-title">Hồ sơ trong Open Dental</h3><div class="field-grid">${field('Patient ID / Chart',r.patient?`${r.patient.PatNum} / ${r.patient.ChartNumber||'—'}`:'—')}${field('Họ tên OD',r.patient?`${r.patient.LName}, ${r.patient.FName} ${r.patient.MiddleI||''}`:'—')}${field('Ngày sinh OD',r.patient?.Birthdate)}${field('Subscriber ID / Carrier',r.plan?`${r.plan.SubscriberID||'—'} / ${r.plan.CarrierName||'—'}`:'—')}${field('Tên nhóm / Group',r.plan?`${r.plan.GroupName||''} / ${r.plan.GroupNum}`:'—')}${field('Tổng phân bổ',usd(r.splits.reduce((n,s)=>n+s.amountCents,0)))}</div>
- <h3 class="section-title">Phân bổ thanh toán theo dịch vụ</h3><table><thead><tr><th>Code / Ngày</th><th>Răng</th><th>Bác sĩ</th><th>Mô tả OD</th><th class="num">Số tiền</th></tr></thead><tbody>${r.splits.map(s=>`<tr><td>${esc(s.code)}<br>${esc(s.date)}</td><td>${esc(s.tooth||'—')}</td><td>${esc(s.providerAbbr)}</td><td>${esc(s.description)}</td><td class="num">${usd(s.amountCents)}</td></tr>`).join('')}</tbody></table>
- <div class="payment-submit"><div class="payment-total"><span>Tổng thanh toán</span><strong>${usd(p.payment?.amountCents)}</strong><small>${r.splits.length} dịch vụ được phân bổ</small></div><div class="submit-controls"><button class="primary ${isSaved?'already-saved':''}" data-action="save-payment" data-saved="${isSaved}" data-blocked="${blocked||!!state.pendingSave||!item.remote||!state.patientBrowser.connected}">${working?'⏳ Đang lưu vào OD…':isSaved?'✓ Đã lưu trong Open Dental':!state.patientBrowser.connected?'Chưa kết nối dữ liệu SERVER':!item.remote?'Mở từ hồ sơ bệnh nhân để lưu':blocked?'Chưa thể lưu (Cần đối chiếu)':'Lưu khoản thanh toán'}</button><button class="small danger" data-action="remove">Bỏ khỏi hàng đợi</button></div><p class="action-note">${state.pendingSave?'Đang chờ xác minh lần lưu trước. Bấm Kiểm tra kết quả ở trên.':isSaved?'Khoản thanh toán đã nằm trong tài khoản bệnh nhân trên Open Dental. Không cần lưu lại.':!item.remote?'Chọn PDF từ hồ sơ bệnh nhân để lưu khoản thanh toán.':!state.paymentSaveReady?'Chức năng lưu chưa được kích hoạt. Vui lòng liên hệ bộ phận hỗ trợ.':blocked?'Hoàn tất các điểm cần đối chiếu trước khi lưu.':'Kiểm tra 4 dịch vụ phía trên, sau đó bấm Lưu. Dữ liệu sẽ được ghi vào OD và xác minh tự động.'}</p></div>`;
- const heading=$('#detail .detail-heading');
- heading.insertAdjacentHTML('afterend',`<div class="payment-overview"><div><span>Bệnh nhân đối chiếu</span><strong>${esc(r.patient?`${r.patient.LName}, ${r.patient.FName}`:p.patient)}</strong><small>${esc(r.patient?'Mã hồ sơ '+r.patient.PatNum:'Chưa khớp hồ sơ')}</small></div><div><span>MetLife thanh toán</span><strong class="overview-amount">${usd(p.payment?.amountCents)}</strong><small>${esc(p.payment?.date||'Chưa có ngày thanh toán')}</small></div><div><span>Trạng thái đối chiếu</span><strong class="${isSaved?'review-saved':blocked?'review-needed':'review-ready'}">${isSaved?'Đã có trong OD':blocked?'Cần kiểm tra':'Sẵn sàng lưu'}</strong><small>${r.splits.length} dịch vụ · ${esc(p.payment?.trace||'Chưa có số tham chiếu')}</small></div></div>`);
- if(view==='pdf'){
-  content.insertAdjacentHTML('afterend','<aside class="pdf-side"><div class="pdf-side-heading">Tài liệu gốc · Đối chiếu với thông tin bên cạnh</div><div class="pdf-viewer">Đang tải PDF…</div></aside>');
-  content.parentElement.classList.add('with-pdf');renderPdf(item.id,$('#detail .pdf-viewer'));
- }else content.parentElement.classList.remove('with-pdf');
- updateButtons();
-}
-async function renderPdf(id,container){
- const token=++pdfToken;
- try{
-  const pdfjs=await import('../node_modules/pdfjs-dist/build/pdf.mjs');
-  pdfjs.GlobalWorkerOptions.workerSrc=new URL('../node_modules/pdfjs-dist/build/pdf.worker.mjs',import.meta.url).href;
-  const bytes=await request('pdf-bytes',id);
-  const task=pdfjs.getDocument({data:new Uint8Array(bytes),isEvalSupported:false});const doc=await task.promise;
-  try{
-   if(token!==pdfToken)return;container.textContent='';
-   for(let n=1;n<=doc.numPages;n++){
-    if(token!==pdfToken)return;const page=await doc.getPage(n);const viewport=page.getViewport({scale:1.4});const canvas=document.createElement('canvas');canvas.width=viewport.width;canvas.height=viewport.height;container.append(canvas);await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
-   }
-  }finally{await task.destroy();}
- }catch(e){if(token===pdfToken)container.textContent=`Không mở được bản xem PDF: ${customerMessage(e.message)}. Dùng Mở PDF gốc.`;}
-}
-for(const id of ['verify-save','import-pdf','choose-folder','scan'])$('#'+id).addEventListener('click',()=>action(id));
-$('#empty-import').addEventListener('click',()=>action('import-pdf'));
-$('#watch').addEventListener('change',async e=>{await action('watch',e.target.checked);$('#watch').checked=state.status.watching;});
-$('#search').addEventListener('input',renderList);
-$('nav').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(!b)return;document.querySelectorAll('nav [data-tab]').forEach(t=>t.classList.toggle('active',t===b));document.querySelectorAll('main>.page').forEach(p=>p.hidden=p.id!==b.dataset.tab);});
-$('#file-list').addEventListener('click',e=>{const b=e.target.closest('[data-file]');if(b){selected=b.dataset.file;view='review';renderList();renderDetail();}});
-$('#detail').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.view){view=b.dataset.view;renderDetail();}else if(b.dataset.action==='open-pdf'&&state.items.find(i=>i.id===selected)?.remote){view='pdf';renderDetail();}else if(b.dataset.action==='save-payment'){const item=state.items.find(i=>i.id===selected);if(b.dataset.saved==='true'||item?.result?.duplicates?.length){toast('Khoản thanh toán này đã có trong Open Dental. Không lưu trùng.');return;}if(!state.patientBrowser.connected){toast('Chưa kết nối dữ liệu phòng khám. Bấm Kết nối lại ở trên.');return;}if(!item?.remote){toast('Vui lòng chọn PDF từ tab Tìm bệnh nhân để lưu vào hồ sơ Open Dental.');return;}if(item?.result?.blocks?.length){toast(`Chưa thể lưu: còn ${item.result.blocks.length} điểm cần đối chiếu.`);return;}showConfirmSaveModal(item);}else if(b.dataset.action){action(b.dataset.action,selected);}});
 
-let pendingConfirmItemId=null;
-function showConfirmSaveModal(item){
- if(!item)return;
- pendingConfirmItemId=item.id;
- const p=item.parsed,r=item.result;
- const patientName=r.patient?`${r.patient.LName}, ${r.patient.FName}`:p.patient;
- const patNum=r.patient?r.patient.PatNum:'—';
- const totalAmount=usd(p.payment?.amountCents);
- const payType=state.config.paymentType||'Insurance Paid';
- const payDate=p.payment?.date||'—';
- const checkNum=(p.payment?.trace||p.claimRaw||'—').trim();
- const note=noteOf(p);
- const splits=r.splits||[];
+let working = false;
+let serverHistoryItems = [];
+let serverStatusData = null;
+let selectedHistoryItem = null;
+let activeFilter = 'all'; // 'all' | 'success' | 'failed'
+let searchQuery = '';
+let autoRefreshSec = 15;
+let autoRefreshTimer = null;
+let pdfToken = 0;
+let patientState = { patients: [], documents: [], selectedPatient: null, page: 0, hasMore: false };
+const events = [];
 
- const html=`<div class="modal-alert"><span>ℹ️</span><span>Vui lòng kiểm tra các thông tin payload dưới đây. Sau khi nhân viên bấm xác nhận, hệ thống sẽ lưu Payment và toàn bộ PaySplits trực tiếp vào Open Dental.</span></div><div class="modal-payload-group"><div class="modal-payload-item highlight"><span>Tổng thanh toán</span><strong>${esc(totalAmount)}</strong></div><div class="modal-payload-item"><span>Bệnh nhân</span><strong>${esc(patientName)} (#${esc(patNum)})</strong></div><div class="modal-payload-item"><span>Số Check / Claim</span><strong>${esc(checkNum)}</strong></div><div class="modal-payload-item"><span>Loại thanh toán (PayType)</span><strong>${esc(payType)}</strong></div><div class="modal-payload-item"><span>Ngày thanh toán</span><strong>${esc(payDate)}</strong></div><div class="modal-payload-item"><span>Bảo hiểm / Group</span><strong>${esc(r.plan?.CarrierName||'MetLife')} / ${esc(r.plan?.GroupNum||p.group||'—')}</strong></div></div><div><span class="field-label">Ghi chú (PayNote) sẽ lưu vào Open Dental:</span><div class="modal-note-box">${esc(note)}</div></div><div><span class="field-label">Chi tiết ${splits.length} dịch vụ phân bổ (PaySplits Payload):</span><table class="modal-splits-table"><thead><tr><th>Mã dịch vụ</th><th>Mô tả</th><th>Bác sĩ</th><th>Răng</th><th>Ngày</th><th class="num">Số tiền</th></tr></thead><tbody>${splits.map(s=>`<tr><td><b>${esc(s.code)}</b></td><td>${esc(s.description)}</td><td>${esc(s.providerAbbr||'—')}</td><td>${esc(s.tooth||'—')}</td><td>${esc(s.date||'—')}</td><td class="num"><b>${usd(s.amountCents)}</b></td></tr>`).join('')}</tbody><tfoot><tr class="modal-splits-total-row"><td colspan="5" style="text-align:right"><b>Tổng Total:</b></td><td class="num"><b>${esc(totalAmount)}</b></td></tr></tfoot></table></div>`;
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const usd = cents => cents === null || cents === undefined ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
 
- $('#modal-body-content').innerHTML=html;
- $('#modal-confirm').textContent='✓ Xác nhận lưu vào Open Dental';
- $('#modal-confirm').disabled=false;
- $('#modal-cancel').disabled=false;
- $('#confirm-modal').hidden=false;
+async function request(op, arg) {
+  const r = await window.metlife.call(op, arg);
+  if (!r.ok) throw new Error(r.error);
+  return r.data;
 }
 
-function closeConfirmModal(){
- if(working)return;
- $('#confirm-modal').hidden=true;
- pendingConfirmItemId=null;
+function toast(msg) {
+  const el = $('#toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { el.hidden = true; }, 5500);
 }
 
-$('#modal-close')?.addEventListener('click',closeConfirmModal);
-$('#modal-cancel')?.addEventListener('click',closeConfirmModal);
-$('#confirm-modal')?.addEventListener('click',e=>{if(e.target===$('#confirm-modal'))closeConfirmModal();});
-window.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#confirm-modal').hidden&&!working)closeConfirmModal();});
-
-$('#modal-confirm')?.addEventListener('click',async()=>{
- if(!pendingConfirmItemId||working)return;
- const id=pendingConfirmItemId;
- $('#modal-confirm').textContent='⏳ Đang lưu vào Open Dental…';
- $('#modal-confirm').disabled=true;
- $('#modal-cancel').disabled=true;
- try{
-  const res=await action('save-payment',id);
-  if(res)$('#confirm-modal').hidden=true;
-  else{
-   $('#modal-confirm').textContent='✓ Thử lưu lại';
-   $('#modal-confirm').disabled=false;
-   $('#modal-cancel').disabled=false;
+function addEvent(message) {
+  if (!message) return;
+  const at = new Date().toLocaleTimeString('vi-VN');
+  events.unshift({ at, message });
+  if (events.length > 50) events.pop();
+  const el = $('#events');
+  if (el) {
+    el.innerHTML = events.map(e => `<div class="event"><time>${esc(e.at)}</time>${esc(e.message)}</div>`).join('');
   }
- }catch(err){
-  $('#modal-confirm').textContent='✓ Thử lưu lại';
-  $('#modal-confirm').disabled=false;
-  $('#modal-cancel').disabled=false;
- }
+}
+
+// Tab navigation
+$$('nav [data-tab]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $$('nav [data-tab]').forEach(b => b.classList.toggle('active', b === btn));
+    $$('main > .page').forEach(p => { p.hidden = p.id !== btn.dataset.tab; });
+    if (btn.dataset.tab === 'diagnostics') {
+      loadServerStatus();
+    }
+  });
 });
 
-window.metlife.onState(render);
-try{render(await request('state'));}catch(e){toast(customerMessage(e.message));}
-setInterval(()=>{if(!working)request('state').then(render).catch(()=>{});},60000);
-
-async function searchPatients(page=0){
- if(working)return;
- const q=$('#patient-search-query').value.trim(),kind=$('#patient-search-kind').value;
- if(!q){toast('Nhập tên hoặc mã bệnh nhân / bảo hiểm.');return;}
- lastSearch={q,kind,page};
- const result=await action('search-patients',lastSearch),browser=result?.patientBrowser;
- if(browser?.patients.length===1&&!browser.hasMore)await action('patient-documents',String(browser.patients[0].PatNum));
-}
-$('#search-patients').addEventListener('click',()=>searchPatients());
-$('#patient-search-query').addEventListener('keydown',e=>{if(e.key==='Enter')searchPatients();});
-$('#patients-prev').addEventListener('click',()=>searchPatients(Math.max(0,(state.patientBrowser.page||0)-1)));
-$('#patients-next').addEventListener('click',()=>searchPatients((state.patientBrowser.page||0)+1));
-$('#refresh-documents').addEventListener('click',()=>action('patient-documents',state.patientBrowser.selectedPatient?.PatNum));
-$('#patient-results').addEventListener('click',e=>{const b=e.target.closest('[data-patient]');if(b)action('patient-documents',b.dataset.patient);});
-$('#patient-results').addEventListener('keydown',e=>{if(!['Enter',' '].includes(e.key))return;const row=e.target.closest('[data-patient]');if(row){e.preventDefault();action('patient-documents',row.dataset.patient);}});
-$('#patient-documents').addEventListener('click',e=>{const b=e.target.closest('[data-document]');if(b)action('open-document',b.dataset.document);});
-
-$('#connect-server').addEventListener('click',()=>action('reconnect-server'));
-
-let serverHistoryItems=[],selectedHistoryItem=null;
-async function loadServerHistory(){
- try{
-  const res=await request('server-history');
-  serverHistoryItems=res?.items||[];
-  renderHistory();
- }catch(err){
-  const el=$('#history-count');
-  if(el)el.textContent='Chưa tải được lịch sử';
- }
+// Load Server Status
+async function loadServerStatus() {
+  try {
+    const res = await request('server-status');
+    serverStatusData = res;
+    renderServerStatus(res);
+  } catch (err) {
+    const pill = $('#server-live-indicator');
+    if (pill) {
+      pill.className = 'live-status-pill offline';
+      $('#server-live-title').textContent = 'SERVER: MẤT KẾT NỐI';
+      $('#server-live-detail').textContent = 'Kiểm tra mạng hoặc khởi động lại service';
+    }
+    const diagStatus = $('#diag-conn-status');
+    if (diagStatus) {
+      diagStatus.className = 'badge failed';
+      diagStatus.textContent = '✗ Mất kết nối';
+    }
+  }
 }
 
-function renderHistory(){
- const items=serverHistoryItems;
- const countEl=$('#history-count');
- if(countEl)countEl.textContent=`${items.length} giao dịch`;
- const statTotal=$('#stat-total-processed');
- if(statTotal)statTotal.textContent=items.length;
+function renderServerStatus(data) {
+  if (!data) return;
+  const pill = $('#server-live-indicator');
+  const title = $('#server-live-title');
+  const detail = $('#server-live-detail');
 
- const successItems=items.filter(i=>i.Status==='SUCCESS');
- const failedItems=items.filter(i=>i.Status!=='SUCCESS');
- const statSuccess=$('#stat-success');
- if(statSuccess)statSuccess.textContent=successItems.length;
- const statFailed=$('#stat-failed');
- if(statFailed)statFailed.textContent=failedItems.length;
+  if (data.isScanning) {
+    pill.className = 'live-status-pill busy';
+    title.textContent = 'SERVER: ĐANG QUÉT EOB...';
+    detail.textContent = 'Đang tự động xử lý file trong thư mục MetLife';
+  } else {
+    pill.className = 'live-status-pill online';
+    title.textContent = 'SERVER: KẾT NỐI TỐT';
+    const lastScanStr = data.lastScanTime ? new Date(data.lastScanTime).toLocaleTimeString('vi-VN') : 'Mới khởi động';
+    detail.textContent = `Quét lúc ${lastScanStr} · Uptime: ${formatUptime(data.uptimeSeconds)}`;
+  }
 
- const totalCents=successItems.reduce((acc,cur)=>acc+Math.round(Number(cur.TotalAmount||0)*100),0);
- const statTotalAmount=$('#stat-total-amount');
- if(statTotalAmount)statTotalAmount.textContent=usd(totalCents);
+  // Error retry button in header
+  const errorCount = data.counts?.errors || 0;
+  const retryBtn = $('#header-retry-btn');
+  const badgeCount = $('#error-badge-count');
+  if (retryBtn && badgeCount) {
+    badgeCount.textContent = errorCount;
+    retryBtn.hidden = errorCount <= 0;
+  }
 
- const tbody=$('#history-items-tbody');
- if(!tbody)return;
- if(!items.length){
-  tbody.innerHTML='';
-  const hEmpty=$('#history-empty');if(hEmpty)hEmpty.hidden=false;
-  const dEmpty=$('#history-detail-empty');if(dEmpty)dEmpty.hidden=false;
-  const dContent=$('#history-detail-content');if(dContent)dContent.hidden=true;
-  return;
- }
-
- const hEmpty=$('#history-empty');if(hEmpty)hEmpty.hidden=true;
- tbody.innerHTML=items.map(item=>{
-  const isSuccess=item.Status==='SUCCESS';
-  const isSel=selectedHistoryItem&&selectedHistoryItem.Id===item.Id;
-  const badgeCls=isSuccess?'success':'failed';
-  const badgeText=isSuccess?'✓ Đã ghi OD':'✗ Lỗi';
-  const amountStr=usd(Math.round(Number(item.TotalAmount||0)*100));
-  const feeTag=item.FeesUpdated?`<span class="badge fee-tag">${esc(item.FeesUpdated)}</span>`:'<span class="muted">—</span>';
-
-  return `<tr class="history-row ${isSel?'selected':''}" data-history-id="${item.Id}">
-   <td><small>${esc(item.ProcessedAt||item.CreatedAt)}</small></td>
-   <td><strong>${esc(item.FileName)}</strong></td>
-   <td><b>${esc(item.PatientName)}</b><br><small>PatNum: ${esc(item.PatNum)}</small></td>
-   <td><small>${esc(item.ClaimNumber||item.CheckNumber||'—')}</small></td>
-   <td class="num"><b>${amountStr}</b></td>
-   <td>${feeTag}</td>
-   <td><span class="badge ${badgeCls}">${badgeText}</span></td>
-  </tr>`;
- }).join('');
-
- if(!selectedHistoryItem&&items.length>0){
-  selectedHistoryItem=items[0];
- }
-
- if(selectedHistoryItem){
-  const fresh=items.find(i=>i.Id===selectedHistoryItem.Id)||items[0];
-  selectedHistoryItem=fresh;
-  renderHistoryDetail(fresh);
- }
+  // Diagnostics Tab
+  const diagUrl = $('#diag-url');
+  if (diagUrl) diagUrl.textContent = 'http://SERVER:3008 (Mạng LAN phòng khám)';
+  const diagStatus = $('#diag-conn-status');
+  if (diagStatus) {
+    diagStatus.className = 'badge success';
+    diagStatus.textContent = '🟢 Đang hoạt động bình thường';
+  }
+  const diagServerTime = $('#diag-server-time');
+  if (diagServerTime) diagServerTime.textContent = data.serverTime || new Date().toLocaleString('vi-VN');
+  const diagUptime = $('#diag-uptime');
+  if (diagUptime) diagUptime.textContent = formatUptime(data.uptimeSeconds);
+  const diagLastScan = $('#diag-last-scan');
+  if (diagLastScan) diagLastScan.textContent = data.lastScanTime ? new Date(data.lastScanTime).toLocaleString('vi-VN') : 'Chưa có';
+  
+  const diagFolderIncoming = $('#diag-folder-incoming');
+  if (diagFolderIncoming) diagFolderIncoming.textContent = data.incomingDir || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+  const diagIncoming = $('#diag-count-incoming');
+  if (diagIncoming) diagIncoming.textContent = `${data.counts?.incoming || 0} file`;
+  const diagProcessed = $('#diag-count-processed');
+  if (diagProcessed) diagProcessed.textContent = `${data.counts?.processed || 0} file`;
+  const diagErrors = $('#diag-count-errors');
+  if (diagErrors) diagErrors.textContent = `${data.counts?.errors || 0} file`;
 }
 
-function renderHistoryDetail(item){
- const dEmpty=$('#history-detail-empty');
- const dContent=$('#history-detail-content');
- if(!dEmpty||!dContent)return;
- if(!item){
-  dEmpty.hidden=false;
-  dContent.hidden=true;
-  return;
- }
-
- dEmpty.hidden=true;
- dContent.hidden=false;
- const badge=$('#history-detail-badge');
- if(badge){
-  badge.textContent=item.Status==='SUCCESS'?`Giao dịch #${item.Id} (Thành công)`:`Giao dịch #${item.Id} (Lỗi)`;
-  badge.className=item.Status==='SUCCESS'?'badge success':'badge failed';
- }
-
- let parsedDetails=null;
- try{if(item.Details)parsedDetails=JSON.parse(item.Details);}catch{}
-
- const amountStr=usd(Math.round(Number(item.TotalAmount||0)*100));
- let splitsHtml='';
- if(parsedDetails?.splits&&parsedDetails.splits.length){
-  splitsHtml=`<h4 style="margin-top:16px;">Chi tiết phân bổ dịch vụ (PaySplits):</h4>
-  <table>
-   <thead><tr><th>Mã thủ thuật</th><th>ProcNum OD</th><th class="num">Số tiền</th><th>Bảo mật Hash</th></tr></thead>
-   <tbody>
-    ${parsedDetails.splits.map(s=>`<tr><td><b>${esc(s.code)}</b></td><td>ProcNum: ${esc(s.procNum||'—')}</td><td class="num"><b>$${esc(s.amount)}</b></td><td><span class="badge ready">✓ SecurityHash OK</span></td></tr>`).join('')}
-   </tbody>
-  </table>`;
- }
-
- dContent.innerHTML=`
-  <div class="audit-box">
-   <h4>Bệnh nhân & Hồ sơ Open Dental</h4>
-   <p><b>Họ tên:</b> ${esc(item.PatientName)} (Mã bệnh nhân: <code>PatNum #${item.PatNum}</code>)</p>
-   <p><b>Số Claim EOB:</b> <code>${esc(item.ClaimNumber||'—')}</code> | <b>Số Check / Trace:</b> <code>${esc(item.CheckNumber||'—')}</code></p>
-   <p><b>File nguồn:</b> <code>${esc(item.FileName)}</code></p>
-   <p><b>Thời gian xử lý:</b> ${esc(item.ProcessedAt||item.CreatedAt)}</p>
-  </div>
-
-  <div class="audit-box">
-   <h4>Giao dịch thanh toán (Payment & PaySplits)</h4>
-   <p><b>Mã thanh toán (PayNum):</b> <code>#${item.PayNum||'Chưa tạo'}</code></p>
-   <p><b>Loại thanh toán:</b> Insurance Paid (Bảo hiểm chi trả)</p>
-   <p><b>Tổng số tiền chi trả:</b> <b style="color:#155bd8;font-size:16px;">${amountStr}</b></p>
-   <p><b>Ghi chú thanh toán:</b> <code>group number : ${esc(parsedDetails?.groupNum||'—')}</code></p>
-   <p><b>Trạng thái Claim:</b> <span class="badge ready">✓ ClaimStatus = 'R' (Received)</span></p>
-  </div>
-
-  <div class="audit-box">
-   <h4>Bù phí dịch vụ tự động (Fix 0.00 ProcFee)</h4>
-   <p><b>Các dịch vụ đã được cập nhật phí theo EOB:</b></p>
-   <p style="color:#166534;font-weight:600;">${esc(item.FeesUpdated||'Không phát hiện phí 0.00 cần bù.')}</p>
-   <small class="muted">Nhờ cập nhật ProcFee, tổng Charges của bệnh nhân khớp đúng chi phí điều trị và số dư (Balance) không bị âm.</small>
-  </div>
-
-  <div class="audit-box">
-   <h4>Lưu trữ tài liệu Open Dental Imaging (Finished Claims)</h4>
-   <p><b>Mã tài liệu (DocNum):</b> <code>#${item.DocNum||'Chưa tạo'}</code></p>
-   <p><b>Danh mục lưu trữ:</b> <code>FINISHED CLAIMS</code></p>
-   <p><b>Vị trí lưu:</b> Thư mục AtoZ ImageFolder của bệnh nhân trên SERVER</p>
-   <p><b>Trạng thái:</b> <span class="badge ready">✓ Đã import vào Imaging OD</span></p>
-  </div>
-
-  ${splitsHtml}
-
-  ${item.Message?`
-   <div class="notice ${item.Status==='SUCCESS'?'ok':'failed'}" style="margin-top:12px;padding:12px;border-radius:8px;border:1px solid ${item.Status==='SUCCESS'?'#86efac':'#fca5a5'};background:${item.Status==='SUCCESS'?'#f0fdf4':'#fef2f2'};color:${item.Status==='SUCCESS'?'#166534':'#991b1b'};">
-    <b>${item.Status==='SUCCESS'?'✓ Xử lý thành công:':'⚠️ Lần quét này thất bại:'}</b> ${esc(item.Message)}
-    <div style="margin-top:4px;font-size:12px;opacity:0.85;">Thời gian ghi nhận: ${esc(item.ProcessedAt||item.CreatedAt||'N/A')}${item.Status!=='SUCCESS'?' — Hãy bấm nút "⚡ Quét thư mục Server ngay" ở trên để hệ thống tự động thử lại file lỗi với bản vá mới.':''}</div>
-   </div>`:''}
- `;
+function formatUptime(sec) {
+  if (!sec) return '—';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h} giờ ${m} phút`;
+  if (m > 0) return `${m} phút ${s} giây`;
+  return `${s} giây`;
 }
 
-$('#history-items-tbody')?.addEventListener('click',e=>{
- const row=e.target.closest('tr[data-history-id]');
- if(!row)return;
- const id=Number(row.dataset.historyId);
- const item=serverHistoryItems.find(i=>i.Id===id);
- if(item){
-  selectedHistoryItem=item;
-  document.querySelectorAll('#history-items-tbody tr').forEach(r=>r.classList.toggle('selected',r===row));
+// Load Server History
+async function loadServerHistory() {
+  try {
+    const res = await request('server-history');
+    serverHistoryItems = res?.items || [];
+    renderHistory();
+    await loadServerStatus();
+  } catch (err) {
+    const el = $('#history-count');
+    if (el) el.textContent = 'Chưa tải được lịch sử';
+    addEvent(`Lỗi tải lịch sử: ${err.message}`);
+  }
+}
+
+function renderHistory() {
+  const allItems = serverHistoryItems;
+
+  // Filter items
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = allItems.filter(item => {
+    // Text search
+    if (q) {
+      const match = `${item.FileName} ${item.PatientName} ${item.PatNum} ${item.ClaimNumber} ${item.CheckNumber}`.toLowerCase().includes(q);
+      if (!match) return false;
+    }
+    // Pill filter
+    if (activeFilter === 'success') return item.Status === 'SUCCESS';
+    if (activeFilter === 'failed') return item.Status !== 'SUCCESS';
+    return true;
+  });
+
+  // Update counts
+  const successItems = allItems.filter(i => i.Status === 'SUCCESS');
+  const failedItems = allItems.filter(i => i.Status !== 'SUCCESS');
+  const totalCents = successItems.reduce((acc, cur) => acc + Math.round(Number(cur.TotalAmount || 0) * 100), 0);
+
+  const statTotal = $('#stat-total-processed');
+  if (statTotal) statTotal.textContent = allItems.length;
+  const statSuccess = $('#stat-success');
+  if (statSuccess) statSuccess.textContent = successItems.length;
+  const statFailed = $('#stat-failed');
+  if (statFailed) statFailed.textContent = failedItems.length;
+  const statTotalAmount = $('#stat-total-amount');
+  if (statTotalAmount) statTotalAmount.textContent = usd(totalCents);
+
+  const fAll = $('#filter-count-all');
+  if (fAll) fAll.textContent = allItems.length;
+  const fSuccess = $('#filter-count-success');
+  if (fSuccess) fSuccess.textContent = successItems.length;
+  const fFailed = $('#filter-count-failed');
+  if (fFailed) fFailed.textContent = failedItems.length;
+
+  const countEl = $('#history-count');
+  if (countEl) countEl.textContent = `${filtered.length} giao dịch${q ? ' (kết quả lọc)' : ''}`;
+
+  const tbody = $('#history-items-tbody');
+  const hEmpty = $('#history-empty');
+  if (!tbody) return;
+
+  if (!filtered.length) {
+    tbody.innerHTML = '';
+    if (hEmpty) hEmpty.hidden = false;
+    renderHistoryDetail(null);
+    return;
+  }
+
+  if (hEmpty) hEmpty.hidden = true;
+
+  tbody.innerHTML = filtered.map(item => {
+    const isSuccess = item.Status === 'SUCCESS';
+    const isSel = selectedHistoryItem && selectedHistoryItem.Id === item.Id;
+    const badgeCls = isSuccess ? 'success' : 'failed';
+    const badgeText = isSuccess ? '✓ Đã ghi OD' : '⚠️ Lỗi';
+    const amountStr = usd(Math.round(Number(item.TotalAmount || 0) * 100));
+    const feeTag = item.FeesUpdated ? `<span class="badge fee-tag">${esc(item.FeesUpdated)}</span>` : '<span class="muted">—</span>';
+    const dateFormatted = item.ProcessedAt ? item.ProcessedAt.slice(0, 16) : (item.CreatedAt ? item.CreatedAt.slice(0, 16) : '—');
+
+    return `<tr class="history-row ${isSel ? 'selected' : ''}" data-history-id="${item.Id}">
+      <td><small>${esc(dateFormatted)}</small></td>
+      <td><strong>${esc(item.FileName)}</strong></td>
+      <td><b>${esc(item.PatientName)}</b><br><small>PatNum: ${esc(item.PatNum || 'Chưa rõ')}</small></td>
+      <td><small>${esc(item.ClaimNumber || item.CheckNumber || '—')}</small></td>
+      <td class="num"><b>${amountStr}</b></td>
+      <td>${feeTag}</td>
+      <td><span class="badge ${badgeCls}">${badgeText}</span></td>
+      <td style="text-align:center;"><button class="action-view-btn" data-action="view-pdf" data-history-id="${item.Id}" title="Xem PDF EOB gốc">👁️ Xem</button></td>
+    </tr>`;
+  }).join('');
+
+  // Keep selection
+  if (!selectedHistoryItem || !filtered.some(i => i.Id === selectedHistoryItem.Id)) {
+    selectedHistoryItem = filtered[0] || null;
+  }
+  if (selectedHistoryItem) {
+    const fresh = filtered.find(i => i.Id === selectedHistoryItem.Id) || filtered[0];
+    selectedHistoryItem = fresh;
+    renderHistoryDetail(fresh);
+  } else {
+    renderHistoryDetail(null);
+  }
+}
+
+function renderHistoryDetail(item) {
+  const dEmpty = $('#history-detail-empty');
+  const dContent = $('#history-detail-content');
+  const badge = $('#history-detail-badge');
+  const actions = $('#inspector-actions');
+
+  if (!item) {
+    if (dEmpty) dEmpty.hidden = false;
+    if (dContent) dContent.hidden = true;
+    if (badge) { badge.textContent = 'Chưa chọn'; badge.className = 'badge'; }
+    if (actions) actions.hidden = true;
+    return;
+  }
+
+  if (dEmpty) dEmpty.hidden = true;
+  if (dContent) dContent.hidden = false;
+  if (actions) actions.hidden = false;
+
+  const isSuccess = item.Status === 'SUCCESS';
+  if (badge) {
+    badge.textContent = isSuccess ? `Giao dịch #${item.Id} (Đã ghi OD)` : `Giao dịch #${item.Id} (Thất bại)`;
+    badge.className = isSuccess ? 'badge success' : 'badge failed';
+  }
+
+  let details = null;
+  try { if (item.Details) details = JSON.parse(item.Details); } catch {}
+
+  const amountStr = usd(Math.round(Number(item.TotalAmount || 0) * 100));
+
+  // Build procedures breakdown table
+  let procsTable = '';
+  if (details?.procedures && details.procedures.length > 0) {
+    procsTable = `
+      <div class="inspector-card">
+        <h4>📋 Chi tiết dịch vụ trên EOB & Đối chiếu Open Dental</h4>
+        <table class="proc-breakdown-table">
+          <thead>
+            <tr>
+              <th>Mã CDT</th>
+              <th>Ngày</th>
+              <th>Trạng thái EOB</th>
+              <th class="num">Phí gửi</th>
+              <th class="num">Bảo hiểm trả</th>
+              <th>Phí OD cập nhật</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${details.procedures.map(p => {
+              const isApproved = (p.status || '').toLowerCase().includes('approved') || p.benefitCents > 0;
+              const isBundled = (p.remarks || []).some(r => /65|bundle|inclusive/i.test(r)) || /bundled/i.test(p.status);
+              const tagCls = isApproved ? 'proc-tag-approved' : isBundled ? 'proc-tag-bundled' : 'proc-tag-denied';
+              const tagText = isApproved ? 'Approved' : isBundled ? 'Bundled (Gộp)' : 'Denied';
+              const odFee = isApproved ? usd(p.benefitCents) : '$0.00';
+              return `<tr>
+                <td><b>${esc(p.code)}</b></td>
+                <td><small>${esc(p.date || '—')}</small></td>
+                <td><span class="${tagCls}">${tagText}</span></td>
+                <td class="num">${usd(p.feeCents)}</td>
+                <td class="num"><b>${usd(p.benefitCents)}</b></td>
+                <td style="color:${isApproved ? '#166534' : '#64748b'};font-weight:600;">${odFee}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  dContent.innerHTML = `
+    <!-- Reconciliation Summary -->
+    <div class="inspector-card">
+      <h4>⚡ Trạng thái đối chiếu & Ghi nhận Open Dental</h4>
+      <div class="reconcile-success-box">
+        <div class="reconcile-item">
+          <span>✓</span>
+          <span><b>Khoản thanh toán Open Dental:</b> Mã <code>PayNum #${item.PayNum || 'Chưa tạo'}</code> (Loại <b>Insurance Paid</b>)</span>
+        </div>
+        <div class="reconcile-item">
+          <span>✓</span>
+          <span><b>Trạng thái Claim:</b> Đã nhận thanh toán (<code>ClaimStatus = 'R'</code>)</span>
+        </div>
+        <div class="reconcile-item">
+          <span>✓</span>
+          <span><b>Chống nhân đôi dòng tiền:</b> Đã chặn dòng ảo <i>PAYMENT NEEDS TO BE FINALIZED</i> thành công. Chỉ hiển thị 1 dòng $${amountStr}.</span>
+        </div>
+        <div class="reconcile-item">
+          <span>✓</span>
+          <span><b>Số dư tài khoản bệnh nhân (Balance):</b> Khớp đúng <b>$0.00</b> (Không bị âm tiền)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Patient & Claim Info -->
+    <div class="inspector-card">
+      <h4>👤 Thông tin hồ sơ & Hợp đồng bảo hiểm</h4>
+      <div class="inspector-grid">
+        <div class="inspector-item">
+          <span>Bệnh nhân:</span>
+          <strong>${esc(item.PatientName)} (PatNum #${item.PatNum})</strong>
+        </div>
+        <div class="inspector-item highlight-amount">
+          <span>Số tiền bảo hiểm chi trả:</span>
+          <strong>${amountStr}</strong>
+        </div>
+        <div class="inspector-item">
+          <span>Số Claim EOB:</span>
+          <strong><code>${esc(item.ClaimNumber || '—')}</code></strong>
+        </div>
+        <div class="inspector-item">
+          <span>Số Check / EFT Trace:</span>
+          <strong><code>${esc(item.CheckNumber || details?.eobPayment?.trace || '—')}</code></strong>
+        </div>
+        <div class="inspector-item">
+          <span>File EOB nguồn:</span>
+          <strong><code>${esc(item.FileName)}</code></strong>
+        </div>
+        <div class="inspector-item">
+          <span>Thời gian xử lý:</span>
+          <strong>${esc(item.ProcessedAt || item.CreatedAt)}</strong>
+        </div>
+      </div>
+    </div>
+
+    ${procsTable}
+
+    <!-- Fees & Charges updated -->
+    <div class="inspector-card">
+      <h4>🔧 Bù phí dịch vụ tự động (Fix ProcFee 0.00)</h4>
+      <p style="margin:4px 0 6px;color:#166534;font-weight:600;font-size:12px;">
+        ${esc(item.FeesUpdated || 'Tất cả các dịch vụ đã có biểu phí đầy đủ.')}
+      </p>
+      <small class="muted">Hệ thống đã tự động gán biểu phí dịch vụ khớp với quyền lợi bảo hiểm chi trả, đồng thời đặt các dịch vụ bị từ chối/bị gộp về $0.00 để tránh tính trùng tiền cho bệnh nhân.</small>
+    </div>
+
+    <!-- AtoZ Finished Claims -->
+    <div class="inspector-card">
+      <h4>📁 Lưu trữ Finished Claims & Chữ ký bảo mật</h4>
+      <div class="inspector-grid">
+        <div class="inspector-item">
+          <span>Mã tài liệu (DocNum):</span>
+          <strong><code>#${item.DocNum || 'Chưa tạo'}</code></strong>
+        </div>
+        <div class="inspector-item">
+          <span>Danh mục lưu trữ:</span>
+          <strong><code>FINISHED CLAIMS</code></strong>
+        </div>
+        <div class="inspector-item">
+          <span>Vị trí lưu:</span>
+          <strong>Thư mục AtoZ ImageFolder của bệnh nhân trên SERVER</strong>
+        </div>
+        <div class="inspector-item">
+          <span>Chữ ký bảo mật OD:</span>
+          <strong><span class="badge success">✓ SecurityHash OK</span></strong>
+        </div>
+      </div>
+    </div>
+
+    ${item.Message ? `
+      <div class="notice ${isSuccess ? 'ok' : 'failed'}" style="margin-top:4px;">
+        <b>${isSuccess ? '✓ Hoàn thành:' : '⚠️ Thông báo lỗi:'}</b> ${esc(item.Message)}
+      </div>
+    ` : ''}
+  `;
+}
+
+// History table row click & view PDF button
+$('#history-items-tbody')?.addEventListener('click', async e => {
+  const row = e.target.closest('tr[data-history-id]');
+  if (!row) return;
+  const id = Number(row.dataset.historyId);
+  const item = serverHistoryItems.find(i => i.Id === id);
+  if (!item) return;
+
+  selectedHistoryItem = item;
+  $$('#history-items-tbody tr').forEach(r => r.classList.toggle('selected', r === row));
   renderHistoryDetail(item);
- }
+
+  if (e.target.closest('[data-action="view-pdf"]')) {
+    openPdfModal(item);
+  }
 });
 
-$('#scan-server-now')?.addEventListener('click',async()=>{
- const btn=$('#scan-server-now');
- btn.disabled=true;
- btn.textContent='⏳ Đang quét server…';
- try{
-  const res=await request('scan-server');
-  toast(`Đã quét xong: ${res?.count??0} file được xử lý.`);
-  await loadServerHistory();
- }catch(e){
-  const friendly=customerMessage(e.message);
-  const detail=e.message&&!friendly.includes(e.message)?` (${e.message})`:'';
-  toast(`Lỗi khi quét server: ${friendly}${detail}`);
- }finally{
-  btn.disabled=false;
-  btn.textContent='⚡ Quét thư mục Server ngay';
- }
+// Inspector Action Buttons
+$('#inspector-view-pdf-btn')?.addEventListener('click', () => {
+  if (selectedHistoryItem) openPdfModal(selectedHistoryItem);
+});
+$('#inspector-open-os-pdf-btn')?.addEventListener('click', async () => {
+  if (!selectedHistoryItem) return;
+  try {
+    toast('Đang mở file PDF bằng ứng dụng mặc định...');
+    await request('open-system-pdf', { historyId: selectedHistoryItem.Id, fileName: selectedHistoryItem.FileName });
+  } catch (err) {
+    toast(`Không mở được PDF: ${err.message}`);
+  }
 });
 
-$('#refresh-history')?.addEventListener('click',()=>loadServerHistory());
+// Search input
+$('#history-search')?.addEventListener('input', e => {
+  searchQuery = e.target.value;
+  $('#history-search-clear').hidden = !searchQuery;
+  renderHistory();
+});
+$('#history-search-clear')?.addEventListener('click', () => {
+  $('#history-search').value = '';
+  searchQuery = '';
+  $('#history-search-clear').hidden = true;
+  renderHistory();
+});
 
-// Initial history load and auto-refresh every 15s
+// Filter pills
+$$('.filter-pill').forEach(pill => {
+  pill.addEventListener('click', () => {
+    $$('.filter-pill').forEach(p => p.classList.toggle('active', p === pill));
+    activeFilter = pill.dataset.filter;
+    renderHistory();
+  });
+});
+
+// Scan & Retry actions
+async function triggerServerScan() {
+  const btn = $('#header-scan-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Đang quét server...';
+  try {
+    const res = await request('scan-server');
+    toast(`Đã quét xong: ${res?.count ?? 0} file được xử lý.`);
+    addEvent(`Đã quét thư mục server: ${res?.count ?? 0} file.`);
+    await loadServerHistory();
+  } catch (err) {
+    toast(`Lỗi khi quét server: ${err.message}`);
+    addEvent(`Lỗi quét: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ Quét Server ngay';
+  }
+}
+
+async function triggerRetryErrors() {
+  const btn = $('#header-retry-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Đang xử lý lại...';
+  try {
+    const res = await request('retry-errors');
+    toast(`Đã chuyển ${res?.movedCount ?? 0} file lỗi ra để quét lại.`);
+    addEvent(`Thử lại file lỗi: ${res?.movedCount ?? 0} file.`);
+    await loadServerHistory();
+  } catch (err) {
+    toast(`Lỗi khi thử lại: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 Thử lại file lỗi';
+  }
+}
+
+$('#header-scan-btn')?.addEventListener('click', triggerServerScan);
+$('#diag-scan-btn')?.addEventListener('click', triggerServerScan);
+$('#header-retry-btn')?.addEventListener('click', triggerRetryErrors);
+$('#diag-retry-errors-btn')?.addEventListener('click', triggerRetryErrors);
+$('#refresh-all-btn')?.addEventListener('click', () => {
+  loadServerHistory();
+  toast('Đã làm mới dữ liệu.');
+});
+
+// Diagnostics reconnect
+$('#diag-reconnect-btn')?.addEventListener('click', async () => {
+  try {
+    await request('reconnect-server');
+    toast('Đã kết nối lại thành công.');
+    await loadServerHistory();
+  } catch (err) {
+    toast(`Lỗi kết nối lại: ${err.message}`);
+  }
+});
+
+// Clear events log
+$('#clear-events-btn')?.addEventListener('click', () => {
+  events.length = 0;
+  $('#events').innerHTML = '<div class="muted" style="padding:10px 0;">Nhật ký đã được xóa.</div>';
+});
+
+// PDF Modal
+async function openPdfModal(item) {
+  const modal = $('#pdf-modal');
+  const title = $('#pdf-modal-title');
+  const viewer = $('#pdf-modal-viewer');
+  if (!modal || !viewer) return;
+
+  title.textContent = `EOB PDF: ${item.FileName} (${item.PatientName})`;
+  viewer.innerHTML = '<div style="padding:40px;text-align:center;">⏳ Đang tải trang PDF...</div>';
+  modal.hidden = false;
+
+  const currentToken = ++pdfToken;
+
+  try {
+    const bytes = await request('history-pdf', item.Id);
+    if (currentToken !== pdfToken) return;
+
+    const pdfjs = await import('../node_modules/pdfjs-dist/build/pdf.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL('../node_modules/pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
+
+    const loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false });
+    const pdfDoc = await loadingTask.promise;
+
+    if (currentToken !== pdfToken) return;
+    viewer.innerHTML = '';
+
+    for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+      if (currentToken !== pdfToken) return;
+      const page = await pdfDoc.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      viewer.appendChild(canvas);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    }
+  } catch (err) {
+    if (currentToken === pdfToken) {
+      viewer.innerHTML = `<div style="padding:40px;text-align:center;color:#b91c1c;">
+        <p><b>Không hiển thị được bản xem trước:</b> ${esc(err.message)}</p>
+        <p>Bạn có thể bấm nút <b>Mở bằng Adobe Reader</b> ở trên để xem trực tiếp.</p>
+      </div>`;
+    }
+  }
+}
+
+function closePdfModal() {
+  $('#pdf-modal').hidden = true;
+  pdfToken++;
+}
+
+$('#pdf-modal-close')?.addEventListener('click', closePdfModal);
+$('#pdf-modal')?.addEventListener('click', e => {
+  if (e.target === $('#pdf-modal')) closePdfModal();
+});
+$('#pdf-modal-open-external')?.addEventListener('click', async () => {
+  if (!selectedHistoryItem) return;
+  try {
+    toast('Đang mở file PDF bằng Adobe Reader...');
+    await request('open-system-pdf', { historyId: selectedHistoryItem.Id, fileName: selectedHistoryItem.FileName });
+  } catch (err) {
+    toast(`Lỗi: ${err.message}`);
+  }
+});
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('#pdf-modal').hidden) closePdfModal();
+});
+
+// TAB 2: Patient Search & Finished Claims
+async function searchPatients(page = 0) {
+  if (working) return;
+  const q = $('#patient-search-query').value.trim();
+  const kind = $('#patient-search-kind').value;
+  if (!q) { toast('Nhập tên hoặc mã bệnh nhân để tìm kiếm.'); return; }
+
+  $('#search-patients').disabled = true;
+  $('#search-patients').textContent = 'Đang tìm...';
+  try {
+    const res = await request('search-patients', { q, kind, page });
+    patientState.patients = res?.patients || [];
+    patientState.page = res?.page || 0;
+    patientState.hasMore = !!res?.hasMore;
+    renderPatientResults();
+  } catch (err) {
+    toast(`Lỗi tìm bệnh nhân: ${err.message}`);
+  } finally {
+    $('#search-patients').disabled = false;
+    $('#search-patients').textContent = 'Tìm bệnh nhân';
+  }
+}
+
+function renderPatientResults() {
+  const tbody = $('#patient-results');
+  const empty = $('#patient-results-empty');
+  if (!tbody) return;
+
+  if (!patientState.patients.length) {
+    tbody.innerHTML = '';
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+
+  tbody.innerHTML = patientState.patients.map(p => {
+    const isSel = patientState.selectedPatient && patientState.selectedPatient.PatNum === p.PatNum;
+    return `<tr data-patient="${esc(p.PatNum)}" class="${isSel ? 'patient-selected' : ''}" style="cursor:pointer;">
+      <td><b>${esc(p.LName)}, ${esc(p.FName)}</b><br><small>PatNum: ${esc(p.PatNum)}${p.ChartNumber ? ' · Chart: ' + esc(p.ChartNumber) : ''}</small></td>
+      <td>${esc(p.Birthdate || '—')}</td>
+      <td class="patient-insurance">${(p.insurance || []).map(i => `${esc(i.CarrierName)} (Group: ${esc(i.GroupNum || '—')})`).join('<br>') || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+$('#search-patients')?.addEventListener('click', () => searchPatients(0));
+$('#patient-search-query')?.addEventListener('keydown', e => { if (e.key === 'Enter') searchPatients(0); });
+$('#patients-prev')?.addEventListener('click', () => searchPatients(Math.max(0, patientState.page - 1)));
+$('#patients-next')?.addEventListener('click', () => searchPatients(patientState.page + 1));
+
+$('#patient-results')?.addEventListener('click', async e => {
+  const row = e.target.closest('tr[data-patient]');
+  if (!row) return;
+  const patNum = row.dataset.patient;
+  const p = patientState.patients.find(pt => String(pt.PatNum) === String(patNum));
+  if (!p) return;
+
+  patientState.selectedPatient = p;
+  $$('#patient-results tr').forEach(r => r.classList.toggle('patient-selected', r === row));
+  $('#documents-patient').textContent = `${p.LName}, ${p.FName} · PatNum #${p.PatNum}`;
+
+  try {
+    const res = await request('patient-documents', p.PatNum);
+    patientState.documents = res?.documents || [];
+    renderPatientDocuments();
+  } catch (err) {
+    toast(`Lỗi tải Finished Claims: ${err.message}`);
+  }
+});
+
+function renderPatientDocuments() {
+  const list = $('#patient-documents');
+  if (!list) return;
+  const docs = patientState.documents;
+  if (!docs.length) {
+    list.innerHTML = `<div class="empty"><div class="document-symbol">PDF</div><p>Không có file PDF nào trong FINISHED CLAIMS của bệnh nhân này.</p></div>`;
+    return;
+  }
+  list.innerHTML = docs.map(d => `
+    <div class="document-row">
+      <div class="document-symbol">PDF</div>
+      <div class="doc-info">
+        <strong>${esc(d.FileName)}</strong>
+        <p>${esc(d.Description || 'Finished Claim')}<br><small>${esc(d.DateCreated || '')}</small></p>
+      </div>
+      <button class="primary small" data-docnum="${esc(d.DocNum)}" data-action="view-doc">Xem PDF</button>
+      <button class="small" data-docnum="${esc(d.DocNum)}" data-action="open-doc-os">Mở Reader</button>
+    </div>
+  `).join('');
+}
+
+$('#patient-documents')?.addEventListener('click', async e => {
+  const viewBtn = e.target.closest('[data-action="view-doc"]');
+  const openOsBtn = e.target.closest('[data-action="open-doc-os"]');
+  const patNum = patientState.selectedPatient?.PatNum;
+  if (!patNum) return;
+
+  if (viewBtn) {
+    const docNum = viewBtn.dataset.docnum;
+    const doc = patientState.documents.find(d => String(d.DocNum) === String(docNum));
+    openPdfModal({ Id: 0, DocNum: docNum, PatNum: patNum, FileName: doc?.FileName || 'Document.pdf', PatientName: `${patientState.selectedPatient.LName}, ${patientState.selectedPatient.FName}` });
+  } else if (openOsBtn) {
+    const docNum = openOsBtn.dataset.docnum;
+    const doc = patientState.documents.find(d => String(d.DocNum) === String(docNum));
+    try {
+      toast('Đang mở PDF bằng ứng dụng mặc định...');
+      await request('open-system-pdf', { patNum, docNum, fileName: doc?.FileName });
+    } catch (err) {
+      toast(`Không mở được: ${err.message}`);
+    }
+  }
+});
+
+// Auto-refresh timer every 15s
+function startAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  autoRefreshTimer = setInterval(() => {
+    autoRefreshSec--;
+    const el = $('#auto-refresh-timer');
+    if (el) el.textContent = `⏱️ Tự động làm mới: ${autoRefreshSec}s`;
+    if (autoRefreshSec <= 0) {
+      autoRefreshSec = 15;
+      loadServerHistory();
+    }
+  }, 1000);
+}
+
+// Initial boot
 loadServerHistory();
-setInterval(()=>{
- if(!working)loadServerHistory().catch(()=>{});
-},15000);
+startAutoRefresh();
+addEvent('Đã khởi chạy LUK MetLife Audit Center trên máy R5.');

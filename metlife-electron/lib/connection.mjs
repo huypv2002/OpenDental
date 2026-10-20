@@ -56,4 +56,7 @@ export class MetlifeClient{
  pdf(patNum,docNum){return this.request(`/patients/${encodeURIComponent(patNum)}/documents/${encodeURIComponent(docNum)}/pdf`,true);}
  history(){return this.request('/history');}
  scan(){return this.request('/scan',false,{});}
+ status(){return this.request('/status');}
+ retryErrors(){return this.request('/retry-errors',false,{});}
+ historyPdf(id){return this.request(`/history/${encodeURIComponent(id)}/pdf`,true);}
 }
