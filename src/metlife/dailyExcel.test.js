@@ -15,6 +15,7 @@ export function samplePool(rows=sampleRows()){
   return {execute:async(sql,args)=>{
     assert.match(sql,/^\s*SELECT/,'Excel only reads the clinical DB');
     if(sql.includes('luk_metlife_history'))return [args[0].startsWith(day)?rows:[]];
+    if(sql.includes('FROM payment WHERE'))return [[]];
     if(sql.includes('procedurelog'))return [[{ProcNum:1,ProcDate:'2026-09-17',ProcCode:'D5110',ToothNum:'',ProcFee:'743.00',Descript:'Complete denture, maxillary'},{ProcNum:2,ProcDate:'2026-09-17',ProcCode:'D5120',ToothNum:'',ProcFee:'740.00',Descript:'Complete denture, mandibular'},{ProcNum:3,ProcDate:'2026-09-17',ProcCode:'D0150',ToothNum:'',ProcFee:'250.00',Descript:'Comprehensive oral evaluation'}]];
     throw Error('unexpected query');
   }};
@@ -109,7 +110,7 @@ test('null/malformed legacy details are listed for review without inventing an u
   try{
     const valid=sampleRows()[0],bad=['null','{bad','[]'].map((Details,i)=>({...sampleRows()[1],Id:18+i,PayNum:200+i,Details,TotalAmount:null}));
     const result=await appendDailyWorkbook(samplePool(),[...bad,valid],f.file,day);
-    assert.equal(result.appended,1);assert.equal(result.reviewCount,3);
+    assert.equal(result.appended,1);assert.equal(result.reviewCount,1);
     const wb=await load(f.file);assert.equal(wb.getWorksheet('CAN DOI CHIEU').getCell('D2').value,null);assert.equal(wb.getWorksheet('PAYMENTS').getCell('H2').value,1483);
   }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });
@@ -137,5 +138,48 @@ test('scanner exports after processing, and Excel failure does not retry or recl
   try{
     const result=await scanIncomingFolder({execute:async()=>[[]]},incoming,{processFile:async()=>{processed++;return {success:true};},exportReports:async()=>{exports++;assert.equal(processed,1);throw Error('Excel is open');}});
     assert.equal(processed,1);assert.equal(exports,1);assert.equal(result.results[0].success,true);await assert.rejects(fs.access(path.join(incoming,'ERRORS')),{code:'ENOENT'});
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('mysql JSON objects, buffers, double-encoded details and lowercase columns export as real files',async()=>{
+  for(const format of ['object','buffer','double','lowercase']){
+    const f=await fixture();
+    try{
+      let row=sampleRows()[0];
+      if(format==='object')row.Details=JSON.parse(row.Details);
+      if(format==='buffer')row.Details=Buffer.from(row.Details);
+      if(format==='double')row.Details=JSON.stringify(row.Details);
+      if(format==='lowercase')row=Object.fromEntries(Object.entries(row).map(([k,v])=>[k.toLowerCase(),v]));
+      const result=await exportDailyReports(samplePool([row]),path.join(f.root,'METLIFE'),{now,outputDir:f.root});
+      assert.equal(result.status,'ok');assert.equal(result.reports[0].appended,1);assert.ok((await fs.stat(f.file)).size>0);
+    }finally{await fs.rm(f.root,{recursive:true,force:true});}
+  }
+});
+
+test('five copies of one legacy claim recover actual posted payment/services and produce one file/claim',async()=>{
+  const f=await fixture();
+  try{
+    const base=sampleRows()[0],rows=Array.from({length:5},(_,i)=>({...base,Id:18+i,PayNum:1836+i,Details:'{}'}));
+    const pool={execute:async(sql,args)=>{
+      assert.match(sql,/^\s*SELECT/);
+      if(sql.includes('luk_metlife_history'))return [rows];
+      if(sql.includes('FROM payment WHERE'))return [[{PayNum:args[0],PatNum:99,PayDate:'2026-09-29',PayAmt:'1483.00'}]];
+      if(sql.includes('FROM paysplit ps'))return [[{PatNum:99,ProcNum:1,SplitAmt:'743.00',ProcDate:'2026-09-17',ProcCode:'D5110',ToothNum:'Q01'},{PatNum:99,ProcNum:2,SplitAmt:'740.00',ProcDate:'2026-09-17',ProcCode:'D5120',ToothNum:'Q02'}]];
+      return samplePool().execute(sql,args);
+    }};
+    const result=await exportDailyReports(pool,path.join(f.root,'METLIFE'),{now,outputDir:f.root});
+    assert.equal(result.status,'ok');assert.equal(result.reports[0].appended,1);assert.ok((await fs.stat(f.file)).size>0);
+    const wb=await load(f.file),s=wb.getWorksheet('PAYMENTS');
+    assert.equal(s.getCell('H2').value,1483);assert.equal(s.getCell('O2').value.toISOString().slice(0,10),'2026-09-29');assert.equal(s.getCell('K2').value,null);
+    assert.equal(wb.getWorksheet('TONG HOP').getCell('B2').value,1);assert.equal(wb.getWorksheet('TONG HOP').getCell('B3').value,1);
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('legacy recovery rejects a payment belonging to a different patient',async()=>{
+  const f=await fixture();
+  try{
+    const pool={execute:async(sql)=>{assert.match(sql,/^\s*SELECT/);assert.match(sql,/FROM payment WHERE/);return [[{PatNum:123,PayDate:'2026-09-29',PayAmt:'1483.00'}]];}};
+    const result=await appendDailyWorkbook(pool,[{...sampleRows()[0],Details:'{}'}],f.file,day);
+    assert.equal(result.appended,0);assert.equal(result.reviewCount,1);assert.equal((await load(f.file)).getWorksheet('PAYMENTS').rowCount,1);
   }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });

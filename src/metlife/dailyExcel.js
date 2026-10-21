@@ -27,10 +27,45 @@ function nextDay(day){return new Date(+dateValue(day)+86400000).toISOString().sl
 function isoDay(value){return value instanceof Date?localReportDay(value):String(value||'').slice(0,10);}
 function amount(value){return value===null||value===undefined||value===''?null:cents(value);}
 const fill=argb=>({type:'pattern',pattern:'solid',fgColor:{argb}});
+export function normalizeHistoryRow(row){
+  const normalized={};
+  for(const key of ['Id','FileName','FileHash','PatNum','PatientName','ClaimNumber','PayNum','TotalAmount','Status','Details']){
+    const actual=Object.keys(row).find(k=>k.toLowerCase()===key.toLowerCase());normalized[key]=row[actual];
+  }
+  return normalized;
+}
 function historyDetails(row){
-  const details=JSON.parse(row.Details||'{}');
+  let details=row.Details||{};
+  if(Buffer.isBuffer(details))details=details.toString('utf8');
+  // mysql2 can return JSON columns as objects, whereas TEXT columns return strings.
+  for(let i=0;i<2&&typeof details==='string';i++)details=JSON.parse(details);
   if(!details||typeof details!=='object'||Array.isArray(details))throw new Error(`Hồ sơ ${row.Id} thiếu thông tin chi tiết trong lịch sử.`);
   return details;
+}
+
+async function recoverReportDetails(pool,row,details){
+  const [payments]=await pool.execute('SELECT PayNum AS PayNum,PatNum AS PatNum,PayDate AS PayDate,PayAmt AS PayAmt FROM payment WHERE PayNum=? LIMIT 1',[row.PayNum]);
+  const payment=payments[0];
+  if(!payment||String(payment.PatNum)!==String(row.PatNum)||amount(payment.PayAmt)!==amount(row.TotalAmount)||!dateValue(isoDay(payment.PayDate)))throw new Error(`Hồ sơ ${row.Id} thiếu ngày hoặc dịch vụ và chưa đối chiếu được khoản thanh toán đã lưu.`);
+  const recovered={...details,paymentDate:isoDay(payment.PayDate),carrier:details.carrier||(details.eobPayment?'MetLife':'Chưa xác định')};
+  if(Array.isArray(details.procedures)&&details.procedures.length)return recovered;
+  const [splits]=await pool.execute(
+    `SELECT ps.PatNum AS PatNum,ps.ProcNum AS ProcNum,ps.SplitAmt AS SplitAmt,
+            pl.ProcDate AS ProcDate,pl.ProcFee AS ProcFee,pl.ToothNum AS ToothNum,pl.Surf AS Surf,
+            pc.ProcCode AS ProcCode,pc.Descript AS Descript
+     FROM paysplit ps LEFT JOIN procedurelog pl ON pl.ProcNum=ps.ProcNum
+     LEFT JOIN procedurecode pc ON pc.CodeNum=pl.CodeNum WHERE ps.PayNum=? ORDER BY ps.SplitNum`,[row.PayNum]);
+  const grouped=new Map();let total=0;
+  for(const s of splits){
+    const value=amount(s.SplitAmt);
+    if(String(s.PatNum)!==String(row.PatNum)||!Number(s.ProcNum)||!s.ProcCode||!dateValue(isoDay(s.ProcDate))||!Number.isSafeInteger(value)||value<0)throw new Error(`Hồ sơ ${row.Id} thiếu dữ liệu dịch vụ liên kết với khoản thanh toán.`);
+    total+=value;
+    const key=String(s.ProcNum),p=grouped.get(key)||{code:s.ProcCode,date:isoDay(s.ProcDate),tooth:s.ToothNum||'',surface:s.Surf||'',description:s.Descript||'',feeCents:null,benefitCents:0};
+    p.benefitCents+=value;grouped.set(key,p);
+  }
+  if(!grouped.size||total!==amount(payment.PayAmt))throw new Error(`Hồ sơ ${row.Id} thiếu dữ liệu hoặc lệch tổng phân bổ đã lưu.`);
+  // The original submitted EOB fee is unknown in a ledger-only recovery. Leave it blank.
+  return {...recovered,procedures:[...grouped.values()],ledgerRecovery:true};
 }
 
 export function historyIdentity(row,details){
@@ -39,11 +74,17 @@ export function historyIdentity(row,details){
   const claimKey=JSON.stringify([carrier.toUpperCase(),String(row.PatNum),String(row.ClaimNumber).replace(/\s+/g,' ').trim(),details.paymentDate,amount(row.TotalAmount)]);
   return {paymentKey:`pay:${row.PayNum}`,claimKey,fileKey,sourceKey:JSON.stringify([fileKey,String(row.PatNum),String(row.ClaimNumber)])};
 }
+function sourceIdentity(row){
+  const fileKey=row.FileHash?`hash:${row.FileHash}`:`file:${String(row.FileName).toLowerCase()}`;
+  return JSON.stringify([fileKey,String(row.PatNum),String(row.ClaimNumber)]);
+}
 
 export async function reportEntry(pool,row){
+  row=normalizeHistoryRow(row);
   if(row.Status!=='SUCCESS'||!Number(row.PayNum))throw new Error('Chỉ xuất hồ sơ đã lưu thành công.');
-  const details=historyDetails(row);
-  if(!dateValue(details.paymentDate)||!Array.isArray(details.procedures)||!details.procedures.length)throw new Error(`Hồ sơ ${row.Id} thiếu ngày hoặc dịch vụ để xuất Excel.`);
+  let details;
+  try{details=historyDetails(row);}catch(e){if(!(e instanceof SyntaxError)&&!/^Hồ sơ /.test(e.message))throw e;details={};}
+  if(!dateValue(details.paymentDate)||!Array.isArray(details.procedures)||!details.procedures.length)details=await recoverReportDetails(pool,row,details);
   const [procs]=await pool.execute(
     `SELECT pl.ProcNum,pl.ProcDate,pl.ProcFee,pl.ToothNum,pc.ProcCode,pc.Descript
      FROM procedurelog pl JOIN procedurecode pc ON pc.CodeNum=pl.CodeNum
@@ -56,7 +97,7 @@ export async function reportEntry(pool,row){
     return {date:p.date,code:p.code,treatment:[p.tooth,p.surface,match?.Descript||p.description].filter(Boolean).join(' '),chargeCents:match?amount(match.ProcFee):null,billedCents:p.feeCents??null,paidCents:p.benefitCents??null};
   });
   const paidCents=amount(row.TotalAmount);
-  if(!Number.isSafeInteger(paidCents)||paidCents<=0||procedures.some(p=>!dateValue(p.date)||!Number.isSafeInteger(p.paidCents)||!Number.isSafeInteger(p.billedCents))||procedures.reduce((n,p)=>n+p.paidCents,0)!==paidCents)throw new Error(`Hồ sơ ${row.Id} thiếu dữ liệu hoặc lệch tổng tiền; chưa xuất Excel.`);
+  if(!Number.isSafeInteger(paidCents)||paidCents<=0||procedures.some(p=>!dateValue(p.date)||!Number.isSafeInteger(p.paidCents)||!(Number.isSafeInteger(p.billedCents)||(details.ledgerRecovery&&p.billedCents===null)))||procedures.reduce((n,p)=>n+p.paidCents,0)!==paidCents)throw new Error(`Hồ sơ ${row.Id} thiếu dữ liệu hoặc lệch tổng tiền; chưa xuất Excel.`);
   return {...historyIdentity(row,details),id:String(row.Id),patNum:row.PatNum,patientName:row.PatientName,carrier:details.carrier||'MetLife',paymentDate:details.paymentDate,paidCents,procedures};
 }
 
@@ -84,7 +125,7 @@ function appendEntry(sheet,entry,index){
   const complete=entry.procedures.every(p=>Number.isSafeInteger(p.chargeCents));
   const charges=complete?entry.procedures.reduce((n,p)=>n+p.chargeCents,0):null;
   entry.procedures.forEach(p=>{
-    const row=sheet.addRow([dateValue(p.date),String(entry.patNum),entry.patientName,p.code,p.treatment,p.chargeCents===null?null:p.chargeCents/100,'CREDIT',null,null,null,p.billedCents/100,p.paidCents/100,'Đã lưu',entry.carrier,dateValue(entry.paymentDate)]);
+    const row=sheet.addRow([dateValue(p.date),String(entry.patNum),entry.patientName,p.code,p.treatment,p.chargeCents===null?null:p.chargeCents/100,'CREDIT',null,null,null,p.billedCents===null?null:p.billedCents/100,p.paidCents/100,'Đã lưu',entry.carrier,dateValue(entry.paymentDate)]);
     row.height=32;
     for(let col=1;col<=15;col++){
       const cell=row.getCell(col);cell.font={name:'Arial',size:10};cell.alignment={vertical:'middle',wrapText:true,horizontal:[6,8,9,10,11,12].includes(col)?'right':'left'};
@@ -145,14 +186,17 @@ export async function appendDailyWorkbook(pool,rows,filePath,day,{replace=fs.ren
     const {sheet,meta}=verifyWorkbook(wb),known=new Set();
     meta.eachRow((r,i)=>{if(i>1)for(const c of [2,3,5])known.add(String(r.getCell(c).value));});
     let appended=0;const reviews=[];
-    for(const row of rows){
+    for(const raw of rows){
+      const row=normalizeHistoryRow(raw);
       if(row.Status!=='SUCCESS'||!Number(row.PayNum))continue;
       if(known.has(`pay:${row.PayNum}`))continue;
       let entry;
       try{
-        const identity=historyIdentity(row,historyDetails(row));
+        let stored={};try{stored=historyDetails(row);}catch(e){if(!(e instanceof SyntaxError)&&!/^Hồ sơ /.test(e.message))throw e;}
+        const identity=historyIdentity(row,stored);
         if([identity.paymentKey,identity.claimKey,identity.sourceKey].some(k=>known.has(k)))continue;
         entry=await reportEntry(pool,row);
+        if([entry.paymentKey,entry.claimKey,entry.sourceKey].some(k=>known.has(k)))continue;
       }catch(e){
         // Only record/data errors are isolated. DB/filesystem failures still retry the export.
         if(!(e instanceof SyntaxError)&&!/^Hồ sơ |^Invalid money:|^Money exceeds supported range/.test(e.message))throw e;
@@ -165,7 +209,12 @@ export async function appendDailyWorkbook(pool,rows,filePath,day,{replace=fs.ren
       for(const key of [entry.paymentKey,entry.claimKey,entry.sourceKey])known.add(key);
       appended++;
     }
-    const unresolved=reviews.filter(row=>!known.has(`pay:${row.PayNum}`));
+    const reviewSources=new Set();
+    const unresolved=reviews.filter(row=>{
+      const source=sourceIdentity(row);
+      if(known.has(`pay:${row.PayNum}`)||known.has(source)||reviewSources.has(source))return false;
+      reviewSources.add(source);return true;
+    });
     const reviewChanged=syncReviews(wb,unresolved);
     if(!appended&&!reviewChanged)return {filePath,appended:0,reviewCount:unresolved.length};
     updateSummary(wb,meta,day,unresolved.length);
@@ -194,7 +243,9 @@ export async function exportDailyReports(pool,incomingDir,{now=new Date(),starte
       if(!Array.isArray(rows))throw new Error('Không đọc được lịch sử xuất Excel.');
       if(rows.length){
         const result=await writeWorkbook(pool,rows,path.join(dir,`${day}.xlsx`),day);reports.push(result);
-        if(result.appended)console.log(`[Excel] Đã ghi ${result.appended} hồ sơ vào ${result.filePath}`);
+        const saved=await fs.stat(result.filePath);
+        if(!saved.isFile()||saved.size===0)throw new Error(`Chưa tạo được file Excel: ${result.filePath}`);
+        console.log(`[Excel] File đã tồn tại: ${path.resolve(result.filePath)} (${saved.size} bytes) | Thêm ${result.appended} hồ sơ | ${result.reviewCount||0} hồ sơ cần đối chiếu.`);
         if(result.reviewCount){
           reviews.push({day,count:result.reviewCount});
           console.warn(`[Excel] Báo cáo ${day}: ${result.reviewCount} hồ sơ thiếu dữ liệu nằm trong tab CAN DOI CHIEU. Các hồ sơ đủ dữ liệu vẫn được xuất; không chạy lại thanh toán.`);

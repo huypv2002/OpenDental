@@ -30,6 +30,16 @@ After each automatic scan, successfully saved MetLife and Liberty claims are app
 
 Legacy successful history entries can lack the payment date or EOB service details. Those entries appear separately in `CAN DOI CHIEU`, with the known patient/claim/payment information and the missing-data reason. Valid entries still export to `PAYMENTS`. `TONG HOP` distinguishes exported records/totals from the count awaiting review. Pending dates remain eligible for report-only recovery; correcting the history data lets the next scan append a recovered record once and clear its review entry. This does not recreate the OD payment or invent missing service data.
 
+The exporter accepts history details returned as TEXT, Buffer or mysql2 JSON objects. For legacy entries missing dates/services, it can recover from the existing payment and linked paysplits only after matching the patient, total payment, procedure dates and split sum. The original submitted EOB fee remains blank when it cannot be recovered, and the carrier is marked unknown when no carrier information is available. Duplicate history for the same source/claim does not add more groups. Every successful export logs the absolute filename and confirms a nonempty file on disk, including reports containing only review entries.
+
+To create/retry a report explicitly in a known folder without scanning PDFs or creating any payment:
+
+```powershell
+node scripts/export-insurance-excel.mjs 2026-10-21 --dir 'D:\SHARE\EXCEL'
+```
+
+Use the processing date shown in the server log. This command reads the configured DB and writes Excel files only; the printed path is the actual output location.
+
 Excel export reads successful history and procedure data without creating or repeating payments. If Excel is open or the share is unavailable, the previous workbook is retained and export retries on the next scan. Pending days are remembered in `EXCEL\.pending`, including across restarts and midnight. The scanner writes a temporary workbook and replaces the daily file only after it is complete; concurrent tool instances use a report lock. Close the workbook in Excel to allow a pending update to finish. Console messages starting `[Excel]` report export results separately from payment results.
 
 ## Endpoints
