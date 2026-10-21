@@ -6,6 +6,7 @@ import path from 'node:path';
 import ExcelJS from 'exceljs';
 import {appendDailyWorkbook,exportDailyReports,excelOutputDir,localReportDay,REPORT_HEADERS} from './dailyExcel.js';
 import {scanIncomingFolder} from './autoProcessor.js';
+import {extractPdf,parseMetlife} from './parser.js';
 
 const day='2026-10-22',now=new Date(2026,9,22,23,59);
 export function sampleRows(){
@@ -182,5 +183,56 @@ test('legacy recovery rejects a payment belonging to a different patient',async(
     const pool={execute:async(sql)=>{assert.match(sql,/^\s*SELECT/);assert.match(sql,/FROM payment WHERE/);return [[{PatNum:123,PayDate:'2026-09-29',PayAmt:'1483.00'}]];}};
     const result=await appendDailyWorkbook(pool,[{...sampleRows()[0],Details:'{}'}],f.file,day);
     assert.equal(result.appended,0);assert.equal(result.reviewCount,1);assert.equal((await load(f.file)).getWorksheet('PAYMENTS').rowCount,1);
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('Allowable service dates come only from uniquely linked OD procedures',async()=>{
+  const f=await fixture();
+  try{
+    const row=sampleRows()[0],details=JSON.parse(row.Details);
+    details.procedures[0].date=null;details.procedures[0].feeCents=null;
+    details.splits=[{code:'D5110',procNum:1}];row.Details=JSON.stringify(details);
+    const pool={execute:async(sql,args)=>{
+      const [procs]=await samplePool().execute(sql,args);
+      return [[...procs,{ProcNum:999,ProcCode:'D5110',ProcDate:'2025-01-01',ProcFee:'999.00'}]];
+    }};
+    const result=await appendDailyWorkbook(pool,[row],f.file,day);assert.equal(result.appended,1);assert.equal(result.reviewCount,0);
+    let wb=await load(f.file);assert.equal(wb.getWorksheet('PAYMENTS').getCell('A2').value.toISOString().slice(0,10),'2026-09-17');assert.equal(wb.getWorksheet('PAYMENTS').getCell('K2').value,null);
+    const missing={...row,Id:55,PayNum:555,ClaimNumber:'NOLINK',FileHash:'different'};const bad=JSON.parse(missing.Details);bad.splits=[];missing.Details=JSON.stringify(bad);
+    const noLinkPool={execute:async(sql,args)=>sql.includes('FROM paysplit WHERE')?[[]]:pool.execute(sql,args)};
+    const blocked=await appendDailyWorkbook(noLinkPool,[missing],f.file,day);assert.equal(blocked.reviewCount,1);
+    wb=await load(f.file);assert.match(wb.getWorksheet('CAN DOI CHIEU').getCell('F2').value,/ngày dịch vụ của D5110/);
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('review tab repair removes repeated headers and duplicate claims without touching exported payments',async()=>{
+  const f=await fixture();
+  try{
+    const valid=sampleRows()[0],bad={...sampleRows()[1],Details:'{}'};
+    await appendDailyWorkbook(samplePool(),[valid,bad],f.file,day);
+    const old=await load(f.file),r=old.getWorksheet('CAN DOI CHIEU');
+    for(let i=0;i<3;i++){r.addRow(['PT NUM','PATIENT NAME','CLAIM','CREDIT','FILE','CẦN ĐỐI CHIẾU']);r.addRow(['100','TEST, PERSON TWO',bad.ClaimNumber,250,bad.FileName,'old reason']);}
+    old.getWorksheet('PAYMENTS').getCell('M2').value='Staff note';await old.xlsx.writeFile(f.file);
+    for(let i=0;i<3;i++){
+      const duplicates=Array.from({length:5},(_,n)=>({...bad,Id:100+n,PayNum:200+n,FileHash:`copy-${n}`}));
+      await appendDailyWorkbook(samplePool(),[valid,...duplicates],f.file,day);
+      const wb=await load(f.file),sheet=wb.getWorksheet('CAN DOI CHIEU');
+      assert.equal(sheet.rowCount,2);assert.equal(sheet.getCell('A1').value,'PT NUM');assert.equal(sheet.getCell('A2').value,'100');assert.equal(wb.getWorksheet('PAYMENTS').getCell('M2').value,'Staff note');
+    }
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('actual MetLife PDF Allowable rows export after linked-date resolution (optional local fixture)',{skip:!process.env.METLIFE_TEST_PDF},async()=>{
+  const f=await fixture();
+  try{
+    const parsed=parseMetlife(await extractPdf(await fs.readFile(process.env.METLIFE_TEST_PDF)));
+    assert.equal(parsed.benefitCents,43920);assert.deepEqual(parsed.procedures.filter(p=>!p.date).map(p=>p.code),['D1110','D0210']);
+    const serviceDay=parsed.procedures.find(p=>p.date).date;
+    const procs=parsed.procedures.map((p,i)=>({ProcNum:500+i,ProcCode:p.code,ProcDate:serviceDay,ProcFee:(p.benefitCents/100).toFixed(2),ToothNum:p.tooth||'',Descript:'Synthetic linked procedure'}));
+    const details={paymentDate:parsed.processed,procedures:parsed.procedures,splits:parsed.procedures.map((p,i)=>({code:p.code,procNum:500+i}))};
+    const row={...sampleRows()[0],Details:JSON.stringify(details),TotalAmount:'439.20'};
+    const pool={execute:async sql=>{assert.match(sql,/^\s*SELECT/);return [procs];}};
+    const result=await appendDailyWorkbook(pool,[row],f.file,day);assert.equal(result.appended,1);assert.equal(result.reviewCount,0);
+    const sheet=(await load(f.file)).getWorksheet('PAYMENTS');assert.equal(sheet.getCell('H2').value,439.2);assert.equal(sheet.rowCount,parsed.procedures.length+1);
   }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });

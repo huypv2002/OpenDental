@@ -457,7 +457,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
       date: p.date || '',
       tooth: p.tooth || '',
       status: p.status || '',
-      feeCents: p.feeCents || 0,
+      feeCents: p.feeCents ?? null,
       benefitCents: p.benefitCents || 0,
       remarks: p.remarks || []
     })),

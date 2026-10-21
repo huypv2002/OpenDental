@@ -32,6 +32,8 @@ Legacy successful history entries can lack the payment date or EOB service detai
 
 The exporter accepts history details returned as TEXT, Buffer or mysql2 JSON objects. For legacy entries missing dates/services, it can recover from the existing payment and linked paysplits only after matching the patient, total payment, procedure dates and split sum. The original submitted EOB fee remains blank when it cannot be recovered, and the carrier is marked unknown when no carrier information is available. Duplicate history for the same source/claim does not add more groups. Every successful export logs the absolute filename and confirms a nonempty file on disk, including reports containing only review entries.
 
+MetLife `Allowable` replacement lines can omit their service date. The Excel exporter resolves that date only through a uniquely matched OD procedure linked to the saved payment; it does not copy a neighboring EOB date. An unknown submitted fee remains blank and does not block the otherwise reconciled claim. Missing linked dates still appear with the affected service codes in `CAN DOI CHIEU`. Updating this generated tab rebuilds it cleanly, repairing repeated headers left by older versions and grouping duplicate review records for the same patient/claim/amount.
+
 To create/retry a report explicitly in a known folder without scanning PDFs or creating any payment:
 
 ```powershell

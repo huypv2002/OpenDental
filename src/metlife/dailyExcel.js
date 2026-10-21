@@ -87,15 +87,24 @@ export async function reportEntry(pool,row){
     `SELECT pl.ProcNum,pl.ProcDate,pl.ProcFee,pl.ToothNum,pc.ProcCode,pc.Descript
      FROM procedurelog pl JOIN procedurecode pc ON pc.CodeNum=pl.CodeNum
      WHERE pl.PatNum=? AND pl.ProcStatus=2`,[row.PatNum]);
+  let linked=(details.splits||[]).map(s=>String(s.procNum)).filter(id=>id!=='undefined'&&id!=='0');
+  if(details.procedures.some(p=>!dateValue(p.date))&&!linked.length){
+    const [savedSplits]=await pool.execute('SELECT ProcNum AS ProcNum FROM paysplit WHERE PayNum=? AND PatNum=?',[row.PayNum,row.PatNum]);
+    linked=savedSplits.map(s=>String(s.ProcNum));
+  }
+  const linkedIds=new Set(linked);
   const procedures=details.procedures.map(p=>{
     const split=(details.splits||[]).filter(s=>s.code===p.code);
-    let candidates=procs.filter(r=>r.ProcCode===p.code&&isoDay(r.ProcDate)===p.date&&(!p.tooth||String(r.ToothNum)===p.tooth||/^Q0[1-4]$/.test(p.tooth)));
+    const hasDate=!!dateValue(p.date);
+    let candidates=procs.filter(r=>r.ProcCode===p.code&&(hasDate?isoDay(r.ProcDate)===p.date:linkedIds.has(String(r.ProcNum)))&&(!p.tooth||String(r.ToothNum)===p.tooth||/^Q0[1-4]$/.test(p.tooth)));
     if(candidates.length>1&&split.length)candidates=candidates.filter(r=>split.some(s=>String(s.procNum)===String(r.ProcNum)));
     const match=candidates.length===1?candidates[0]:null;
-    return {date:p.date,code:p.code,treatment:[p.tooth,p.surface,match?.Descript||p.description].filter(Boolean).join(' '),chargeCents:match?amount(match.ProcFee):null,billedCents:p.feeCents??null,paidCents:p.benefitCents??null};
+    return {date:hasDate?p.date:match?isoDay(match.ProcDate):null,code:p.code,treatment:[p.tooth,p.surface,match?.Descript||p.description].filter(Boolean).join(' '),chargeCents:match?amount(match.ProcFee):null,billedCents:p.feeCents??null,paidCents:p.benefitCents??null};
   });
   const paidCents=amount(row.TotalAmount);
-  if(!Number.isSafeInteger(paidCents)||paidCents<=0||procedures.some(p=>!dateValue(p.date)||!Number.isSafeInteger(p.paidCents)||!(Number.isSafeInteger(p.billedCents)||(details.ledgerRecovery&&p.billedCents===null)))||procedures.reduce((n,p)=>n+p.paidCents,0)!==paidCents)throw new Error(`Hồ sơ ${row.Id} thiếu dữ liệu hoặc lệch tổng tiền; chưa xuất Excel.`);
+  const missingDates=procedures.filter(p=>!dateValue(p.date)).map(p=>p.code);
+  if(missingDates.length)throw new Error(`Hồ sơ ${row.Id} chưa xác định được ngày dịch vụ của ${missingDates.join(', ')} từ dịch vụ liên kết với khoản thanh toán.`);
+  if(!Number.isSafeInteger(paidCents)||paidCents<=0||procedures.some(p=>!dateValue(p.date)||!Number.isSafeInteger(p.paidCents)||!(Number.isSafeInteger(p.billedCents)||p.billedCents===null))||procedures.reduce((n,p)=>n+p.paidCents,0)!==paidCents)throw new Error(`Hồ sơ ${row.Id} thiếu dữ liệu hoặc lệch tổng tiền; chưa xuất Excel.`);
   return {...historyIdentity(row,details),id:String(row.Id),patNum:row.PatNum,patientName:row.PatientName,carrier:details.carrier||'MetLife',paymentDate:details.paymentDate,paidCents,procedures};
 }
 
@@ -152,9 +161,11 @@ function syncReviews(wb,reviews){
   const values=reviews.map(r=>[String(r.PatNum),r.PatientName||'',r.ClaimNumber||'',r.credit,r.FileName||'',r.reason]);
   const existing=[];sheet?.eachRow((row,i)=>{if(i>1)existing.push(row.values.slice(1,7));});
   if(JSON.stringify(existing)===JSON.stringify(values))return false;
-  sheet ||= wb.addWorksheet('CAN DOI CHIEU');
+  // Replacing this generated sheet also repairs old files containing repeated headers.
+  // ExcelJS spliceRows does not reliably reset the append position of a cleared sheet.
+  if(sheet)wb.removeWorksheet(sheet.id);
+  sheet=wb.addWorksheet('CAN DOI CHIEU');
   sheet.state=reviews.length?'visible':'hidden';
-  if(sheet.rowCount)sheet.spliceRows(1,sheet.rowCount);
   sheet.columns=[12,30,24,16,32,65].map(width=>({width}));
   sheet.addRow(['PT NUM','PATIENT NAME','CLAIM','CREDIT','FILE','CẦN ĐỐI CHIẾU']);
   for(const value of values)sheet.addRow(value);
@@ -199,7 +210,7 @@ export async function appendDailyWorkbook(pool,rows,filePath,day,{replace=fs.ren
         // Only record/data errors are isolated. DB/filesystem failures still retry the export.
         if(!(e instanceof SyntaxError)&&!/^Hồ sơ |^Invalid money:|^Money exceeds supported range/.test(e.message))throw e;
         let credit=null;try{const value=amount(row.TotalAmount);if(value!==null)credit=value/100;}catch{}
-        reviews.push({...row,credit,reason:e instanceof SyntaxError?'Lịch sử lưu thiếu thông tin chi tiết.':/thiếu ngày hoặc dịch vụ/.test(e.message)?'Thiếu ngày thanh toán hoặc danh sách dịch vụ trong lịch sử.': 'Thông tin dịch vụ hoặc số tiền chưa đủ để xuất báo cáo. Cần đối chiếu hồ sơ gốc.'});
+        reviews.push({...row,credit,reason:e instanceof SyntaxError?'Lịch sử lưu thiếu thông tin chi tiết.':/^Hồ sơ /.test(e.message)?e.message.replace(/^Hồ sơ \S+ /,''):'Thông tin số tiền chưa hợp lệ; cần đối chiếu hồ sơ gốc.'});
         continue;
       }
       appendEntry(sheet,entry,meta.rowCount-1);
@@ -210,8 +221,9 @@ export async function appendDailyWorkbook(pool,rows,filePath,day,{replace=fs.ren
     const reviewSources=new Set();
     const unresolved=reviews.filter(row=>{
       const source=sourceIdentity(row);
-      if(known.has(`pay:${row.PayNum}`)||known.has(source)||reviewSources.has(source))return false;
-      reviewSources.add(source);return true;
+      const group=JSON.stringify([String(row.PatNum),String(row.ClaimNumber),row.credit]);
+      if(known.has(`pay:${row.PayNum}`)||known.has(source)||reviewSources.has(group))return false;
+      reviewSources.add(group);return true;
     });
     const reviewChanged=syncReviews(wb,unresolved);
     if(!appended&&!reviewChanged)return {filePath,appended:0,reviewCount:unresolved.length};
