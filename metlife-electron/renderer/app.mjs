@@ -207,8 +207,8 @@ function renderHistory() {
   tbody.innerHTML = filtered.map(item => {
     const isSuccess = item.Status === 'SUCCESS';
     const isSel = selectedHistoryItem && selectedHistoryItem.Id === item.Id;
-    const badgeCls = isSuccess ? 'success' : 'failed';
-    const badgeText = isSuccess ? '✓ Đã ghi OD' : '⚠️ Lỗi';
+    const badgeCls = isSuccess ? 'success' : item.Status==='REVIEW'?'neutral':'failed';
+    const badgeText = isSuccess ? '✓ Đã ghi OD' : item.Status==='REVIEW'?'Chờ đối chiếu':'⚠️ Lỗi';
     const amountStr = usd(Math.round(Number(item.TotalAmount || 0) * 100));
     const feeTag = item.FeesUpdated ? `<span class="badge fee-tag">${esc(item.FeesUpdated)}</span>` : '<span class="muted">—</span>';
     const dateFormatted = item.ProcessedAt ? item.ProcessedAt.slice(0, 16) : (item.CreatedAt ? item.CreatedAt.slice(0, 16) : '—');
@@ -266,6 +266,12 @@ function renderHistoryDetail(item) {
   try { if (item.Details) details = JSON.parse(item.Details); } catch {}
 
   const amountStr = usd(Math.round(Number(item.TotalAmount || 0) * 100));
+  if(!isSuccess){
+    const review=item.Status==='REVIEW';
+    if(badge){badge.textContent=review?'Chờ đối chiếu tài liệu':'Chưa hoàn tất';badge.className='badge neutral';}
+    dContent.innerHTML=`<div class="inspector-card"><h4>${review?'Cần đối chiếu ảnh gốc':'Chưa hoàn tất xử lý'}</h4><p>${review?'Ảnh hoặc thông tin dịch vụ chưa đủ rõ/khớp hồ sơ. Chưa tạo khoản thanh toán cho lượt này.':'Kiểm tra kết quả trong Open Dental trước khi xử lý lại.'}</p><p>${esc(customerMessage(item.Message||''))}</p></div>`;
+    return;
+  }
 
   // Build procedures breakdown table
   let procsTable = '';

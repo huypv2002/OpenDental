@@ -7,18 +7,23 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "metlife:inspect": "node scripts/inspect-metlife-db.mjs",
+    "liberty:inspect": "node scripts/inspect-liberty-eob.mjs",
     "test:metlife:database": "node --test src/metlife/directPayment.database.test.js",
     "metlife:configure": "node scripts/configure-metlife.mjs",
     "test:metlife": "node --test src/metlife/*.test.js src/liberty/*.test.js"
   },
   "dependencies": {
+    "@napi-rs/canvas": "1.0.11",
+    "@tesseract.js-data/eng": "1.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "multer": "^2.1.1",
     "mysql2": "^3.12.0",
     "nodemailer": "^8.0.7",
+    "pdf-lib": "1.17.1",
     "pdfjs-dist": "^6.4.299",
-    "stripe": "^22.2.0"
+    "stripe": "^22.2.0",
+    "tesseract.js": "7.0.0"
   }
 }

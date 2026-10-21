@@ -6,6 +6,7 @@ import { nativeSplitHashes } from './nativeSplitHashes.js';
 import { odSecurityLogHash } from './directPayment.js';
 import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
 import {documentInsert} from './documentImport.js';
+import {readInsuranceDocument,isInsuranceFile,isImageFile,imagePdf} from '../liberty/document.js';
 
 let isScanning = false;
 let autoScanIntervalId = null;
@@ -155,10 +156,10 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
     const splitFee = (item.benefitCents / 100).toFixed(2);
 
     // Find matching completed procedure
-    let match = procs.find(
+    let match = item.procNum ? procs.find(p=>p.ProcNum===item.procNum) : procs.find(
       (p) => p.ProcCode === item.code && (!item.date || (p.ProcDate?.toISOString?.()?.slice(0, 10) || String(p.ProcDate).slice(0, 10)) === item.date)
     );
-    if (!match) {
+    if (!match && !item.procNum) {
       match = procs.find((p) => p.ProcCode === item.code);
     }
 
@@ -172,7 +173,7 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
 
   // Any procedure not in EOB (or without benefit, like unsent bitewings/panoramic/periapicals): keep at 0.00
   for (const p of procs) {
-    const isEob = eobProcedures.some((ep) => ep.code === p.ProcCode && ep.benefitCents > 0);
+    const isEob = eobProcedures.some((ep) => (ep.procNum ? ep.procNum===p.ProcNum : ep.code === p.ProcCode) && ep.benefitCents > 0);
     if (!isEob) {
       await db.execute('UPDATE procedurelog SET ProcFee = 0.00 WHERE ProcNum = ?', [p.ProcNum]);
       await db.execute('UPDATE claimproc SET FeeBilled = 0.00 WHERE ProcNum = ?', [p.ProcNum]);
@@ -214,8 +215,12 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   const fileName = path.basename(filePath);
   console.log(`\n[Auto-Processor] Bắt đầu xử lý: ${fileName}...`);
 
-  const fileBytes = await fs.readFile(filePath);
-  const extracted = await extract(fileBytes);
+  if((await fs.stat(filePath)).size>30*1024*1024)throw Object.assign(new Error('Tài liệu EOB vượt quá 30 MB.'),{code:'EOB_REVIEW_REQUIRED'});
+  const sourceBytes = await fs.readFile(filePath);
+  let document;
+  try{document=await readInsuranceDocument(sourceBytes,fileName,{extract});}
+  catch(e){if(isImageFile(fileName))e.code='EOB_REVIEW_REQUIRED';throw e;}
+  const {extracted,pdfBytes:fileBytes}=document;
   const fullText = extracted.pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n');
 
   // Carrier auto-detection: Liberty vs MetLife
@@ -225,6 +230,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     return await processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted });
   }
 
+  if(extracted.ocr)throw Object.assign(new Error('Ảnh/PDF scan chưa xác nhận được là EOB Liberty; cần đối chiếu tài liệu gốc.'),{code:'EOB_REVIEW_REQUIRED'});
   const parsed = parseMetlife(extracted);
 
   if (parsed.errors && parsed.errors.length > 0) {
@@ -494,7 +500,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   };
 }
 
-export async function scanIncomingFolder(pool, incomingDir) {
+export async function scanIncomingFolder(pool, incomingDir, {processFile=processSinglePdf}={}) {
   if (isScanning) {
     return { status: 'busy', message: 'Quá trình quét đang diễn ra.' };
   }
@@ -529,14 +535,14 @@ export async function scanIncomingFolder(pool, incomingDir) {
         entries = await fs.readdir(cDir, { withFileTypes: true });
       } catch {}
 
-      let pdfs = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+      let pdfs = entries.filter((e) => e.isFile() && isInsuranceFile(e.name));
 
       if (pdfs.length === 0) {
         // Auto-recover files from ERRORS folder if main folder is empty
         try {
           const errorsDir = path.join(cDir, 'ERRORS');
           const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
-          const errPdfs = errEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+          const errPdfs = errEntries.filter((e) => e.isFile() && isInsuranceFile(e.name));
           if (errPdfs.length > 0) {
             console.log(`[Auto-Processor] Tìm thấy ${errPdfs.length} file trong ${errorsDir}. Đang tự động chuyển ra ngoài để thử lại...`);
             for (const errFile of errPdfs) {
@@ -546,12 +552,14 @@ export async function scanIncomingFolder(pool, incomingDir) {
               await fs.rename(src, dst);
             }
             entries = await fs.readdir(cDir, { withFileTypes: true });
-            pdfs = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+            pdfs = entries.filter((e) => e.isFile() && isInsuranceFile(e.name));
           }
         } catch {}
       }
 
       for (const p of pdfs) {
+        const stat=await fs.stat(path.join(cDir,p.name));
+        if(Date.now()-stat.mtimeMs<3000)continue;
         allPdfFiles.push({
           fullPath: path.join(cDir, p.name),
           fileName: p.name,
@@ -566,19 +574,19 @@ export async function scanIncomingFolder(pool, incomingDir) {
       return emptyRes;
     }
 
-    console.log(`[Auto-Processor] Phát hiện ${allPdfFiles.length} file PDF mới cần xử lý (MetLife / Liberty)...`);
+    console.log(`[Auto-Processor] Phát hiện ${allPdfFiles.length} file EOB (PDF/JPG/PNG) mới cần xử lý (MetLife / Liberty)...`);
     const results = [];
 
     for (const file of allPdfFiles) {
       try {
-        const res = await processSinglePdf(pool, file.fullPath);
+        const res = await processFile(pool, file.fullPath);
         results.push(res);
       } catch (err) {
         console.error(`[Auto-Processor] ✗ Lỗi khi xử lý ${file.fileName}:`, err.message);
 
         // Move to ERRORS
         try {
-          const errorsDir = path.join(file.dir, 'ERRORS');
+          const errorsDir = path.join(file.dir, err.code==='EOB_REVIEW_REQUIRED'?'REVIEW':'ERRORS');
           await fs.mkdir(errorsDir, { recursive: true });
           await fs.rename(file.fullPath, path.join(errorsDir, `${Date.now()}_${file.fileName}`));
         } catch {}
@@ -590,8 +598,8 @@ export async function scanIncomingFolder(pool, incomingDir) {
               FileName, FileHash, PatNum, PatientName, ClaimNumber, CheckNumber,
               TotalAmount, ProceduresCount, FeesUpdated, PayNum, DocNum, Status,
               Message, Details, ProcessedAt
-            ) VALUES (?, '', 0, 'Chưa rõ', '', '', 0.00, 0, '', 0, 0, 'FAILED', ?, '', NOW())`,
-            [file.fileName, `Lỗi xử lý tự động: ${err.message}`]
+            ) VALUES (?, '', 0, 'Chưa rõ', '', '', 0.00, 0, '', 0, 0, ?, ?, '', NOW())`,
+            [file.fileName,err.code==='EOB_REVIEW_REQUIRED'?'REVIEW':'FAILED',`Lỗi xử lý tự động: ${err.message}`]
           );
         } catch {}
 
@@ -625,22 +633,24 @@ export async function getProcessorStatus(pool, incomingDir) {
   let incomingCount = 0;
   let processedCount = 0;
   let errorsCount = 0;
+  let reviewCount = 0;
 
   for (const cDir of candidateDirs) {
     try {
       const entries = await fs.readdir(cDir, { withFileTypes: true });
-      incomingCount += entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
+      incomingCount += entries.filter((e) => e.isFile() && isInsuranceFile(e.name)).length;
     } catch {}
 
     try {
       const pEntries = await fs.readdir(path.join(cDir, 'PROCESSED'), { withFileTypes: true });
-      processedCount += pEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
+      processedCount += pEntries.filter((e) => e.isFile() && isInsuranceFile(e.name)).length;
     } catch {}
 
     try {
       const eEntries = await fs.readdir(path.join(cDir, 'ERRORS'), { withFileTypes: true });
-      errorsCount += eEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).length;
+      errorsCount += eEntries.filter((e) => e.isFile() && isInsuranceFile(e.name)).length;
     } catch {}
+    try{reviewCount+=(await fs.readdir(path.join(cDir,'REVIEW'),{withFileTypes:true})).filter(e=>e.isFile()&&isInsuranceFile(e.name)).length;}catch{}
   }
 
   let historyStats = { total: 0, success: 0, failed: 0, totalAmount: '0.00' };
@@ -673,7 +683,8 @@ export async function getProcessorStatus(pool, incomingDir) {
     counts: {
       incoming: incomingCount,
       processed: processedCount,
-      errors: errorsCount
+      errors: errorsCount,
+      review: reviewCount
     },
     historyStats,
     serverTime: new Date().toISOString()
@@ -694,7 +705,7 @@ export async function retryErrorFiles(pool, incomingDir) {
     const errorsDir = path.join(cDir, 'ERRORS');
     try {
       const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
-      const errPdfs = errEntries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.pdf'));
+      const errPdfs = errEntries.filter((e) => e.isFile() && isInsuranceFile(e.name));
       for (const errFile of errPdfs) {
         const cleanName = errFile.name.replace(/^\d{13}_/, '');
         const src = path.join(errorsDir, errFile.name);
@@ -709,6 +720,10 @@ export async function retryErrorFiles(pool, incomingDir) {
   return { movedCount: moved, scanResult };
 }
 
+async function historyPdf(filename,bytes){
+ if(isImageFile(filename))return {filename:filename.replace(/\.(jpe?g|png)$/i,'.pdf'),bytes:await imagePdf(bytes)};
+ return {filename,bytes};
+}
 export async function getHistoryPdf(pool, historyId, incomingDir) {
   const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
   const [rows] = await pool.execute(
@@ -739,7 +754,7 @@ export async function getHistoryPdf(pool, historyId, incomingDir) {
           const firstLetter = (folder[0] || 'P').toUpperCase();
           const filePath = path.join(root, firstLetter, folder, fileName);
           const bytes = await fs.readFile(filePath);
-          return { filename: fileName, bytes };
+          return await historyPdf(fileName,bytes);
         }
       }
     } catch (e) {
@@ -753,23 +768,19 @@ export async function getHistoryPdf(pool, historyId, incomingDir) {
   if (details?.archivePath) {
     try {
       const bytes = await fs.readFile(details.archivePath);
-      return { filename: item.FileName, bytes };
+      return await historyPdf(item.FileName,bytes);
     } catch {}
   }
 
   // 3. Try checking PROCESSED, ERRORS, incomingDir
-  const searchDirs = [
-    path.join(dir, 'PROCESSED'),
-    path.join(dir, 'ERRORS'),
-    dir
-  ];
+  const searchDirs = [dir,path.join(path.dirname(dir),'LIBERTY')].flatMap(base=>['PROCESSED','ERRORS','REVIEW',''].map(name=>path.join(base,name)));
   for (const sDir of searchDirs) {
     try {
       const files = await fs.readdir(sDir);
       const match = files.find((f) => f === item.FileName || f.endsWith('_' + item.FileName) || f.endsWith(item.FileName));
       if (match) {
         const bytes = await fs.readFile(path.join(sDir, match));
-        return { filename: item.FileName, bytes };
+        return await historyPdf(item.FileName,bytes);
       }
     } catch {}
   }
@@ -785,7 +796,7 @@ export function startAutoProcessor({ pool, incomingDir, intervalMs = 30000 }) {
   console.log(`[Insurance Auto-Processor] Khởi chạy bộ quét EOB tự động (Hỗ trợ cả MetLife & LIBERTY Dental Plan)`);
   console.log(`[Insurance Auto-Processor] Thư mục theo dõi:`);
   console.log(`  - MetLife: ${dir}`);
-  console.log(`  - Liberty: ${libertyDir}`);
+  console.log(`  - Liberty: ${libertyDir} (PDF, JPG, JPEG, PNG)`);
   console.log(`  - Chu kỳ quét: ${intervalMs / 1000}s/lần`);
 
   // Ensure folders exist so staff can easily see them in Explorer

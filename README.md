@@ -2,6 +2,24 @@
 
 Small Node.js API for reading available appointment slots and creating website bookings in Open Dental. WordPress should call this API instead of connecting directly to MySQL.
 
+## Liberty EOB: PDF and images
+
+The insurance scanner accepts `.pdf`, `.jpg`, `.jpeg`, and `.png` in the existing `LIBERTY` folder alongside the configured MetLife incoming folder. PDFs with embedded text retain their existing extraction path. Image-only PDFs (up to 10 pages) and images use local English OCR with language files installed through npm; document contents are not sent to an OCR service. Maximum source size: 30 MB; maximum image/page size: 25 million pixels. Clear, upright images with the complete payment table are required.
+
+After updating the server source, run `npm ci` before restarting `npm start`. No OCR API key or separate Tesseract installation is needed. The first OCR run can take longer than a normal PDF read.
+
+Before processing an OCR document, the scanner checks service dates/codes, row sequence, all claim column totals, the overall net payment, and every patient's completed procedures. Missing or ambiguous information moves the source to `REVIEW`, shown as “Chờ đối chiếu”; these files are not automatically retried. Resolve the mismatch against the original document and OD before moving a reviewed source back to the incoming folder. Tiny Group text is retained as unverified raw OCR, not used as a confirmed identifier. OCR descriptions may still contain spelling errors; consult the original for exact wording.
+
+The original image is preserved in `PROCESSED` after successful processing. A PDF copy is imported into each matched patient's Finished Claims using the existing claim number, payment date and amount naming. The history viewer can also display the archived image as a PDF.
+
+To inspect extraction without connecting to OD or changing data:
+
+```powershell
+node scripts/inspect-liberty-eob.mjs 'C:\path\EOB.jpg' --json liberty-check.json --text liberty-text.txt
+```
+
+Output files contain patient information; store them privately. Existing output files are not overwritten. Inspecting does not submit a payment. For an optional local image regression, set `LIBERTY_TEST_IMAGE` to a fixture path before running `npm run test:metlife`; no patient image is bundled with the source.
+
 ## Endpoints
 
 - `GET /health` checks app and database connectivity.

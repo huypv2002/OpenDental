@@ -245,6 +245,13 @@ export function parseLiberty(extracted) {
     });
   }
 
+  if(extracted.ocr){
+    // Tiny plan/group text is not used as a confirmed financial identifier.
+    // Preserve the raw OCR separately instead of presenting a misread ID as verified.
+    for(const claim of claims){claim.plan.rawOcrGroup=claim.plan.group;claim.plan.group='';}
+    warnings.push('Group trong ảnh chưa được xác minh; xem tài liệu gốc.');
+  }
+
   // 3. Grand Totals Verification
   const totalClaimsPaidCents = claims.reduce((sum, c) => sum + c.totals.planPaidCents, 0);
   if (netPaymentCents > 0 && totalClaimsPaidCents !== netPaymentCents) {

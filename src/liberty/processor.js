@@ -2,12 +2,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { parseLiberty } from './parser.js';
+import {validateLibertyForPosting,matchLibertyProcedures} from './validation.js';
 import {claimPaymentFields} from '../metlife/paymentFormat.js';
 import { nativeSplitHashes } from '../metlife/nativeSplitHashes.js';
 import { odSecurityLogHash } from '../metlife/directPayment.js';
 import { autoPopulateProcedureFees, importPdfToAtoZ } from '../metlife/autoProcessor.js';
 
-export async function resolveLibertyPatient(pool, { claim }) {
+export async function resolveLibertyPatient(pool, { claim, strictMember=false }) {
   const { lastName, firstName, memberId } = claim.patient;
 
   // 1. Try matching by SubscriberID in inssub
@@ -18,9 +19,9 @@ export async function resolveLibertyPatient(pool, { claim }) {
        FROM patient p
        JOIN patplan pp ON pp.PatNum = p.PatNum
        JOIN inssub s ON s.InsSubNum = pp.InsSubNum
-       WHERE s.SubscriberID LIKE ? OR s.SubscriberID LIKE ?
-       ORDER BY p.PatNum ASC LIMIT 1`,
-      [`%${memberId}%`, `%${cleanId}%`]
+       WHERE (s.SubscriberID = ? OR s.SubscriberID = ?) AND LOWER(TRIM(p.LName)) = LOWER(?) AND LOWER(TRIM(p.FName)) = LOWER(?)
+       ORDER BY p.PatNum ASC LIMIT 2`,
+      [memberId,cleanId,lastName,firstName]
     );
     if (matches.length === 1) {
       return matches[0];
@@ -28,27 +29,13 @@ export async function resolveLibertyPatient(pool, { claim }) {
   }
 
   // 2. Try matching by Exact Last Name + First Name
-  if (lastName && firstName) {
+  if (!strictMember && lastName && firstName) {
     const [matches] = await pool.execute(
       `SELECT p.PatNum, p.FName, p.LName, p.Birthdate, p.ClinicNum, p.PriProv, p.ImageFolder, p.ChartNumber
        FROM patient p
-       WHERE LOWER(p.LName) = LOWER(?) AND LOWER(p.FName) LIKE LOWER(?)
+       WHERE LOWER(p.LName) = LOWER(?) AND LOWER(p.FName) = LOWER(?)
        ORDER BY p.PatNum ASC LIMIT 2`,
-      [lastName, `${firstName}%`]
-    );
-    if (matches.length === 1) {
-      return matches[0];
-    }
-  }
-
-  // 3. Fallback: Search by Last Name only if unique
-  if (lastName) {
-    const [matches] = await pool.execute(
-      `SELECT p.PatNum, p.FName, p.LName, p.Birthdate, p.ClinicNum, p.PriProv, p.ImageFolder, p.ChartNumber
-       FROM patient p
-       WHERE LOWER(p.LName) = LOWER(?)
-       ORDER BY p.PatNum ASC LIMIT 2`,
-      [lastName]
+      [lastName, firstName]
     );
     if (matches.length === 1) {
       return matches[0];
@@ -58,7 +45,19 @@ export async function resolveLibertyPatient(pool, { claim }) {
   throw new Error(`Không tìm thấy bệnh nhân trong Open Dental cho Liberty Claim #${claim.claimNumber} (Bệnh nhân: ${lastName}, ${firstName} - Member ID: ${memberId})`);
 }
 
-export async function prepareLibertyClaimPayload(pool, { claim, check, patient }) {
+export async function libertyProcedures(pool,patNum){
+  const [dbProcs] = await pool.execute(
+    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurelog.ToothNum, procedurecode.ProcCode, procedurecode.Descript
+     FROM procedurelog
+     JOIN procedurecode ON procedurecode.CodeNum = procedurelog.CodeNum
+     WHERE procedurelog.PatNum = ? AND procedurelog.ProcStatus = 2`,
+    [patNum]
+  );
+
+  return dbProcs;
+}
+
+export async function prepareLibertyClaimPayload(pool, { claim, check, patient, dbProcs: suppliedProcs }) {
   const patNum = patient.PatNum;
   const clinicNum = patient.ClinicNum || 0;
   const provNum = patient.PriProv || 1;
@@ -67,16 +66,12 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient }
   const checkNumber = check.number;
   const groupNumber = claim.plan.group || '';
 
-  // Get completed procedures for this patient
-  const [dbProcs] = await pool.execute(
-    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurecode.ProcCode, procedurecode.Descript
-     FROM procedurelog
-     JOIN procedurecode ON procedurecode.CodeNum = procedurelog.CodeNum
-     WHERE procedurelog.PatNum = ? AND procedurelog.ProcStatus = 2`,
-    [patNum]
-  );
+  const dbProcs = suppliedProcs || await libertyProcedures(pool,patNum);
+  const matches = matchLibertyProcedures(dbProcs,claim);
+  const claimDates = new Set(claim.procedures.map(p=>p.date));
 
   const eobProcedures = claim.procedures.map((p) => ({
+    procNum: matches.get(p)?.ProcNum,
     code: p.code,
     date: p.date,
     benefitCents: p.benefitCents,
@@ -87,7 +82,7 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient }
   const updatedFees = await autoPopulateProcedureFees(pool, {
     patNum,
     eobProcedures,
-    dbProcs
+    dbProcs:dbProcs.filter(p=>claimDates.has(p.ProcDate?.toISOString?.().slice(0,10)||String(p.ProcDate).slice(0,10)))
   });
 
   const splitsPlan = [];
@@ -95,12 +90,7 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient }
     if (!eobProc.benefitCents || eobProc.benefitCents <= 0) continue;
     const splitAmount = (eobProc.benefitCents / 100).toFixed(2);
 
-    let match = dbProcs.find(
-      (p) => p.ProcCode === eobProc.code && (!eobProc.date || p.ProcDate?.toISOString?.()?.slice(0, 10) === eobProc.date)
-    );
-    if (!match) {
-      match = dbProcs.find((p) => p.ProcCode === eobProc.code);
-    }
+    const match = matches.get(eobProc);
 
     splitsPlan.push({
       ProcNum: match ? match.ProcNum : 0,
@@ -144,9 +134,15 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient }
 }
 
 export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, log = console.log } = {}) {
-  const parsed = parseLiberty(extracted);
-  if (parsed.errors && parsed.errors.length > 0) {
-    throw new Error(`Lỗi định dạng Liberty: ${parsed.errors.join('; ')}`);
+  const parsed = validateLibertyForPosting(parseLiberty(extracted),extracted);
+  const preflight=new Map();
+  if(extracted.ocr){
+    // Resolve every patient/procedure before importing or changing fees for the first claim.
+    try{for(const claim of parsed.claims){
+      const patient=await resolveLibertyPatient(pool,{claim,strictMember:true});
+      const dbProcs=await libertyProcedures(pool,patient.PatNum);
+      matchLibertyProcedures(dbProcs,claim);preflight.set(claim.claimNumber,{patient,dbProcs});
+    }}catch(e){e.code='EOB_REVIEW_REQUIRED';throw e;}
   }
 
   log(`[Liberty Auto-Processor] Phát hiện ${parsed.claimsCount} claim trong check #${parsed.check.number}`);
@@ -160,7 +156,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     log(`[Liberty Auto-Processor] Đang xử lý claim #${claim.claimNumber} cho bệnh nhân ${claim.patient.lastName}, ${claim.patient.firstName}...`);
 
     log(`[Liberty Auto-Processor] Claim #${claim.claimNumber}: đối chiếu bệnh nhân...`);
-    const patient = await resolveLibertyPatient(pool, { claim });
+    const patient = preflight.get(claim.claimNumber)?.patient || await resolveLibertyPatient(pool, { claim });
     const patNum = patient.PatNum;
     const clinicNum = patient.ClinicNum || 0;
     const claimNumber = claim.claimNumber;
@@ -184,7 +180,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
 
     // Prepare payload
     log(`[Liberty Auto-Processor] Claim #${claimNumber}: đối chiếu dịch vụ, cập nhật phí và chuẩn bị phân bổ...`);
-    const payload = await preparePayload(pool, { claim, check: parsed.check, patient });
+    const payload = await preparePayload(pool, { claim, check: parsed.check, patient, dbProcs:preflight.get(claim.claimNumber)?.dbProcs });
 
     // Select Payment Type
     log(`[Liberty Auto-Processor] Claim #${claimNumber}: chọn loại thanh toán...`);
@@ -325,6 +321,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     // Record in history table
     const details = JSON.stringify({
       carrier: 'LIBERTY Dental Plan',
+      sourceFormat: extracted.sourceFormat||'pdf',
+      extractedText: extracted.ocr?parsed.text:undefined,
       archivePath,
       patient: `${patient.LName}, ${patient.FName}`,
       patNum,
