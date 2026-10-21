@@ -27,6 +27,11 @@ function nextDay(day){return new Date(+dateValue(day)+86400000).toISOString().sl
 function isoDay(value){return value instanceof Date?localReportDay(value):String(value||'').slice(0,10);}
 function amount(value){return value===null||value===undefined||value===''?null:cents(value);}
 const fill=argb=>({type:'pattern',pattern:'solid',fgColor:{argb}});
+function historyDetails(row){
+  const details=JSON.parse(row.Details||'{}');
+  if(!details||typeof details!=='object'||Array.isArray(details))throw new Error(`Hồ sơ ${row.Id} thiếu thông tin chi tiết trong lịch sử.`);
+  return details;
+}
 
 export function historyIdentity(row,details){
   const carrier=details.carrier||'MetLife';
@@ -37,7 +42,7 @@ export function historyIdentity(row,details){
 
 export async function reportEntry(pool,row){
   if(row.Status!=='SUCCESS'||!Number(row.PayNum))throw new Error('Chỉ xuất hồ sơ đã lưu thành công.');
-  const details=JSON.parse(row.Details||'{}');
+  const details=historyDetails(row);
   if(!dateValue(details.paymentDate)||!Array.isArray(details.procedures)||!details.procedures.length)throw new Error(`Hồ sơ ${row.Id} thiếu ngày hoặc dịch vụ để xuất Excel.`);
   const [procs]=await pool.execute(
     `SELECT pl.ProcNum,pl.ProcDate,pl.ProcFee,pl.ToothNum,pc.ProcCode,pc.Descript
@@ -102,10 +107,26 @@ function appendEntry(sheet,entry,index){
   sheet.autoFilter=`A1:O${end}`;sheet.pageSetup.printArea=`A1:O${end}`;
 }
 
-function updateSummary(wb,meta,day){
+function syncReviews(wb,reviews){
+  let sheet=wb.getWorksheet('CAN DOI CHIEU');
+  if(!sheet&&!reviews.length)return false;
+  const values=reviews.map(r=>[String(r.PatNum),r.PatientName||'',r.ClaimNumber||'',r.credit,r.FileName||'',r.reason]);
+  const existing=[];sheet?.eachRow((row,i)=>{if(i>1)existing.push(row.values.slice(1,7));});
+  if(JSON.stringify(existing)===JSON.stringify(values))return false;
+  sheet ||= wb.addWorksheet('CAN DOI CHIEU');
+  sheet.state=reviews.length?'visible':'hidden';
+  if(sheet.rowCount)sheet.spliceRows(1,sheet.rowCount);
+  sheet.columns=[12,30,24,16,32,65].map(width=>({width}));
+  sheet.addRow(['PT NUM','PATIENT NAME','CLAIM','CREDIT','FILE','CẦN ĐỐI CHIẾU']);
+  for(const value of values)sheet.addRow(value);
+  sheet.eachRow((row,i)=>{row.height=32;row.eachCell(cell=>{cell.font={name:'Arial',size:10,bold:i===1};cell.alignment={vertical:'middle',wrapText:true};});if(i>1)row.getCell(4).numFmt=moneyFormat;});
+  return true;
+}
+
+function updateSummary(wb,meta,day,reviewCount=0){
   const rows=[];meta.eachRow((row,i)=>{if(i>1)rows.push(row.values);});
   const sheet=wb.getWorksheet('TONG HOP');sheet.columns=[{width:36},{width:24}];
-  const values=[['NGÀY QUÉT',dateValue(day)],['SỐ FILE KHÔNG TRÙNG',new Set(rows.map(r=>r[4])).size],['SỐ HỒ SƠ ĐÃ LƯU',rows.length],['TỔNG THANH TOÁN',rows.reduce((n,r)=>n+Number(r[6]),0)/100]];
+  const values=[['NGÀY QUÉT',dateValue(day)],['SỐ FILE KHÔNG TRÙNG',new Set(rows.map(r=>r[4])).size],['SỐ HỒ SƠ ĐÃ XUẤT',rows.length],['TỔNG THANH TOÁN ĐÃ XUẤT',rows.reduce((n,r)=>n+Number(r[6]),0)/100],['HỒ SƠ CHỜ ĐỐI CHIẾU',reviewCount]];
   for(let i=0;i<values.length;i++){
     const row=sheet.getRow(i+1);row.values=values[i];row.height=26;
     row.eachCell(cell=>{cell.font={name:'Arial',size:11};cell.alignment={vertical:'middle'};});row.getCell(1).font={name:'Arial',size:11,bold:true};
@@ -123,25 +144,37 @@ export async function appendDailyWorkbook(pool,rows,filePath,day,{replace=fs.ren
     try{original=await fs.stat(filePath);wb=new ExcelJS.Workbook();await wb.xlsx.readFile(filePath);}catch(e){if(e.code!=='ENOENT')throw e;wb=newWorkbook();}
     const {sheet,meta}=verifyWorkbook(wb),known=new Set();
     meta.eachRow((r,i)=>{if(i>1)for(const c of [2,3,5])known.add(String(r.getCell(c).value));});
-    let appended=0;
+    let appended=0;const reviews=[];
     for(const row of rows){
       if(row.Status!=='SUCCESS'||!Number(row.PayNum))continue;
-      const identity=historyIdentity(row,JSON.parse(row.Details||'{}'));
-      if([identity.paymentKey,identity.claimKey,identity.sourceKey].some(k=>known.has(k)))continue;
-      const entry=await reportEntry(pool,row);
+      if(known.has(`pay:${row.PayNum}`))continue;
+      let entry;
+      try{
+        const identity=historyIdentity(row,historyDetails(row));
+        if([identity.paymentKey,identity.claimKey,identity.sourceKey].some(k=>known.has(k)))continue;
+        entry=await reportEntry(pool,row);
+      }catch(e){
+        // Only record/data errors are isolated. DB/filesystem failures still retry the export.
+        if(!(e instanceof SyntaxError)&&!/^Hồ sơ |^Invalid money:|^Money exceeds supported range/.test(e.message))throw e;
+        let credit=null;try{const value=amount(row.TotalAmount);if(value!==null)credit=value/100;}catch{}
+        reviews.push({...row,credit,reason:e instanceof SyntaxError?'Lịch sử lưu thiếu thông tin chi tiết.':/thiếu ngày hoặc dịch vụ/.test(e.message)?'Thiếu ngày thanh toán hoặc danh sách dịch vụ trong lịch sử.': 'Thông tin dịch vụ hoặc số tiền chưa đủ để xuất báo cáo. Cần đối chiếu hồ sơ gốc.'});
+        continue;
+      }
       appendEntry(sheet,entry,meta.rowCount-1);
       meta.addRow([entry.id,entry.paymentKey,entry.claimKey,entry.fileKey,entry.sourceKey,entry.paidCents]);
       for(const key of [entry.paymentKey,entry.claimKey,entry.sourceKey])known.add(key);
       appended++;
     }
-    if(!appended)return {filePath,appended:0};
-    updateSummary(wb,meta,day);
+    const unresolved=reviews.filter(row=>!known.has(`pay:${row.PayNum}`));
+    const reviewChanged=syncReviews(wb,unresolved);
+    if(!appended&&!reviewChanged)return {filePath,appended:0,reviewCount:unresolved.length};
+    updateSummary(wb,meta,day,unresolved.length);
     tmp=path.join(path.dirname(filePath),`.${day}.${randomUUID()}.tmp`);
     await fs.writeFile(tmp,Buffer.from(await wb.xlsx.writeBuffer()),{flag:'wx',mode:0o600});
     const current=await fs.stat(filePath).catch(e=>{if(e.code==='ENOENT')return null;throw e;});
     if(original?.mtimeMs!==current?.mtimeMs||original?.size!==current?.size)throw new Error('File Excel vừa được thay đổi; sẽ thử ghi lại ở lượt quét sau.');
     await replace(tmp,filePath);tmp=null;
-    return {filePath,appended};
+    return {filePath,appended,reviewCount:unresolved.length};
   }finally{if(tmp)await fs.rm(tmp,{force:true}).catch(()=>{});await release();}
 }
 
@@ -149,7 +182,7 @@ export async function exportDailyReports(pool,incomingDir,{now=new Date(),starte
   const dir=outputDir,pendingDir=path.join(dir,'.pending');
   const days=new Set([localReportDay(now),localReportDay(startedAt)]);
   try{for(const name of await fs.readdir(pendingDir))if(DATE.test(name)&&dateValue(name))days.add(name);}catch(e){if(e.code!=='ENOENT')throw e;}
-  const reports=[],errors=[];
+  const reports=[],errors=[],reviews=[];
   for(const day of [...days].sort()){
     try{
       await fs.mkdir(pendingDir,{recursive:true});
@@ -162,9 +195,14 @@ export async function exportDailyReports(pool,incomingDir,{now=new Date(),starte
       if(rows.length){
         const result=await writeWorkbook(pool,rows,path.join(dir,`${day}.xlsx`),day);reports.push(result);
         if(result.appended)console.log(`[Excel] Đã ghi ${result.appended} hồ sơ vào ${result.filePath}`);
+        if(result.reviewCount){
+          reviews.push({day,count:result.reviewCount});
+          console.warn(`[Excel] Báo cáo ${day}: ${result.reviewCount} hồ sơ thiếu dữ liệu nằm trong tab CAN DOI CHIEU. Các hồ sơ đủ dữ liệu vẫn được xuất; không chạy lại thanh toán.`);
+          continue;
+        }
       }
       await fs.rm(path.join(pendingDir,day),{force:true});
     }catch(e){errors.push({day,message:e.message});console.warn(`[Excel] Chưa cập nhật báo cáo ${day}: ${e.message}. Sẽ thử lại; không chạy lại thanh toán.`);}
   }
-  return {status:errors.length?'pending':'ok',reports,errors};
+  return {status:errors.length?'pending':reviews.length?'review':'ok',reports,errors,reviews};
 }

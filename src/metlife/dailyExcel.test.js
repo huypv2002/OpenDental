@@ -68,13 +68,49 @@ test('an open/locked Excel workbook keeps the old file and retries its original 
   }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });
 
-test('unknown charges stay blank rather than manufacturing zero; invalid money blocks export',async()=>{
+test('unknown charges stay blank; a bad history record is isolated without blocking valid records',async()=>{
   const f=await fixture();
   try{
     const pool={execute:async()=>[[]]};await appendDailyWorkbook(pool,[sampleRows()[0]],f.file,day);
     const s=(await load(f.file)).getWorksheet('PAYMENTS');for(const cell of ['F2','I2','J2'])assert.equal(s.getCell(cell).value,null);
     const row=sampleRows()[1];row.Details=JSON.stringify({...JSON.parse(row.Details),procedures:[{code:'D0150',date:'2026-09-17',feeCents:30000,benefitCents:1}]});
-    const before=await fs.readFile(f.file);await assert.rejects(appendDailyWorkbook(samplePool(),[row],f.file,day),/lệch tổng tiền/);assert.deepEqual(await fs.readFile(f.file),before);
+    const result=await appendDailyWorkbook(samplePool(),[row],f.file,day);assert.equal(result.reviewCount,1);
+    const wb=await load(f.file);assert.equal(wb.getWorksheet('CAN DOI CHIEU').getCell('C2').value,row.ClaimNumber);assert.equal(wb.getWorksheet('PAYMENTS').getCell('H2').value,1483);
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('legacy history with missing date/services no longer rolls back the new successful payment report',async()=>{
+  const f=await fixture(),incoming=path.join(f.root,'METLIFE');
+  try{
+    const valid=sampleRows()[0],legacy={...sampleRows()[1],Id:18,Details:'{}'};
+    const pool=samplePool([legacy,valid]);
+    const result=await exportDailyReports(pool,incoming,{now,outputDir:f.root});
+    assert.equal(result.status,'review');assert.equal(result.reports[0].appended,1);
+    let wb=await load(f.file);assert.equal(wb.getWorksheet('PAYMENTS').getCell('H2').value,1483);assert.equal(wb.getWorksheet('CAN DOI CHIEU').getCell('D2').value,250);assert.equal(wb.getWorksheet('TONG HOP').getCell('B5').value,1);
+    const before=await fs.readFile(f.file);await exportDailyReports(pool,incoming,{now,outputDir:f.root});assert.deepEqual(await fs.readFile(f.file),before);
+    const fixed=sampleRows()[1];fixed.Id=18;
+    await exportDailyReports(samplePool([fixed,valid]),incoming,{now,outputDir:f.root});
+    wb=await load(f.file);assert.equal(wb.getWorksheet('TONG HOP').getCell('B3').value,2);assert.equal(wb.getWorksheet('TONG HOP').getCell('B5').value,0);assert.equal(wb.getWorksheet('CAN DOI CHIEU').state,'hidden');
+    assert.deepEqual(await fs.readdir(path.join(f.root,'.pending')),[]);
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('database failures still preserve the previous report rather than being called missing data',async()=>{
+  const f=await fixture();
+  try{
+    await appendDailyWorkbook(samplePool(),[sampleRows()[0]],f.file,day);const before=await fs.readFile(f.file);
+    await assert.rejects(appendDailyWorkbook({execute:async()=>{throw Error('DB unavailable');}},[sampleRows()[1]],f.file,day),/DB unavailable/);
+    assert.deepEqual(await fs.readFile(f.file),before);
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+});
+
+test('null/malformed legacy details are listed for review without inventing an unknown payment amount',async()=>{
+  const f=await fixture();
+  try{
+    const valid=sampleRows()[0],bad=['null','{bad','[]'].map((Details,i)=>({...sampleRows()[1],Id:18+i,PayNum:200+i,Details,TotalAmount:null}));
+    const result=await appendDailyWorkbook(samplePool(),[...bad,valid],f.file,day);
+    assert.equal(result.appended,1);assert.equal(result.reviewCount,3);
+    const wb=await load(f.file);assert.equal(wb.getWorksheet('CAN DOI CHIEU').getCell('D2').value,null);assert.equal(wb.getWorksheet('PAYMENTS').getCell('H2').value,1483);
   }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });
 

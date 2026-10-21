@@ -28,6 +28,8 @@ After each automatic scan, successfully saved MetLife and Liberty claims are app
 
 `TONG HOP` counts unique source files, saved claims, and their total payment. A multi-patient EOB counts as one file and multiple claims. Persisted payment, claim and source identities prevent re-scans or renamed copies from adding duplicate groups; a hidden internal sheet stores those identities. Existing exported groups and staff cell edits are preserved when new groups are appended. Keep the daily workbook's main header and internal sheet intact.
 
+Legacy successful history entries can lack the payment date or EOB service details. Those entries appear separately in `CAN DOI CHIEU`, with the known patient/claim/payment information and the missing-data reason. Valid entries still export to `PAYMENTS`. `TONG HOP` distinguishes exported records/totals from the count awaiting review. Pending dates remain eligible for report-only recovery; correcting the history data lets the next scan append a recovered record once and clear its review entry. This does not recreate the OD payment or invent missing service data.
+
 Excel export reads successful history and procedure data without creating or repeating payments. If Excel is open or the share is unavailable, the previous workbook is retained and export retries on the next scan. Pending days are remembered in `EXCEL\.pending`, including across restarts and midnight. The scanner writes a temporary workbook and replaces the daily file only after it is complete; concurrent tool instances use a report lock. Close the workbook in Excel to allow a pending update to finish. Console messages starting `[Excel]` report export results separately from payment results.
 
 ## Endpoints
