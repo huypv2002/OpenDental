@@ -7,6 +7,7 @@ import { odSecurityLogHash } from './directPayment.js';
 import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
 import {documentInsert} from './documentImport.js';
 import {readInsuranceDocument,isInsuranceFile,isImageFile,imagePdf} from '../liberty/document.js';
+import {exportDailyReports} from './dailyExcel.js';
 
 let isScanning = false;
 let autoScanIntervalId = null;
@@ -500,7 +501,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   };
 }
 
-export async function scanIncomingFolder(pool, incomingDir, {processFile=processSinglePdf}={}) {
+export async function scanIncomingFolder(pool, incomingDir, {processFile=processSinglePdf,exportReports=exportDailyReports}={}) {
   if (isScanning) {
     return { status: 'busy', message: 'Quá trình quét đang diễn ra.' };
   }
@@ -617,7 +618,11 @@ export async function scanIncomingFolder(pool, incomingDir, {processFile=process
     lastScanResult = finalRes;
     return finalRes;
   } finally {
-    isScanning = false;
+    try{
+      const excel=await exportReports(pool,incomingDir,{startedAt:new Date(lastScanTime)});
+      if(lastScanResult)lastScanResult.excel=excel;
+    }catch(e){console.warn(`[Excel] Chưa cập nhật báo cáo: ${e.message}. Thanh toán đã lưu không bị chạy lại.`);}
+    finally{isScanning = false;}
   }
 }
 

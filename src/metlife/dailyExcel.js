@@ -1,0 +1,170 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {randomUUID} from 'node:crypto';
+import ExcelJS from 'exceljs';
+import lockfile from 'proper-lockfile';
+import {cents} from './parser.js';
+
+export const REPORT_HEADERS=['DATE','PT NUM','PATIENT NAME','CODE','TREATMENT PLAN','CHARGE','PAYMENT','CREDIT','BALANCE','TOTAL','INSUR BILL','INSUR PAY','STATUS','INSURANCE','INSUR PAID DAY'];
+const META='_EXPORT_LOG';
+const DATE=/^\d{4}-\d{2}-\d{2}$/;
+const moneyFormat='#,##0.00';
+export function localReportDay(now=new Date()){
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+}
+export function excelOutputDir(incomingDir,paths=path){
+  const parent=paths.dirname(incomingDir);
+  const share=paths.basename(parent).toUpperCase()==='INSURANCE CLAIM'?paths.dirname(parent):parent;
+  return paths.join(share,'EXCEL');
+}
+function dateValue(value){
+  const day=String(value||'').slice(0,10);
+  if(!DATE.test(day))return null;
+  const result=new Date(`${day}T00:00:00Z`);
+  return Number.isFinite(+result)&&result.toISOString().slice(0,10)===day?result:null;
+}
+function nextDay(day){return new Date(+dateValue(day)+86400000).toISOString().slice(0,10);}
+function isoDay(value){return value instanceof Date?localReportDay(value):String(value||'').slice(0,10);}
+function amount(value){return value===null||value===undefined||value===''?null:cents(value);}
+const fill=argb=>({type:'pattern',pattern:'solid',fgColor:{argb}});
+
+export function historyIdentity(row,details){
+  const carrier=details.carrier||'MetLife';
+  const fileKey=row.FileHash?`hash:${row.FileHash}`:`file:${String(row.FileName).toLowerCase()}`;
+  const claimKey=JSON.stringify([carrier.toUpperCase(),String(row.PatNum),String(row.ClaimNumber).replace(/\s+/g,' ').trim(),details.paymentDate,amount(row.TotalAmount)]);
+  return {paymentKey:`pay:${row.PayNum}`,claimKey,fileKey,sourceKey:JSON.stringify([fileKey,String(row.PatNum),String(row.ClaimNumber)])};
+}
+
+export async function reportEntry(pool,row){
+  if(row.Status!=='SUCCESS'||!Number(row.PayNum))throw new Error('Chỉ xuất hồ sơ đã lưu thành công.');
+  const details=JSON.parse(row.Details||'{}');
+  if(!dateValue(details.paymentDate)||!Array.isArray(details.procedures)||!details.procedures.length)throw new Error(`Hồ sơ ${row.Id} thiếu ngày hoặc dịch vụ để xuất Excel.`);
+  const [procs]=await pool.execute(
+    `SELECT pl.ProcNum,pl.ProcDate,pl.ProcFee,pl.ToothNum,pc.ProcCode,pc.Descript
+     FROM procedurelog pl JOIN procedurecode pc ON pc.CodeNum=pl.CodeNum
+     WHERE pl.PatNum=? AND pl.ProcStatus=2`,[row.PatNum]);
+  const procedures=details.procedures.map(p=>{
+    const split=(details.splits||[]).filter(s=>s.code===p.code);
+    let candidates=procs.filter(r=>r.ProcCode===p.code&&isoDay(r.ProcDate)===p.date&&(!p.tooth||String(r.ToothNum)===p.tooth||/^Q0[1-4]$/.test(p.tooth)));
+    if(candidates.length>1&&split.length)candidates=candidates.filter(r=>split.some(s=>String(s.procNum)===String(r.ProcNum)));
+    const match=candidates.length===1?candidates[0]:null;
+    return {date:p.date,code:p.code,treatment:[p.tooth,p.surface,match?.Descript||p.description].filter(Boolean).join(' '),chargeCents:match?amount(match.ProcFee):null,billedCents:p.feeCents??null,paidCents:p.benefitCents??null};
+  });
+  const paidCents=amount(row.TotalAmount);
+  if(!Number.isSafeInteger(paidCents)||paidCents<=0||procedures.some(p=>!dateValue(p.date)||!Number.isSafeInteger(p.paidCents)||!Number.isSafeInteger(p.billedCents))||procedures.reduce((n,p)=>n+p.paidCents,0)!==paidCents)throw new Error(`Hồ sơ ${row.Id} thiếu dữ liệu hoặc lệch tổng tiền; chưa xuất Excel.`);
+  return {...historyIdentity(row,details),id:String(row.Id),patNum:row.PatNum,patientName:row.PatientName,carrier:details.carrier||'MetLife',paymentDate:details.paymentDate,paidCents,procedures};
+}
+
+function newWorkbook(){
+  const wb=new ExcelJS.Workbook();wb.creator='LUK Dental';wb.calcProperties.fullCalcOnLoad=true;
+  const sheet=wb.addWorksheet('PAYMENTS',{views:[{state:'frozen',ySplit:1}],pageSetup:{orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0}});
+  sheet.columns=[12,10,30,10,44,12,12,13,13,13,13,13,16,26,18].map(width=>({width}));
+  sheet.addRow(REPORT_HEADERS);sheet.getRow(1).height=25;
+  sheet.getRow(1).eachCell(cell=>{cell.font={name:'Arial',size:10,color:{argb:'FFFF0000'}};cell.alignment={horizontal:'center',vertical:'middle',wrapText:true};cell.border={top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};});
+  sheet.pageSetup.printTitlesRow='1:1';
+  wb.addWorksheet('TONG HOP');
+  const meta=wb.addWorksheet(META,{state:'veryHidden'});
+  meta.addRow(['HistoryId','PaymentKey','ClaimKey','FileKey','SourceKey','PaidCents']);
+  return wb;
+}
+
+function verifyWorkbook(wb){
+  const sheet=wb.getWorksheet('PAYMENTS'),meta=wb.getWorksheet(META);
+  if(!sheet||!meta||!wb.getWorksheet('TONG HOP')||meta.getCell('A1').value!=='HistoryId'||REPORT_HEADERS.some((name,i)=>sheet.getRow(1).getCell(i+1).value!==name))throw new Error('File Excel đang có khác mẫu của tool; giữ nguyên file, chưa ghi thêm.');
+  return {sheet,meta};
+}
+
+function appendEntry(sheet,entry,index){
+  const start=sheet.rowCount+1,end=start+entry.procedures.length-1;
+  const complete=entry.procedures.every(p=>Number.isSafeInteger(p.chargeCents));
+  const charges=complete?entry.procedures.reduce((n,p)=>n+p.chargeCents,0):null;
+  entry.procedures.forEach(p=>{
+    const row=sheet.addRow([dateValue(p.date),String(entry.patNum),entry.patientName,p.code,p.treatment,p.chargeCents===null?null:p.chargeCents/100,'CREDIT',null,null,null,p.billedCents/100,p.paidCents/100,'Đã lưu',entry.carrier,dateValue(entry.paymentDate)]);
+    row.height=32;
+    for(let col=1;col<=15;col++){
+      const cell=row.getCell(col);cell.font={name:'Arial',size:10};cell.alignment={vertical:'middle',wrapText:true,horizontal:[6,8,9,10,11,12].includes(col)?'right':'left'};
+      cell.border={bottom:{style:'hair',color:{argb:'FFD0D0D0'}},right:{style:'hair',color:{argb:'FFD0D0D0'}}};
+      if(index%2===0)cell.fill=fill(col>=4&&col<=12?'FF00B0E0':'FFFFFF00');
+      if([6,8,9,10,11,12].includes(col))cell.numFmt=moneyFormat;
+      if([1,15].includes(col))cell.numFmt='mm/dd/yyyy';
+    }
+  });
+  const sameDate=new Set(entry.procedures.map(p=>p.date)).size===1;
+  for(const col of [2,3,8,9,10,13,14,15,...(sameDate?[1]:[])]){
+    if(end>start)sheet.mergeCells(start,col,end,col);
+    sheet.getCell(start,col).alignment={...sheet.getCell(start,col).alignment,vertical:'top'};
+  }
+  sheet.getCell(start,8).value=entry.paidCents/100;
+  sheet.getCell(start,10).value=complete?{formula:`SUM(F${start}:F${end})`,result:charges/100}:null;
+  sheet.getCell(start,9).value=complete?{formula:`J${start}-H${start}`,result:(charges-entry.paidCents)/100}:null;
+  sheet.getCell(start,10).font={name:'Arial',size:10,bold:true};
+  for(let col=1;col<=15;col++)sheet.getCell(end,col).border={...sheet.getCell(end,col).border,bottom:{style:'thin',color:{argb:'FF000000'}}};
+  sheet.autoFilter=`A1:O${end}`;sheet.pageSetup.printArea=`A1:O${end}`;
+}
+
+function updateSummary(wb,meta,day){
+  const rows=[];meta.eachRow((row,i)=>{if(i>1)rows.push(row.values);});
+  const sheet=wb.getWorksheet('TONG HOP');sheet.columns=[{width:36},{width:24}];
+  const values=[['NGÀY QUÉT',dateValue(day)],['SỐ FILE KHÔNG TRÙNG',new Set(rows.map(r=>r[4])).size],['SỐ HỒ SƠ ĐÃ LƯU',rows.length],['TỔNG THANH TOÁN',rows.reduce((n,r)=>n+Number(r[6]),0)/100]];
+  for(let i=0;i<values.length;i++){
+    const row=sheet.getRow(i+1);row.values=values[i];row.height=26;
+    row.eachCell(cell=>{cell.font={name:'Arial',size:11};cell.alignment={vertical:'middle'};});row.getCell(1).font={name:'Arial',size:11,bold:true};
+  }
+  sheet.getCell('B1').numFmt='mm/dd/yyyy';sheet.getCell('B4').numFmt=moneyFormat;
+}
+
+// Read/append/rename as one locked operation. Never delete the previous workbook on failure.
+export async function appendDailyWorkbook(pool,rows,filePath,day,{replace=fs.rename}={}){
+  await fs.mkdir(path.dirname(filePath),{recursive:true});
+  const release=await lockfile.lock(filePath,{realpath:false,retries:0,stale:30000,update:10000});
+  let tmp;
+  try{
+    let original=null,wb;
+    try{original=await fs.stat(filePath);wb=new ExcelJS.Workbook();await wb.xlsx.readFile(filePath);}catch(e){if(e.code!=='ENOENT')throw e;wb=newWorkbook();}
+    const {sheet,meta}=verifyWorkbook(wb),known=new Set();
+    meta.eachRow((r,i)=>{if(i>1)for(const c of [2,3,5])known.add(String(r.getCell(c).value));});
+    let appended=0;
+    for(const row of rows){
+      if(row.Status!=='SUCCESS'||!Number(row.PayNum))continue;
+      const identity=historyIdentity(row,JSON.parse(row.Details||'{}'));
+      if([identity.paymentKey,identity.claimKey,identity.sourceKey].some(k=>known.has(k)))continue;
+      const entry=await reportEntry(pool,row);
+      appendEntry(sheet,entry,meta.rowCount-1);
+      meta.addRow([entry.id,entry.paymentKey,entry.claimKey,entry.fileKey,entry.sourceKey,entry.paidCents]);
+      for(const key of [entry.paymentKey,entry.claimKey,entry.sourceKey])known.add(key);
+      appended++;
+    }
+    if(!appended)return {filePath,appended:0};
+    updateSummary(wb,meta,day);
+    tmp=path.join(path.dirname(filePath),`.${day}.${randomUUID()}.tmp`);
+    await fs.writeFile(tmp,Buffer.from(await wb.xlsx.writeBuffer()),{flag:'wx',mode:0o600});
+    const current=await fs.stat(filePath).catch(e=>{if(e.code==='ENOENT')return null;throw e;});
+    if(original?.mtimeMs!==current?.mtimeMs||original?.size!==current?.size)throw new Error('File Excel vừa được thay đổi; sẽ thử ghi lại ở lượt quét sau.');
+    await replace(tmp,filePath);tmp=null;
+    return {filePath,appended};
+  }finally{if(tmp)await fs.rm(tmp,{force:true}).catch(()=>{});await release();}
+}
+
+export async function exportDailyReports(pool,incomingDir,{now=new Date(),startedAt=now,writeWorkbook=appendDailyWorkbook,outputDir=process.env.INSURANCE_EXCEL_DIR||excelOutputDir(incomingDir)}={}){
+  const dir=outputDir,pendingDir=path.join(dir,'.pending');
+  const days=new Set([localReportDay(now),localReportDay(startedAt)]);
+  try{for(const name of await fs.readdir(pendingDir))if(DATE.test(name)&&dateValue(name))days.add(name);}catch(e){if(e.code!=='ENOENT')throw e;}
+  const reports=[],errors=[];
+  for(const day of [...days].sort()){
+    try{
+      await fs.mkdir(pendingDir,{recursive:true});
+      const marker=path.join(pendingDir,day);await fs.writeFile(marker,'',{mode:0o600});
+      const [rows]=await pool.execute(
+        `SELECT Id,FileName,FileHash,PatNum,PatientName,ClaimNumber,PayNum,TotalAmount,Status,Details
+         FROM luk_metlife_history WHERE Status='SUCCESS' AND PayNum>0 AND ProcessedAt>=? AND ProcessedAt<? ORDER BY Id`,
+        [`${day} 00:00:00`,`${nextDay(day)} 00:00:00`]);
+      if(!Array.isArray(rows))throw new Error('Không đọc được lịch sử xuất Excel.');
+      if(rows.length){
+        const result=await writeWorkbook(pool,rows,path.join(dir,`${day}.xlsx`),day);reports.push(result);
+        if(result.appended)console.log(`[Excel] Đã ghi ${result.appended} hồ sơ vào ${result.filePath}`);
+      }
+      await fs.rm(path.join(pendingDir,day),{force:true});
+    }catch(e){errors.push({day,message:e.message});console.warn(`[Excel] Chưa cập nhật báo cáo ${day}: ${e.message}. Sẽ thử lại; không chạy lại thanh toán.`);}
+  }
+  return {status:errors.length?'pending':'ok',reports,errors};
+}

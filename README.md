@@ -20,6 +20,16 @@ node scripts/inspect-liberty-eob.mjs 'C:\path\EOB.jpg' --json liberty-check.json
 
 Output files contain patient information; store them privately. Existing output files are not overwritten. Inspecting does not submit a payment. For an optional local image regression, set `LIBERTY_TEST_IMAGE` to a fixture path before running `npm run test:metlife`; no patient image is bundled with the source.
 
+## Daily insurance Excel report
+
+After each automatic scan, successfully saved MetLife and Liberty claims are appended to a daily workbook. With the standard `D:\SHARE\INSURANCE CLAIM\METLIFE` incoming path, the output is `D:\SHARE\EXCEL\YYYY-MM-DD.xlsx`, dated by the SERVER's local calendar. `INSURANCE_EXCEL_DIR` can override the output directory. A day with no successful records does not create an empty workbook.
+
+`PAYMENTS` follows the supplied 15-column layout, with one row per EOB service and grouped patient/payment totals. `DATE` is the service date; `INSUR PAID DAY` is the EOB payment date (MetLife Processed date / Liberty Check Date). `CHARGE` is the matching completed procedure's actual fee in OD at first export. `INSUR BILL` is the submitted EOB fee, and `INSUR PAY` is the insurance benefit per service. `CREDIT` is the saved claim payment. `TOTAL` sums the group's charges; `BALANCE` is that group's total minus credit, not the patient's entire account balance. Unknown procedure fees and dependent totals stay blank rather than becoming zero. `PAYMENT` is `CREDIT`; `STATUS` is `Đã lưu`.
+
+`TONG HOP` counts unique source files, saved claims, and their total payment. A multi-patient EOB counts as one file and multiple claims. Persisted payment, claim and source identities prevent re-scans or renamed copies from adding duplicate groups; a hidden internal sheet stores those identities. Existing exported groups and staff cell edits are preserved when new groups are appended. Keep the daily workbook's main header and internal sheet intact.
+
+Excel export reads successful history and procedure data without creating or repeating payments. If Excel is open or the share is unavailable, the previous workbook is retained and export retries on the next scan. Pending days are remembered in `EXCEL\.pending`, including across restarts and midnight. The scanner writes a temporary workbook and replaces the daily file only after it is complete; concurrent tool instances use a report lock. Close the workbook in Excel to allow a pending update to finish. Console messages starting `[Excel]` report export results separately from payment results.
+
 ## Endpoints
 
 - `GET /health` checks app and database connectivity.
