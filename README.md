@@ -22,7 +22,7 @@ Output files contain patient information; store them privately. Existing output 
 
 ## Daily insurance Excel report
 
-After each automatic scan, successfully saved MetLife and Liberty claims are appended to a daily workbook. With the standard `D:\SHARE\INSURANCE CLAIM\METLIFE` incoming path, the output is `D:\SHARE\EXCEL\YYYY-MM-DD.xlsx`, dated by the SERVER's local calendar. `INSURANCE_EXCEL_DIR` can override the output directory. A day with no successful records does not create an empty workbook.
+After each automatic scan, successfully saved MetLife and Liberty claims are appended to a daily workbook. With the standard `D:\SHARE\INSURANCE CLAIM\METLIFE` incoming path, the output is `D:\SHARE\INSURANCE CLAIM\EXCEL\YYYY-MM-DD.xlsx`, beside METLIFE and LIBERTY, dated by the SERVER's local calendar. `INSURANCE_EXCEL_DIR` can override the output directory. A day with no successful records does not create an empty workbook.
 
 `PAYMENTS` follows the supplied 15-column layout, with one row per EOB service and grouped patient/payment totals. `DATE` is the service date; `INSUR PAID DAY` is the EOB payment date (MetLife Processed date / Liberty Check Date). `CHARGE` is the matching completed procedure's actual fee in OD at first export. `INSUR BILL` is the submitted EOB fee, and `INSUR PAY` is the insurance benefit per service. `CREDIT` is the saved claim payment. `TOTAL` sums the group's charges; `BALANCE` is that group's total minus credit, not the patient's entire account balance. Unknown procedure fees and dependent totals stay blank rather than becoming zero. `PAYMENT` is `CREDIT`; `STATUS` is `Đã lưu`.
 
@@ -35,7 +35,7 @@ The exporter accepts history details returned as TEXT, Buffer or mysql2 JSON obj
 To create/retry a report explicitly in a known folder without scanning PDFs or creating any payment:
 
 ```powershell
-node scripts/export-insurance-excel.mjs 2026-10-21 --dir 'D:\SHARE\EXCEL'
+node scripts/export-insurance-excel.mjs 2026-10-21 --dir 'D:\SHARE\INSURANCE CLAIM\EXCEL'
 ```
 
 Use the processing date shown in the server log. This command reads the configured DB and writes Excel files only; the printed path is the actual output location.

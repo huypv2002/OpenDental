@@ -5,7 +5,7 @@ import {exportDailyReports,localReportDay,excelOutputDir} from '../src/metlife/d
 
 try{
   const day=process.argv[2];
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(day||''))throw new Error('Usage: node scripts/export-insurance-excel.mjs YYYY-MM-DD [--dir "D:\\SHARE\\EXCEL"]');
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(day||''))throw new Error('Usage: node scripts/export-insurance-excel.mjs YYYY-MM-DD [--dir "D:\\SHARE\\INSURANCE CLAIM\\EXCEL"]');
   const [year,month,date]=day.split('-').map(Number),now=new Date(year,month-1,date,12);
   if(localReportDay(now)!==day)throw new Error('Ngày xuất báo cáo không hợp lệ.');
   const incoming=process.env.METLIFE_INCOMING_DIR||'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';

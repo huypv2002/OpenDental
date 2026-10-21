@@ -23,8 +23,9 @@ export function samplePool(rows=sampleRows()){
 async function fixture(){const root=await fs.mkdtemp(path.join(os.tmpdir(),'daily-excel-'));return {root,file:path.join(root,`${day}.xlsx`)};}
 async function load(file){const w=new ExcelJS.Workbook();await w.xlsx.readFile(file);return w;}
 
-test('report directory is SHARE/EXCEL; dates use the server calendar',()=>{
-  assert.equal(excelOutputDir('D:\\SHARE\\INSURANCE CLAIM\\METLIFE',path.win32),'D:\\SHARE\\EXCEL');
+test('report directory sits beside METLIFE and LIBERTY; dates use the server calendar',()=>{
+  assert.equal(excelOutputDir('D:\\SHARE\\INSURANCE CLAIM\\METLIFE',path.win32),'D:\\SHARE\\INSURANCE CLAIM\\EXCEL');
+  assert.equal(excelOutputDir('D:\\SHARE\\INSURANCE CLAIM\\LIBERTY',path.win32),'D:\\SHARE\\INSURANCE CLAIM\\EXCEL');
   assert.equal(localReportDay(now),day);
 });
 

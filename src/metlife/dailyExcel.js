@@ -13,9 +13,7 @@ export function localReportDay(now=new Date()){
   return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
 }
 export function excelOutputDir(incomingDir,paths=path){
-  const parent=paths.dirname(incomingDir);
-  const share=paths.basename(parent).toUpperCase()==='INSURANCE CLAIM'?paths.dirname(parent):parent;
-  return paths.join(share,'EXCEL');
+  return paths.join(paths.dirname(incomingDir),'EXCEL');
 }
 function dateValue(value){
   const day=String(value||'').slice(0,10);
