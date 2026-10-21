@@ -95,6 +95,7 @@ export function parseMetlife(extracted) {
   const group = take(text, /Group Number:\s*([^\s]+)/);
   const processed = isoDate(take(text, /PROCESSED on\s*(\d{2}\/\d{2}\/\d{4})/));
   const received = isoDate(take(text, /Date Received:\s*(\d{2}\/\d{2}\/\d{4})/));
+  if(!processed) errors.push('Thiếu ngày PROCESSED on của MetLife.');
   if (!claimRaw || !patient || !subscriber || !group)
     errors.push('Thiếu claim number, patient, subscriber hoặc group number.');
   const procedures = [];

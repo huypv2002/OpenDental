@@ -193,7 +193,7 @@ async function call(op,arg){
   }
   case 'config':{
    if(!arg||typeof arg.noteTemplate!=='string'||arg.noteTemplate.length>2000||typeof arg.paymentType!=='string'||arg.paymentType.length>100)throw new Error('Cấu hình không hợp lệ.');
-   workspace.config={schemaVersion:3,noteTemplate:arg.noteTemplate,paymentType:arg.paymentType};
+   workspace.config={schemaVersion:4,noteTemplate:'Claim number: {claim}',paymentType:arg.paymentType};
    await fs.writeFile(path.join(app.getPath('userData'),'settings.json'),JSON.stringify(workspace.config),{mode:0o600});break;
   }
   case 'pdf-bytes':return new Uint8Array(workspace.items.get(idArg(arg)).bytes);

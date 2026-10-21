@@ -20,9 +20,12 @@ function extractedClaims(count){
 async function fixture({claims=1,failHistory=false,failArchive=false}={}){
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'liberty-completion-')),fileName='synthetic.pdf',filePath=path.join(root,fileName),fileBytes=Buffer.from('synthetic PDF bytes');
  await fs.writeFile(filePath,fileBytes);
+ await fs.mkdir(path.join(root,'images'));
  const messages=[],history=[],documents=[],events=[];let locked=false,released=0,payId=100;
  const conn={query:async sql=>{events.push(sql);if(sql.startsWith('LOCK TABLES'))locked=true;if(sql==='UNLOCK TABLES')locked=false;return [[]];},
-  execute:async(sql)=>{
+  execute:async(sql,args)=>{
+   if(sql.includes('INSERT INTO payment')){assert.equal(args[3],'');assert.match(args[4],/^Claim number: 700[12]$/);assert.equal(args[1],'2026-10-07');}
+   if(sql.includes('SELECT PayNum')){assert.ok(sql.includes('ExternalId'));assert.equal(args[1],args[2]);assert.ok(args[1]);}
    if(sql.includes('SELECT PayNum'))return [[]];
    if(sql.includes('INSERT INTO payment'))return [{insertId:++payId}];
    if(sql.includes('INSERT INTO securitylog '))return [{insertId:55}];
@@ -32,8 +35,9 @@ async function fixture({claims=1,failHistory=false,failArchive=false}={}){
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
   assert.equal(locked,false,'pool queries must run after releasing financial table locks');
   if(sql.includes('FROM patient p')){const id=args[0].includes('002')?100:99;return [[{PatNum:id,FName:'TEST',LName:'PERSON',ClinicNum:0,PriProv:1,ImageFolder:`Test${id}`}]];}
-  if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:path.join(root,'images')}]];
-  if(sql.includes('Category = 19'))return [[{DefNum:18}]];
+  if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:path.join(root,'images')},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];
+  if(sql.includes('INFORMATION_SCHEMA.COLUMNS'))return [[{COLUMN_NAME:'DocNum',EXTRA:'auto_increment'},...['DocCategory','PatNum','FileName','Description','DateCreated','ImgType','MountItemNum','ExternalSource','RawBase64'].map(COLUMN_NAME=>({COLUMN_NAME,IS_NULLABLE:'NO',COLUMN_DEFAULT:null,EXTRA:''}))]];
+  if(sql.includes('Category = 18'))return [[{DefNum:18}]];
   if(sql.includes('INSERT INTO document')){documents.push(args);return [{insertId:200+documents.length}];}
   if(sql.includes('Category = 10'))return [[{DefNum:10,ItemName:'Insurance Paid'}]];
   if(sql.includes('SUM(ProcFee)'))return [[{TotalCharges:38}]];
@@ -60,7 +64,7 @@ for(const claims of [1,2])test(`Liberty logs completion after ${claims} claim hi
   assert.deepEqual(await fs.readFile(result.archivePath),f.args.fileBytes);
   await assert.rejects(fs.access(f.args.filePath),{code:'ENOENT'});
   for(const record of f.history){const details=JSON.parse(record[12]);assert.equal(details.archivePath,result.archivePath);assert.equal(details.carrier,'LIBERTY Dental Plan');}
-  for(const doc of f.documents){assert.match(doc[2],/^LIBERTY_/);assert.equal(doc[3],'LIBERTY Dental Plan EOB Finished Claim');}
+  for(const doc of f.documents){assert.match(doc[2],/^LIBERTY_/);assert.match(doc[3],/^Claim 700[12]  (38|42)\.00$/);assert.equal(doc[4],'2026-10-07 00:00:00');}
  }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });
 
@@ -78,7 +82,7 @@ test('Liberty never reports a completed file when history or archive fails after
 test('shared document importer preserves default MetLife naming',async()=>{
  const f=await fixture();
  try{
-  const result=await importPdfToAtoZ(f.pool,{patient:{PatNum:99,ImageFolder:'Test99'},fileBytes:f.args.fileBytes,fileName:'synthetic.pdf',claimNumber:'TESTCLAIM'});
-  assert.ok(result.docNum);assert.match(f.documents[0][2],/^METLIFE_/);assert.equal(f.documents[0][3],'MetLife EOB Finished Claim');
+  const result=await importPdfToAtoZ(f.pool,{patient:{PatNum:99,ImageFolder:'Test99'},fileBytes:f.args.fileBytes,fileName:'synthetic.pdf',claimNumber:'TESTCLAIM',paymentDate:'2026-09-29',amountCents:43920});
+  assert.ok(result.docNum);assert.match(f.documents[0][2],/^METLIFE_/);assert.equal(f.documents[0][3],'Claim TESTCLAIM  439.20');assert.equal(f.documents[0][4],'2026-09-29 00:00:00');
  }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });

@@ -145,3 +145,17 @@ PDF Liberty mới trong Finished Claims dùng tiền tố `LIBERTY_` và mô t�
 Cập nhật tại SERVER: `git pull origin main`, dừng tiến trình Node cũ bằng Ctrl+C rồi chạy lại `npm start` trong thư mục Bridge. Giữ nguyên các file đã ở `PROCESSED`; không cần đưa chúng trở lại hàng đợi để lấy log mới.
 
 Kiểm thử: parser các PDF được cung cấp, luồng Liberty một/nhiều claim với DB giả lập, lỗi lịch sử và lỗi chuyển file không báo thành công, mặc định nhãn MetLife vẫn giữ nguyên. Chưa ghi thử trên DB thật của phòng khám trong lần sửa này.
+
+## 2026-10-21 — thống nhất Payment và nhãn Finished Claims cho MetLife/Liberty
+
+- Check # của Payment mới để trống. Note chỉ còn `Claim number: <số claim đầy đủ>`.
+- MetLife dùng `PROCESSED on` làm PayDate và DatePay của Splits, không lấy Date Received/Payment Detail hoặc ngày hiện tại thay thế. Ngày gốc trong Payment Detail vẫn nằm trong lịch sử để đối chiếu. Liberty tiếp tục dùng Check Date trên EOB.
+- Tài liệu Imaging chọn đúng `definition.Category=18`, `IsHidden=0`, tên FINISHED CLAM / FINISHED CLAIMS duy nhất; bỏ cách dùng Category 19 rồi rơi vào DefNum mặc định.
+- DateCreated của PDF là ngày thanh toán; Description là `Claim <số claim>  <số tiền 2 chữ số thập phân>`. OD tự hiển thị ngày trước Description. Ví dụ nhãn mong đợi: `09-29-2026: Claim 6092230431 99  439.20`.
+- Import kiểm tra LocalAtoZ, thư mục gốc truy cập được và schema document. Bổ sung các trường Document OD 24.3 như ImgType, MountItemNum=0 và các trường text rỗng khi schema có yêu cầu. Lỗi import được đưa ra ngoài và dừng trước bước ghi Payment; không còn trả DocNum=0 rồi báo hoàn tất tài chính.
+- Khi tìm lại khoản cũ, dùng ExternalId/số claim, không dùng Check # rỗng làm định danh chung. Cùng check Liberty có nhiều claim không được gộp/xóa lẫn theo số check.
+- Cấu hình Note cũ của client được chuyển sang mẫu claim-only; bản kế hoạch của client cũng dùng Processed date và Check # trống. Lịch sử hiển thị ngày/Note đã dùng khi ghi.
+
+Triển khai: pull main và khởi động lại Bridge trên SERVER. Nếu chạy tool bằng source trên R5, pull và mở lại tool để thấy thông tin đối chiếu mới. Chỉ áp dụng cho lượt xử lý mới; không chạy lệnh sửa ngược Payment/Splits hoặc tái nhập file PROCESSED trong bản cập nhật này.
+
+Kiểm thử local: 65 kiểm thử backend + 23 kiểm thử client qua; 2 bài cần MariaDB riêng được bỏ qua tại local. Có regression chạy toàn luồng MetLife từ PDF tổng hợp qua câu INSERT Payment/Document, Liberty một/nhiều claim, Check # rỗng không gây trùng giả, và chặn import khi không tìm được AtoZ/category. Chưa thao tác ghi dữ liệu thật trên SERVER.

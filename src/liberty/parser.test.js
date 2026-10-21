@@ -79,7 +79,8 @@ test('parseLiberty parses full Liberty Dental Plan PDF with multi-claim payload'
 
   // Payment payload for Open Dental
   assert.equal(c1.paymentPayload.amount, '1483.00');
-  assert.equal(c1.paymentPayload.checkNum, '109119');
+  assert.equal(c1.paymentPayload.checkNum, '');
+  assert.equal(c1.paymentPayload.payNote, 'Claim number: 77361505');
   assert.equal(c1.paymentPayload.claimNum, '77361505');
   assert.equal(c1.paymentPayload.splits.length, 2);
   assert.equal(c1.paymentPayload.splits[0].amount, '743.00');

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { parseLiberty } from './parser.js';
+import {claimPaymentFields} from '../metlife/paymentFormat.js';
 import { nativeSplitHashes } from '../metlife/nativeSplitHashes.js';
 import { odSecurityLogHash } from '../metlife/directPayment.js';
 import { autoPopulateProcedureFees, importPdfToAtoZ } from '../metlife/autoProcessor.js';
@@ -61,7 +62,7 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient }
   const patNum = patient.PatNum;
   const clinicNum = patient.ClinicNum || 0;
   const provNum = patient.PriProv || 1;
-  const checkDate = check.date || new Date().toISOString().slice(0, 10);
+  const checkDate = check.date;
   const claimNumber = claim.claimNumber;
   const checkNumber = check.number;
   const groupNumber = claim.plan.group || '';
@@ -124,13 +125,15 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient }
     splitsPlan[idx].SecurityHash = h;
   });
 
-  const payNote = `Check # ${checkNumber} | Claim: ${claimNumber} | Group: ${groupNumber} | Carrier: LIBERTY Dental Plan`;
+  const paymentFields = claimPaymentFields(claimNumber,checkDate);
+  const payNote = paymentFields.note;
   const totalAmount = (claim.totals.planPaidCents / 100).toFixed(2);
 
   return {
     patNum,
     claimNumber,
     checkNumber,
+    checkNum: paymentFields.checkNum,
     checkDate,
     totalAmount,
     totalAmountCents: claim.totals.planPaidCents,
@@ -163,7 +166,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     const claimNumber = claim.claimNumber;
     const checkNumber = parsed.check.number;
     const groupNum = claim.plan.group || '';
-    const checkDate = parsed.check.date || new Date().toISOString().slice(0, 10);
+    const checkDate = parsed.check.date;
+    const paymentFields = claimPaymentFields(claimNumber,checkDate);
     const totalBenefit = (claim.totals.planPaidCents / 100).toFixed(2);
 
     log(`[Liberty Auto-Processor] Claim #${claimNumber}: lưu PDF vào Finished Claims...`);
@@ -173,7 +177,9 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       fileBytes,
       fileName,
       claimNumber,
-      carrier: 'LIBERTY Dental Plan'
+      carrier: 'LIBERTY Dental Plan',
+      paymentDate: checkDate,
+      amountCents: claim.totals.planPaidCents
     });
 
     // Prepare payload
@@ -205,8 +211,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       log(`[Liberty Auto-Processor] Claim #${claimNumber}: ghi thanh toán $${totalBenefit}, ${payload.splits.length} phân bổ...`);
       // Revert duplicate payments for this check & claim
       const [existingPayments] = await conn.execute(
-        'SELECT PayNum FROM payment WHERE PatNum = ? AND (CheckNum = ? OR CheckNum = ?)',
-        [patNum, checkNumber, claimNumber]
+        'SELECT PayNum FROM payment WHERE PatNum = ? AND (ExternalId = ? OR CheckNum = ?)',
+        [patNum, claimNumber, claimNumber]
       );
       for (const p of existingPayments) {
         await conn.execute('DELETE FROM paysplit WHERE PayNum = ?', [p.PayNum]);
@@ -224,7 +230,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       );
 
       // Insert Payment
-      const payNote = payload.payNote || `Check # ${checkNumber} | Claim: ${claimNumber} | Group: ${groupNum} | Carrier: LIBERTY Dental Plan`;
+      const payNote = paymentFields.note;
       const [payRes] = await conn.execute(
         `INSERT INTO payment (
           PayType, PayDate, PayAmt, CheckNum, BankBranch, PayNote, IsSplit, PatNum,
@@ -232,7 +238,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
           PaymentSource, ProcessStatus, RecurringChargeDate, ExternalId, PaymentStatus,
           IsCcCompleted, MerchantFee
         ) VALUES (?, ?, ?, ?, '', ?, 1, ?, ?, CURDATE(), 0, '', 0, 0, 0, 0, '0001-01-01', ?, 0, 0, 0.00)`,
-        [selectedPayType.DefNum, checkDate, totalBenefit, checkNumber, payNote, patNum, clinicNum, claimNumber]
+        [selectedPayType.DefNum, checkDate, totalBenefit, paymentFields.checkNum, payNote, patNum, clinicNum, claimNumber]
       );
       payNum = payRes.insertId;
 
@@ -328,6 +334,11 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       payNum,
       docNum: aToZResult.docNum,
       totalBenefit,
+      paymentDate: checkDate,
+      paymentNote: paymentFields.note,
+      paymentCheckNum: paymentFields.checkNum,
+      documentDescription: aToZResult.description,
+      documentDate: aToZResult.dateCreated,
       updatedFees: payload.updatedFees,
       splits: payload.splits.map((s) => ({ code: s.code, amount: s.amount, procNum: s.ProcNum })),
       procedures: claim.procedures.map((p) => ({

@@ -89,3 +89,16 @@ test('API partial failure persists created receipt and blocks replay/abort after
   context=posted(saved.plan);assert.equal((await restart.verify(op.operationId)).verified,true);
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
+
+test('blank CheckNum remains blank; unrelated blank checks do not block, same claim still does',()=>{
+ const s=before(),d={...draft(),checkNum:'',claimRaw:'TESTCLAIM',note:'Claim number: TESTCLAIM'};
+ s.tables.payment=[{PayNum:'2',CheckNum:'',PayDate:'2026-09-01',PayAmt:'1.00',PayNote:'Claim number: OTHER'}];
+ s.tables.claimpayment=[{CheckNum:'',CheckDate:'2026-09-01',CheckAmt:'1.00'}];
+ const p=validatePostingPlan(s,d);assert.equal(p.checkNum,'');assert.equal(d.checkNum,'');
+ const after=posted(p);after.tables.payment.push(...s.tables.payment);
+ assert.equal(verifyPostedPayment(s,after,p).verified,true);
+ for(const identity of [{ExternalId:'TESTCLAIM'},{PayNote:'Claim number: TESTCLAIM'}]){
+  const dup=before();dup.tables.payment=[{...identity,CheckNum:'',PayDate:'2026-01-01',PayAmt:'1.00'}];
+  assert.throws(()=>validatePostingPlan(dup,d),/duplicate/);
+ }
+});

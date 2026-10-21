@@ -46,10 +46,10 @@ export function reconcile(pdf, snapshot, filePath, now=Date.now(), {verifyUncPat
   const needles=[pdf.claimRaw,pdf.claimBase,pdf.payment?.trace].filter(Boolean);
   for(const row of t.payment) {
     const text=`${row.PayNote||''} ${row.CheckNum||''}`;
-    if(needles.some(n=>text.includes(n)) || (amount(row.PayAmt)===pdf.payment?.amountCents&&String(row.PayDate).slice(0,10)===pdf.payment?.date)) output.duplicates.push({table:'payment',id:row.PayNum});
+    if(needles.some(n=>text.includes(n)) || (amount(row.PayAmt)===pdf.payment?.amountCents&&[pdf.processed,pdf.payment?.date].filter(Boolean).includes(String(row.PayDate).slice(0,10)))) output.duplicates.push({table:'payment',id:row.PayNum});
   }
   for(const row of t.claim) if(needles.some(n=>`${row.ClaimIdentifier||''} ${row.ClaimNote||''}`.includes(n)) && amount(row.InsPayAmt)>0) output.duplicates.push({table:'claim',id:row.ClaimNum});
-  for(const row of t.claimpayment) if(needles.some(n=>`${row.Note||''} ${row.CheckNum||''}`.includes(n)) || (amount(row.CheckAmt)===pdf.payment?.amountCents && String(row.CheckDate).slice(0,10)===pdf.payment?.date)) output.duplicates.push({table:'claimpayment',id:row.ClaimPaymentNum});
+  for(const row of t.claimpayment) if(needles.some(n=>`${row.Note||''} ${row.CheckNum||''}`.includes(n)) || (amount(row.CheckAmt)===pdf.payment?.amountCents && [pdf.processed,pdf.payment?.date].filter(Boolean).includes(String(row.CheckDate).slice(0,10)))) output.duplicates.push({table:'claimpayment',id:row.ClaimPaymentNum});
   if(output.duplicates.length) blocks.push('Phát hiện giao dịch đã nhập hoặc có khả năng trùng; không điền lại.');
   const dates=[...new Set(pdf.procedures.map(p=>p.date).filter(Boolean))];
   const codes=new Map(t.procedurecode.map(r=>[String(r.CodeNum),r.ProcCode]));
@@ -67,11 +67,9 @@ export function reconcile(pdf, snapshot, filePath, now=Date.now(), {verifyUncPat
 }
 export function draftOf(pdf, result, config={}) {
   if(result.blocks.length) throw new Error('Còn lỗi đối chiếu; không tạo bản điền.');
-  const noteTemplate=config.noteTemplate||DEFAULT_CONFIG.noteTemplate;
-  if(noteTemplate.length>2000) throw new Error('Mẫu Note quá dài.');
-  const values={claim:pdf.claimRaw,group:pdf.group,method:pdf.payment.method,trace:pdf.payment.trace,date:pdf.payment.date};
-  const note=noteTemplate.replace(/\{(claim|group|method|trace|date)\}/g,(_,k)=>values[k]);
-  return {patNum:String(result.patient.PatNum),patientName:`${result.patient.LName}, ${result.patient.FName}`,splitPatientName:`${result.patient.LName}, ${result.patient.FName}${result.patient.MiddleI?' '+result.patient.MiddleI:''}`,amount:money(pdf.payment.amountCents),date:pdf.payment.date,checkNum:(pdf.payment?.trace||pdf.claimRaw||'').trim(),note,claimRaw:pdf.claimRaw,sha256:pdf.sha256,paymentType:config.paymentType||DEFAULT_CONFIG.paymentType,paymentTypeDefNum:result.paymentTypeDefNum||null,splits:result.splits,mode:'preview-only'};
+  if(!pdf.processed)throw new Error('Thiếu ngày PROCESSED on của MetLife.');
+  const note=`Claim number: ${pdf.claimRaw}`;
+  return {patNum:String(result.patient.PatNum),patientName:`${result.patient.LName}, ${result.patient.FName}`,splitPatientName:`${result.patient.LName}, ${result.patient.FName}${result.patient.MiddleI?' '+result.patient.MiddleI:''}`,amount:money(pdf.payment.amountCents),date:pdf.processed,checkNum:'',note,claimRaw:pdf.claimRaw,sha256:pdf.sha256,paymentType:config.paymentType||DEFAULT_CONFIG.paymentType,paymentTypeDefNum:result.paymentTypeDefNum||null,splits:result.splits,mode:'preview-only'};
 }
 
 export function sourceDocumentPath(snapshot, result) {

@@ -197,10 +197,10 @@ export function parseLiberty(extracted) {
     // Prepare Open Dental Payment Payload for this claim (matching MetLife structure)
     const paymentPayload = {
       payType: 'Insurance Paid',
-      checkNum: checkNumber,
+      checkNum: '',
       claimNum: claimNumber,
       payDate: checkDate,
-      payNote: `Check # ${checkNumber} | Claim: ${claimNumber} | Group: ${groupNumber} | Carrier: LIBERTY Dental Plan`,
+      payNote: `Claim number: ${claimNumber}`,
       amountCents: totals.planPaidCents,
       amount: (totals.planPaidCents / 100).toFixed(2),
       splits: procedures

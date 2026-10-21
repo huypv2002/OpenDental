@@ -4,6 +4,8 @@ import os from 'node:os';
 import { extractPdf, parseMetlife } from './parser.js';
 import { nativeSplitHashes } from './nativeSplitHashes.js';
 import { odSecurityLogHash } from './directPayment.js';
+import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
+import {documentInsert} from './documentImport.js';
 
 let isScanning = false;
 let autoScanIntervalId = null;
@@ -102,53 +104,39 @@ export async function resolvePatient(pool, { fileName, parsed }) {
   throw new Error(`Không xác định được bệnh nhân trong Open Dental cho file: ${fileName} (Tên: ${parsed.patient || 'N/A'})`);
 }
 
-export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, claimNumber, carrier = 'MetLife' }) {
-  try {
-    const [prefs] = await pool.execute(
-      "SELECT PrefName, ValueString FROM preference WHERE LOWER(PrefName) IN ('docpath','atozfolderused','atozfolder','imagestore')"
-    );
-    const pref = (name) => prefs.find((r) => r.PrefName.toLowerCase() === name)?.ValueString;
-    const root = pref('docpath') || pref('atozfolder');
-
-    if (!root) {
-      console.warn('[MetLife AtoZ] Không tìm thấy thư mục docpath hoặc atozfolder trong preference.');
-      return { docNum: 0, savedPath: null };
-    }
-
-    let folder = patient.ImageFolder;
-    if (!folder) {
-      folder = `${(patient.LName || 'PT').slice(0, 5)}${(patient.FName || '').slice(0, 3)}${patient.PatNum}`.replace(/[^a-zA-Z0-9]/g, '');
-      await pool.execute('UPDATE patient SET ImageFolder = ? WHERE PatNum = ?', [folder, patient.PatNum]);
-    }
-
-    const firstLetter = (folder[0] || 'P').toUpperCase();
-    const destDir = path.join(root, firstLetter, folder);
-    await fs.mkdir(destDir, { recursive: true });
-
-    const safeClaim = (claimNumber || 'EOB').replace(/[^a-zA-Z0-9]/g, '_');
-    const prefix = carrier === 'LIBERTY Dental Plan' ? 'LIBERTY' : 'METLIFE';
-    const destFileName = `${prefix}_${safeClaim}_${Date.now()}.pdf`;
-    const fullDestPath = path.join(destDir, destFileName);
-
-    await fs.writeFile(fullDestPath, fileBytes);
-
-    // Get Category for Finished Claims
-    const [cats] = await pool.execute(
-      "SELECT DefNum FROM definition WHERE Category = 19 AND UPPER(TRIM(ItemName)) IN ('FINISHED CLAM','FINISHED CLAIMS') ORDER BY DefNum ASC LIMIT 1"
-    );
-    const docCategory = cats.length ? cats[0].DefNum : 10;
-
-    const [docRes] = await pool.execute(
-      `INSERT INTO document (DocCategory, PatNum, FileName, Description, DateCreated)
-       VALUES (?, ?, ?, ?, NOW())`,
-      [docCategory, patient.PatNum, destFileName, `${carrier} EOB Finished Claim`]
-    );
-
-    return { docNum: docRes.insertId, savedPath: fullDestPath };
-  } catch (err) {
-    console.error('[MetLife AtoZ] Lỗi khi lưu PDF vào Finished Claims:', err);
-    return { docNum: 0, savedPath: null, error: err.message };
+export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, claimNumber, paymentDate, amountCents, carrier = 'MetLife' }) {
+  const {description,dateCreated}=claimDocumentFields(claimNumber,paymentDate,amountCents);
+  const [prefs]=await pool.execute("SELECT PrefName, ValueString FROM preference WHERE LOWER(PrefName) IN ('docpath','atozfolderused','atozfolder','imagestore')");
+  const pref=name=>prefs.find(r=>r.PrefName.toLowerCase()===name)?.ValueString;
+  const root=pref('docpath')||pref('atozfolder');
+  if(String(pref('atozfolderused')??pref('imagestore')??'').trim()!=='1')throw new Error('Import Finished Claims cần chế độ LocalAtoZ (1).');
+  if(!root)throw new Error('Chưa cấu hình thư mục AtoZ; chưa lưu PDF hoặc thanh toán.');
+  // Never create a new image root from an invalid/misspelled shared path.
+  const base=await fs.realpath(root);
+  const [cats]=await pool.execute("SELECT DefNum FROM definition WHERE Category = 18 AND IsHidden = 0 AND UPPER(TRIM(ItemName)) IN ('FINISHED CLAM','FINISHED CLAIMS') ORDER BY ItemOrder,DefNum LIMIT 2");
+  if(cats.length!==1)throw new Error('Cần đúng một thư mục FINISHED CLAM / FINISHED CLAIMS đang hiện trong Imaging.');
+  const [columns]=await pool.execute("SELECT COLUMN_NAME,COLUMN_DEFAULT,IS_NULLABLE,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='document' ORDER BY ORDINAL_POSITION");
+  // Validate schema before creating the patient directory or copying a PDF.
+  documentInsert({DocCategory:cats[0].DefNum,PatNum:patient.PatNum,FileName:'pending.pdf',Description:description,DateCreated:dateCreated},columns);
+  let folder=patient.ImageFolder;
+  if(!folder){
+    folder=`${(patient.LName||'PT').slice(0,5)}${(patient.FName||'').slice(0,3)}${patient.PatNum}`.replace(/[^a-zA-Z0-9]/g,'');
+    await pool.execute('UPDATE patient SET ImageFolder = ? WHERE PatNum = ?',[folder,patient.PatNum]);
   }
+  if(/[\\/]/.test(folder)||['.','..'].includes(folder))throw new Error('Thư mục ảnh bệnh nhân không hợp lệ.');
+  const destDir=path.join(base,folder[0].toUpperCase(),folder);
+  await fs.mkdir(destDir,{recursive:true});
+  const resolvedDir=await fs.realpath(destDir),relative=path.relative(base,resolvedDir);
+  if(relative.startsWith('..')||path.isAbsolute(relative))throw new Error('Thư mục ảnh bệnh nhân nằm ngoài AtoZ.');
+  const safeClaim=claimNumber.replace(/[^a-zA-Z0-9]/g,'_');
+  const prefix=carrier==='LIBERTY Dental Plan'?'LIBERTY':'METLIFE';
+  const destFileName=`${prefix}_${safeClaim}_${paymentDate}_${Date.now()}.pdf`;
+  const fullDestPath=path.join(resolvedDir,destFileName);
+  await fs.writeFile(fullDestPath,fileBytes,{flag:'wx'});
+  const statement=documentInsert({DocCategory:cats[0].DefNum,PatNum:patient.PatNum,FileName:destFileName,Description:description,DateCreated:dateCreated},columns);
+  const [docRes]=await pool.execute(statement.sql,statement.values);
+  if(!docRes.insertId)throw new Error('Không nhận được mã tài liệu Finished Claims; chưa ghi thanh toán.');
+  return {docNum:docRes.insertId,savedPath:fullDestPath,description,dateCreated};
 }
 
 export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbProcs }) {
@@ -222,12 +210,12 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
   return updatedFees;
 }
 
-export async function processSinglePdf(pool, filePath) {
+export async function processSinglePdf(pool, filePath, {extract = extractPdf, hashSplits = nativeSplitHashes} = {}) {
   const fileName = path.basename(filePath);
   console.log(`\n[Auto-Processor] Bắt đầu xử lý: ${fileName}...`);
 
   const fileBytes = await fs.readFile(filePath);
-  const extracted = await extractPdf(fileBytes);
+  const extracted = await extract(fileBytes);
   const fullText = extracted.pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n');
 
   // Carrier auto-detection: Liberty vs MetLife
@@ -248,9 +236,10 @@ export async function processSinglePdf(pool, filePath) {
   const patNum = patient.PatNum;
   const clinicNum = patient.ClinicNum || 0;
   const provNum = patient.PriProv || 1;
-  const claimNumber = parsed.claimRaw || parsed.claimBase;
+  const paymentFields = metlifePaymentFields(parsed);
+  const claimNumber = paymentFields.claimNumber;
   const groupNum = parsed.group || '';
-  const eobDate = parsed.payment?.date || parsed.processed || new Date().toISOString().slice(0, 10);
+  const eobDate = paymentFields.date;
   const totalBenefit = (parsed.benefitCents / 100).toFixed(2);
 
   console.log(`[MetLife Auto-Processor] Bệnh nhân: ${patient.LName}, ${patient.FName} (#${patNum})`);
@@ -261,7 +250,9 @@ export async function processSinglePdf(pool, filePath) {
     patient,
     fileBytes,
     fileName,
-    claimNumber
+    claimNumber,
+    paymentDate: eobDate,
+    amountCents: parsed.benefitCents
   });
 
   // 3. Find matching procedures in DB for splits
@@ -310,7 +301,7 @@ export async function processSinglePdf(pool, filePath) {
     date: eobDate,
     splits: splitsPlan
   };
-  const hashes = await nativeSplitHashes(hashPlan);
+  const hashes = await hashSplits(hashPlan);
   hashes.forEach((h, idx) => {
     splitsPlan[idx].SecurityHash = h;
   });
@@ -336,8 +327,8 @@ export async function processSinglePdf(pool, filePath) {
 
     // Revert any previous attempt for this check to avoid duplicates
     const [existingPayments] = await conn.execute(
-      'SELECT PayNum FROM payment WHERE PatNum = ? AND CheckNum = ?',
-      [patNum, claimNumber]
+      'SELECT PayNum FROM payment WHERE PatNum = ? AND (ExternalId = ? OR CheckNum = ?)',
+      [patNum, claimNumber, claimNumber]
     );
     for (const p of existingPayments) {
       await conn.execute('DELETE FROM paysplit WHERE PayNum = ?', [p.PayNum]);
@@ -355,7 +346,7 @@ export async function processSinglePdf(pool, filePath) {
     );
 
     // Insert Payment
-    const payNote = `group number : ${groupNum}`;
+    const payNote = paymentFields.note;
     const [payRes] = await conn.execute(
       `INSERT INTO payment (
         PayType, PayDate, PayAmt, CheckNum, BankBranch, PayNote, IsSplit, PatNum,
@@ -363,7 +354,7 @@ export async function processSinglePdf(pool, filePath) {
         PaymentSource, ProcessStatus, RecurringChargeDate, ExternalId, PaymentStatus,
         IsCcCompleted, MerchantFee
       ) VALUES (?, ?, ?, ?, '', ?, 1, ?, ?, CURDATE(), 0, '', 0, 0, 0, 0, '0001-01-01', ?, 0, 0, 0.00)`,
-      [selectedPayType.DefNum, eobDate, totalBenefit, claimNumber, payNote, patNum, clinicNum, claimNumber]
+      [selectedPayType.DefNum, eobDate, totalBenefit, paymentFields.checkNum, payNote, patNum, clinicNum, claimNumber]
     );
     payNum = payRes.insertId;
 
@@ -447,6 +438,11 @@ export async function processSinglePdf(pool, filePath) {
     totalBenefit,
     updatedFees,
     splits: splitsPlan.map((s) => ({ code: s.code, amount: s.amount, procNum: s.ProcNum })),
+    paymentDate: eobDate,
+    paymentNote: paymentFields.note,
+    paymentCheckNum: paymentFields.checkNum,
+    documentDescription: aToZResult.description,
+    documentDate: aToZResult.dateCreated,
     eobPayment: parsed.payment || null,
     subscriber: parsed.subscriber || '',
     procedures: (parsed.procedures || []).map((p) => ({

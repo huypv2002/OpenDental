@@ -347,7 +347,15 @@ function renderHistoryDetail(item) {
           <strong><code>${esc(item.ClaimNumber || '—')}</code></strong>
         </div>
         <div class="inspector-item">
-          <span>Số Check / EFT Trace:</span>
+          <span>Ngày thanh toán trong OD:</span>
+          <strong>${esc(details?.paymentDate || '—')}</strong>
+        </div>
+        <div class="inspector-item">
+          <span>Note thanh toán:</span>
+          <strong>${esc(details?.paymentNote || '—')}</strong>
+        </div>
+        <div class="inspector-item">
+          <span>Số tham chiếu trên EOB gốc:</span>
           <strong><code>${esc(item.CheckNumber || details?.eobPayment?.trace || '—')}</code></strong>
         </div>
         <div class="inspector-item">
