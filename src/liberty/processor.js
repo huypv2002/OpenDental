@@ -134,10 +134,10 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
 }
 
 export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, log = console.log, normalized=null, carrier='LIBERTY Dental Plan', patientResolver=resolveLibertyPatient } = {}) {
-  const label=carrier==='CIGNA'?'Cigna':'Liberty';
-  const parsed = validateLibertyForPosting(normalized||parseLiberty(extracted),extracted,carrier==='CIGNA'?{claimPattern:/^[A-Z0-9-]{1,64}$/,requireMember:false}:{});
+  const label=carrier==='DELTA DENTAL'?'Delta Dental':carrier==='CIGNA'?'Cigna':'Liberty';
+  const parsed = validateLibertyForPosting(normalized||parseLiberty(extracted),extracted,carrier==='DELTA DENTAL'?{verifyLibertyOcr:false}:carrier==='CIGNA'?{claimPattern:/^[A-Z0-9-]{1,64}$/,requireMember:false}:{});
   const preflight=new Map();
-  if(extracted.ocr||carrier==='CIGNA'){
+  if(extracted.ocr||carrier==='CIGNA'||carrier==='DELTA DENTAL'){
     // Resolve every patient/procedure before importing or changing fees for the first claim.
     try{for(const claim of parsed.claims){
       const patient=await patientResolver(pool,{claim,strictMember:true,fileName,claimsCount:parsed.claimsCount});
@@ -325,7 +325,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       carrier,
       settlementBasis:parsed.settlementBasis,
       warnings:parsed.warnings,
-      sourceProcedures:carrier==='CIGNA'?claim.rawProcedures:undefined,
+      sourceProcedures:claim.rawProcedures,
+      depositAmountCents:claim.headerPaidCents,
       sourceFormat: extracted.sourceFormat||'pdf',
       extractedText: extracted.ocr?parsed.text:undefined,
       archivePath,

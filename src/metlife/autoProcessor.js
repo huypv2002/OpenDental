@@ -15,7 +15,7 @@ let lastScanTime = null;
 let lastScanResult = null;
 
 export function insuranceIncomingDirs(dir){
-  const candidates=[dir,...['LIBERTY','CIGNA'].map(name=>path.join(path.dirname(dir),name))];
+  const candidates=[dir,...['LIBERTY','CIGNA','DELTA DENTAL'].map(name=>path.join(path.dirname(dir),name))];
   return candidates.filter((candidate,i)=>candidates.findIndex(other=>other.toLowerCase()===candidate.toLowerCase())===i);
 }
 
@@ -136,7 +136,7 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
   const resolvedDir=await fs.realpath(destDir),relative=path.relative(base,resolvedDir);
   if(relative.startsWith('..')||path.isAbsolute(relative))throw new Error('Thư mục ảnh bệnh nhân nằm ngoài AtoZ.');
   const safeClaim=claimNumber.replace(/[^a-zA-Z0-9]/g,'_');
-  const prefix=carrier==='CIGNA'?'CIGNA':carrier==='LIBERTY Dental Plan'?'LIBERTY':'METLIFE';
+  const prefix=carrier==='DELTA DENTAL'?'DELTA':carrier==='CIGNA'?'CIGNA':carrier==='LIBERTY Dental Plan'?'LIBERTY':'METLIFE';
   const destFileName=`${prefix}_${safeClaim}_${paymentDate}_${Date.now()}.pdf`;
   const fullDestPath=path.join(resolvedDir,destFileName);
   await fs.writeFile(fullDestPath,fileBytes,{flag:'wx'});
@@ -225,10 +225,20 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   if((await fs.stat(filePath)).size>30*1024*1024)throw Object.assign(new Error('Tài liệu EOB vượt quá 30 MB.'),{code:'EOB_REVIEW_REQUIRED'});
   const sourceBytes = await fs.readFile(filePath);
   let document;
-  try{document=await readInsuranceDocument(sourceBytes,fileName,{extract});}
+  try{
+    if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
+      const {readDeltaDocument}=await import('../delta/document.js');
+      document=await readDeltaDocument(sourceBytes,fileName,{extract});
+    }else document=await readInsuranceDocument(sourceBytes,fileName,{extract});
+  }
   catch(e){if(isImageFile(fileName))e.code='EOB_REVIEW_REQUIRED';throw e;}
   const {extracted,pdfBytes:fileBytes}=document;
   const fullText = extracted.pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n');
+
+  if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
+    const {processDeltaPdf}=await import('../delta/processor.js');
+    return processDeltaPdf(pool,{filePath,fileName,fileBytes,extracted});
+  }
 
   if(path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA'||(/Claim\/Reference Number:/.test(fullText)&&/Claim Amount Paid:/.test(fullText)&&/Date Processed:/.test(fullText))){
     const {processCignaPdf}=await import('../cigna/processor.js');
@@ -579,7 +589,7 @@ export async function scanIncomingFolder(pool, incomingDir, {processFile=process
       return emptyRes;
     }
 
-    console.log(`[Auto-Processor] Phát hiện ${allPdfFiles.length} file EOB mới cần xử lý (MetLife / Liberty / CIGNA)...`);
+    console.log(`[Auto-Processor] Phát hiện ${allPdfFiles.length} file EOB mới cần xử lý (MetLife / Liberty / CIGNA / Delta Dental)...`);
     const results = [];
 
     for (const file of allPdfFiles) {
@@ -792,18 +802,21 @@ export function startAutoProcessor({ pool, incomingDir, intervalMs = 30000 }) {
   const parentDir = path.dirname(dir);
   const libertyDir = path.join(parentDir, 'LIBERTY');
   const cignaDir = path.join(parentDir,'CIGNA');
+  const deltaDir=path.join(parentDir,'DELTA DENTAL');
 
-  console.log(`[Insurance Auto-Processor] Khởi chạy bộ quét EOB tự động (MetLife / Liberty / CIGNA)`);
+  console.log(`[Insurance Auto-Processor] Khởi chạy bộ quét EOB tự động (MetLife / Liberty / CIGNA / Delta Dental)`);
   console.log(`[Insurance Auto-Processor] Thư mục theo dõi:`);
   console.log(`  - MetLife: ${dir}`);
   console.log(`  - Liberty: ${libertyDir} (PDF, JPG, JPEG, PNG)`);
   console.log(`  - CIGNA: ${cignaDir} (PDF)`);
+  console.log(`  - Delta Dental: ${deltaDir} (PDF, JPG, JPEG, PNG)`);
   console.log(`  - Chu kỳ quét: ${intervalMs / 1000}s/lần`);
 
   // Ensure folders exist so staff can easily see them in Explorer
   try { fs.mkdir(dir, { recursive: true }).catch(() => {}); } catch {}
   try { fs.mkdir(libertyDir, { recursive: true }).catch(() => {}); } catch {}
   try { fs.mkdir(cignaDir,{recursive:true}).catch(()=>{}); } catch {}
+  try { fs.mkdir(deltaDir,{recursive:true}).catch(()=>{}); } catch {}
 
   // Initial scan after 3s
   setTimeout(() => {

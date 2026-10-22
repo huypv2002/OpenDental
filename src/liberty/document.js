@@ -107,14 +107,14 @@ async function withOcr(run){
  }finally{clearTimeout(timer);if(worker)await worker.terminate();}
 }
 
-export async function readInsuranceDocument(bytes,fileName,{extract=extractPdf}={}){
+export async function readInsuranceDocument(bytes,fileName,{extract=extractPdf,recognize=recognizePage}={}){
  if(bytes.length>30*1024*1024)throw new Error('Tài liệu EOB vượt quá 30 MB.');
  if(!isInsuranceFile(fileName))throw new Error('Chỉ hỗ trợ EOB PDF, JPG, JPEG hoặc PNG.');
  if(isImageFile(fileName)){
   if(!((bytes[0]===0xff&&bytes[1]===0xd8)||bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))))throw new Error('Nội dung ảnh EOB không khớp định dạng JPG/PNG.');
   const {loadImage}=await import('@napi-rs/canvas'),image=await loadImage(bytes);
   if(image.width*image.height>25000000)throw new Error('Ảnh EOB vượt quá kích thước hỗ trợ.');
-  const page=await withOcr(w=>recognizePage(w,image));
+  const page=await withOcr(w=>recognize(w,image));
   return {extracted:{sha256:sha(bytes),pages:[page],sourceFormat:'image',ocr:true},pdfBytes:await imagePdf(bytes)};
  }
  if(!bytes.subarray(0,1024).includes(Buffer.from('%PDF-')))throw new Error('Nội dung EOB không phải PDF.');
@@ -142,14 +142,14 @@ export async function readInsuranceDocument(bytes,fileName,{extract=extractPdf}=
      if(stream instanceof PDFRawStream&&String(stream.dict.get(PDFName.of('Filter')))==='/DCTDecode'){
       const image=await loadImage(Buffer.from(stream.getContents()));
       if(image.width*image.height>25000000)throw new Error('Ảnh trong PDF scan EOB quá lớn.');
-      out.push(await recognizePage(worker,image));p.cleanup();continue;
+      out.push(await recognize(worker,image));p.cleanup();continue;
      }
     }
    }
    const viewport=p.getViewport({scale:2});
    if(viewport.width*viewport.height>25000000)throw new Error('Trang PDF scan EOB quá lớn.');
    const c=createCanvas(Math.ceil(viewport.width),Math.ceil(viewport.height));await p.render({canvasContext:c.getContext('2d'),viewport}).promise;
-   out.push(await recognizePage(worker,await loadImage(c.toBuffer('image/png'))));p.cleanup();
+   out.push(await recognize(worker,await loadImage(c.toBuffer('image/png'))));p.cleanup();
   }return out;});
   return {extracted:{sha256:sha(bytes),pages,sourceFormat:'scanned-pdf',ocr:true},pdfBytes:bytes};
  }catch(e){e.code='EOB_REVIEW_REQUIRED';throw e;}finally{await task.destroy();}

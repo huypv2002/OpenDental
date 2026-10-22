@@ -1,4 +1,4 @@
-export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\d+$/,requireMember=true}={}){
+export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\d+$/,requireMember=true,verifyLibertyOcr=true}={}){
  const errors=[...parsed.errors];
  const safe=n=>Number.isSafeInteger(n)&&n>=0;
  if(!parsed.claims.length||!safe(parsed.check.netPaymentCents)||parsed.check.netPaymentCents<=0)errors.push('Thiếu tổng NET PAYMENT hợp lệ.');
@@ -11,7 +11,7 @@ export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\
   const amount=claim.totals.planPaidCents,rows=claim.procedures;
   if(!safe(amount)||amount<=0||rows.reduce((n,p)=>n+p.benefitCents,0)!==amount)errors.push(`Claim ${claim.claimNumber}: tổng dịch vụ không khớp tổng claim.`);
   if(rows.some((p,i)=>p.line!==i+1||!p.date||!/^D\d{4}$/.test(p.code)||!['benefitCents','feeCents','allowedCents','copayCents','deductibleCents','coinsuranceCents','patientDueCents'].every(k=>safe(p[k]))))errors.push(`Claim ${claim.claimNumber}: dòng dịch vụ thiếu hoặc không hợp lệ.`);
-  if(extracted.ocr){
+  if(extracted.ocr&&verifyLibertyOcr){
    for(const key of ['submittedCents','allowedCents','copayCents','deductibleCents','coinsuranceCents','patientDueCents']){
     if(rows.reduce((n,p)=>n+p[key],0)!==claim.totals[key])errors.push(`Claim ${claim.claimNumber}: tổng cột ${key} không khớp.`);
    }
@@ -19,7 +19,7 @@ export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\
   sum+=amount;rowCount+=rows.length;
  }
  if(sum!==parsed.check.netPaymentCents)errors.push('Tổng các claim không khớp NET PAYMENT của check.');
- if(extracted.ocr&&rowCount!==extracted.pages.reduce((n,p)=>n+(p.ocrRows||0),0))errors.push('Có dòng dịch vụ OCR chưa đọc đủ các cột tiền.');
+ if(extracted.ocr&&verifyLibertyOcr&&rowCount!==extracted.pages.reduce((n,p)=>n+(p.ocrRows||0),0))errors.push('Có dòng dịch vụ OCR chưa đọc đủ các cột tiền.');
  if(errors.length)throw Object.assign(new Error([...new Set(errors)].join('; ')),extracted.ocr?{code:'EOB_REVIEW_REQUIRED'}:{});
  return parsed;
 }

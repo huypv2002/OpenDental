@@ -40,7 +40,7 @@ node scripts/inspect-cigna-eob.mjs 'C:\path\1275.pdf'
 
 ## Daily insurance Excel report
 
-After each automatic scan, successfully saved MetLife and Liberty claims are appended to a daily workbook. With the standard `D:\SHARE\INSURANCE CLAIM\METLIFE` incoming path, the output is `D:\SHARE\INSURANCE CLAIM\EXCEL\YYYY-MM-DD.xlsx`, beside METLIFE and LIBERTY, dated by the SERVER's local calendar. `INSURANCE_EXCEL_DIR` can override the output directory. A day with no successful records does not create an empty workbook.
+After each automatic scan, successfully saved MetLife, Liberty, CIGNA and Delta Dental claims are appended to a daily workbook. With the standard `D:\SHARE\INSURANCE CLAIM\METLIFE` incoming path, the output is `D:\SHARE\INSURANCE CLAIM\EXCEL\YYYY-MM-DD.xlsx`, beside METLIFE and LIBERTY, dated by the SERVER's local calendar. `INSURANCE_EXCEL_DIR` can override the output directory. A day with no successful records does not create an empty workbook.
 
 `PAYMENTS` follows the supplied 15-column layout, with one row per EOB service and grouped patient/payment totals. `DATE` is the service date; `INSUR PAID DAY` is the EOB payment date (MetLife Processed date / Liberty Check Date). `CHARGE` is the matching completed procedure's actual fee in OD at first export. `INSUR BILL` is the submitted EOB fee, and `INSUR PAY` is the insurance benefit per service. `CREDIT` is the saved claim payment. `TOTAL` sums the group's charges; `BALANCE` is that group's total minus credit, not the patient's entire account balance. Unknown procedure fees and dependent totals stay blank rather than becoming zero. `PAYMENT` is `CREDIT`; `STATUS` is `Đã lưu`.
 
@@ -166,3 +166,19 @@ MetLife is mounted by `src/server.js` at `/api/metlife` and uses `src/db.js`'s e
 For the existing Windows Git installation, run `od-bridge.bat` (also available as `start-bridge-and-tunnel.bat`). It pulls `origin/main` with `--ff-only`, installs locked dependencies, initializes MetLife configuration without replacing DB/API settings, restarts the Bridge listener, checks `/health`, and retains the existing tunnel. On the first update, pull once to obtain this launcher. See [CAP-NHAT-METLIFE.md](CAP-NHAT-METLIFE.md). Electron 0.3.2 connects automatically to `http://SERVER:3008` on the trusted clinic LAN without sign-in or file import. Direct desktop requests must have private sockets and the actual server hostname/IP; browser, public-host and forwarded/proxy requests still require authentication. Clinic LAN machines therefore have MetLife access. Ensure DNS and inbound TCP 3008 work on the private clinic network; `METLIFE_SERVER_URL` may override the desktop LAN address. Service-managed installations must restart through their existing supervisor.
 
 The financial tables are read only through these APIs. Financial changes go through the R5 Open Dental UI driver. The private operation journal contains patient context; keep it outside public web directories. Run `npm run test:metlife` for the API/posting tests. Driver implementation is present but has not been verified on the actual R5 workstation.
+
+## Delta Dental claim folder
+
+The scanner watches `D:\SHARE\INSURANCE CLAIM\DELTA DENTAL` alongside the other carriers. The supported layout is Delta **Provider Tools / Fee for service**, including the supplied two-page scanned PDF. PDF/JPG/JPEG/PNG processing uses local OCR when needed; arbitrary Delta layouts require review. Existing Liberty OCR remains separate.
+
+Payment uses this claim's reconciled **Claim total / Delta Dental pays**, with **Date payment sent** as the payment date. The deposit `Amount` may cover multiple claims and is retained for audit, not used as the claim payment. For the confirmed `280.pdf` example, this means **$154.00 on 2026-06-17**, not the $187 deposit amount. Blank Check #, `Claim number: <claim>` note, Finished Claims PDF import, history, archive and daily Excel use the common workflow; document filenames start with `DELTA_`.
+
+Exact table rows repeated at the page boundary are removed only as a suffix/prefix overlap. A denied charged row and a single paid adjustment with the same code/date/tooth are combined, preserving the submitted charge. All six resulting money columns must reconcile with Claim total, and benefits must match the displayed allowance/deductible/percentage. Missing pages, uncertain OCR and ambiguous matches stop for review before writes. Every patient must uniquely match name, DOB, Delta carrier and Subscriber ID, plus the numeric patient filename when available. Completed OD services must uniquely match code/date/tooth before importing documents or updating fees.
+
+Read-only local inspection (does not connect to the DB or submit payments):
+
+```powershell
+node scripts/inspect-delta-eob.mjs "D:\SHARE\INSURANCE CLAIM\DELTA DENTAL\280.pdf"
+```
+
+Set `DELTA_TEST_PDF` to a private sample path to enable the real scanned-file regression in `npm run test:metlife`. Simulated DB tests cover payload, document, history, archive and Excel. These tests do not establish a successful deployment or financial write on SERVER.
