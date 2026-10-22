@@ -14,6 +14,11 @@ let autoScanIntervalId = null;
 let lastScanTime = null;
 let lastScanResult = null;
 
+export function insuranceIncomingDirs(dir){
+  const candidates=[dir,...['LIBERTY','CIGNA'].map(name=>path.join(path.dirname(dir),name))];
+  return candidates.filter((candidate,i)=>candidates.findIndex(other=>other.toLowerCase()===candidate.toLowerCase())===i);
+}
+
 export async function ensureMetlifeHistoryTable(pool) {
   try {
     await pool.execute(`
@@ -131,7 +136,7 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
   const resolvedDir=await fs.realpath(destDir),relative=path.relative(base,resolvedDir);
   if(relative.startsWith('..')||path.isAbsolute(relative))throw new Error('Thư mục ảnh bệnh nhân nằm ngoài AtoZ.');
   const safeClaim=claimNumber.replace(/[^a-zA-Z0-9]/g,'_');
-  const prefix=carrier==='LIBERTY Dental Plan'?'LIBERTY':'METLIFE';
+  const prefix=carrier==='CIGNA'?'CIGNA':carrier==='LIBERTY Dental Plan'?'LIBERTY':'METLIFE';
   const destFileName=`${prefix}_${safeClaim}_${paymentDate}_${Date.now()}.pdf`;
   const fullDestPath=path.join(resolvedDir,destFileName);
   await fs.writeFile(fullDestPath,fileBytes,{flag:'wx'});
@@ -215,6 +220,7 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
 export async function processSinglePdf(pool, filePath, {extract = extractPdf, hashSplits = nativeSplitHashes} = {}) {
   const fileName = path.basename(filePath);
   console.log(`\n[Auto-Processor] Bắt đầu xử lý: ${fileName}...`);
+  if(path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA'&&isImageFile(fileName))throw Object.assign(new Error('CIGNA hiện cần PDF có chữ theo mẫu đã hỗ trợ; chưa xử lý ảnh CIGNA.'),{code:'EOB_REVIEW_REQUIRED'});
 
   if((await fs.stat(filePath)).size>30*1024*1024)throw Object.assign(new Error('Tài liệu EOB vượt quá 30 MB.'),{code:'EOB_REVIEW_REQUIRED'});
   const sourceBytes = await fs.readFile(filePath);
@@ -223,6 +229,11 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   catch(e){if(isImageFile(fileName))e.code='EOB_REVIEW_REQUIRED';throw e;}
   const {extracted,pdfBytes:fileBytes}=document;
   const fullText = extracted.pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n');
+
+  if(path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA'||(/Claim\/Reference Number:/.test(fullText)&&/Claim Amount Paid:/.test(fullText)&&/Date Processed:/.test(fullText))){
+    const {processCignaPdf}=await import('../cigna/processor.js');
+    return processCignaPdf(pool,{filePath,fileName,fileBytes,extracted});
+  }
 
   // Carrier auto-detection: Liberty vs MetLife
   const isLiberty = /LIBERTY Dental Plan/i.test(fullText) || /PAYMENT DETAILS/i.test(fullText);
@@ -511,14 +522,7 @@ export async function scanIncomingFolder(pool, incomingDir, {processFile=process
   await ensureMetlifeHistoryTable(pool);
 
   try {
-    const candidateDirs = [incomingDir];
-    try {
-      const parentDir = path.dirname(incomingDir);
-      const libertyDir = path.join(parentDir, 'LIBERTY');
-      if (libertyDir.toLowerCase() !== incomingDir.toLowerCase()) {
-        candidateDirs.push(libertyDir);
-      }
-    } catch {}
+    const candidateDirs = insuranceIncomingDirs(incomingDir);
 
     const allPdfFiles = [];
 
@@ -575,7 +579,7 @@ export async function scanIncomingFolder(pool, incomingDir, {processFile=process
       return emptyRes;
     }
 
-    console.log(`[Auto-Processor] Phát hiện ${allPdfFiles.length} file EOB (PDF/JPG/PNG) mới cần xử lý (MetLife / Liberty)...`);
+    console.log(`[Auto-Processor] Phát hiện ${allPdfFiles.length} file EOB mới cần xử lý (MetLife / Liberty / CIGNA)...`);
     const results = [];
 
     for (const file of allPdfFiles) {
@@ -628,12 +632,7 @@ export async function scanIncomingFolder(pool, incomingDir, {processFile=process
 
 export async function getProcessorStatus(pool, incomingDir) {
   const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
-  const candidateDirs = [dir];
-  try {
-    const parentDir = path.dirname(dir);
-    const libertyDir = path.join(parentDir, 'LIBERTY');
-    if (libertyDir.toLowerCase() !== dir.toLowerCase()) candidateDirs.push(libertyDir);
-  } catch {}
+  const candidateDirs = insuranceIncomingDirs(dir);
 
   let incomingCount = 0;
   let processedCount = 0;
@@ -698,12 +697,7 @@ export async function getProcessorStatus(pool, incomingDir) {
 
 export async function retryErrorFiles(pool, incomingDir) {
   const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
-  const candidateDirs = [dir];
-  try {
-    const parentDir = path.dirname(dir);
-    const libertyDir = path.join(parentDir, 'LIBERTY');
-    if (libertyDir.toLowerCase() !== dir.toLowerCase()) candidateDirs.push(libertyDir);
-  } catch {}
+  const candidateDirs = insuranceIncomingDirs(dir);
 
   let moved = 0;
   for (const cDir of candidateDirs) {
@@ -778,7 +772,7 @@ export async function getHistoryPdf(pool, historyId, incomingDir) {
   }
 
   // 3. Try checking PROCESSED, ERRORS, incomingDir
-  const searchDirs = [dir,path.join(path.dirname(dir),'LIBERTY')].flatMap(base=>['PROCESSED','ERRORS','REVIEW',''].map(name=>path.join(base,name)));
+  const searchDirs = insuranceIncomingDirs(dir).flatMap(base=>['PROCESSED','ERRORS','REVIEW',''].map(name=>path.join(base,name)));
   for (const sDir of searchDirs) {
     try {
       const files = await fs.readdir(sDir);
@@ -797,16 +791,19 @@ export function startAutoProcessor({ pool, incomingDir, intervalMs = 30000 }) {
   const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
   const parentDir = path.dirname(dir);
   const libertyDir = path.join(parentDir, 'LIBERTY');
+  const cignaDir = path.join(parentDir,'CIGNA');
 
-  console.log(`[Insurance Auto-Processor] Khởi chạy bộ quét EOB tự động (Hỗ trợ cả MetLife & LIBERTY Dental Plan)`);
+  console.log(`[Insurance Auto-Processor] Khởi chạy bộ quét EOB tự động (MetLife / Liberty / CIGNA)`);
   console.log(`[Insurance Auto-Processor] Thư mục theo dõi:`);
   console.log(`  - MetLife: ${dir}`);
   console.log(`  - Liberty: ${libertyDir} (PDF, JPG, JPEG, PNG)`);
+  console.log(`  - CIGNA: ${cignaDir} (PDF)`);
   console.log(`  - Chu kỳ quét: ${intervalMs / 1000}s/lần`);
 
   // Ensure folders exist so staff can easily see them in Explorer
   try { fs.mkdir(dir, { recursive: true }).catch(() => {}); } catch {}
   try { fs.mkdir(libertyDir, { recursive: true }).catch(() => {}); } catch {}
+  try { fs.mkdir(cignaDir,{recursive:true}).catch(()=>{}); } catch {}
 
   // Initial scan after 3s
   setTimeout(() => {

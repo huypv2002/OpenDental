@@ -10,7 +10,7 @@
     "liberty:inspect": "node scripts/inspect-liberty-eob.mjs",
     "test:metlife:database": "node --test src/metlife/directPayment.database.test.js",
     "metlife:configure": "node scripts/configure-metlife.mjs",
-    "test:metlife": "node --test src/metlife/*.test.js src/liberty/*.test.js"
+    "test:metlife": "node --test src/metlife/*.test.js src/liberty/*.test.js src/cigna/*.test.js"
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.11",

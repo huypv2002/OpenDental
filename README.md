@@ -22,6 +22,22 @@ Output files contain patient information; store them privately. Existing output 
 
 Format regressions can additionally use `LIBERTY_TEST_SINGLE_PDF`, `LIBERTY_TEST_MULTI_PDF`, and `LIBERTY_TEST_SINGLE_IMAGE`. The PDF matrix checks the original PDF, a JPEG rendered from its claim page, and an image-only PDF against the same patient/member/claim/service/date/amount data. JPEG processor tests use a simulated DB and verify per-patient isolation, PDF document copies and preservation of the original image. Missing optional fixtures are explicitly skipped. Local results do not establish successful processing on the clinic's SERVER or validate every future EOB layout.
 
+## CIGNA claim folder
+
+The scanner also watches `D:\SHARE\INSURANCE CLAIM\CIGNA` beside METLIFE and LIBERTY. CIGNA currently supports the supplied text-based portal PDF layout, including a claim table continuing onto later pages. It uses the common Insurance Paid payload, blank check number, `Claim number: <claim>` note, Finished Claims import, archive and daily Excel report. CIGNA document filenames start with `CIGNA_`, and history/Excel preserve the CIGNA carrier label. Images and scanned CIGNA PDFs require review rather than being interpreted as Liberty images.
+
+For this confirmed CIGNA workflow, payment is the sum of the **Plan Coinsurance Paid** service values. Zero summary/header values do not override positive, reconciled service values; a conflicting nonzero summary stops processing. Each service's amount must agree with Covered Balance multiplied by its displayed percentage. All other table totals must reconcile across the complete PDF. Processing requires `PROCESSED` status; the payment date is `Date Processed`.
+
+An alternate benefit row with zero submitted charge is paired with exactly one original charged service on the same tooth/date. The saved split uses the original OD code and the alternate paid amount. The supplied sample becomes D2392/tooth 30 = $56.80 and D2392/tooth 31 = $56.80, total $113.60, dated 2026-10-15; D2150 is retained in the source audit rather than posted as an extra service. Ambiguous replacements, missing continuation pages and mismatched totals go to review before financial writes. Patient matching checks exact names, a unique CIGNA insurance association and the numeric patient filename when available; completed services must uniquely match code/date/tooth.
+
+Read-only inspection (no DB connection or payment):
+
+```powershell
+node scripts/inspect-cigna-eob.mjs 'C:\path\1275.pdf'
+```
+
+`CIGNA_TEST_PDF` enables an optional real-file regression during `npm run test:metlife`. Mock DB tests also cover split-tooth isolation, normalized payload, CIGNA Finished Claims filenames, history, archive and Excel. Real clinic writes remain a separate deployment verification.
+
 ## Daily insurance Excel report
 
 After each automatic scan, successfully saved MetLife and Liberty claims are appended to a daily workbook. With the standard `D:\SHARE\INSURANCE CLAIM\METLIFE` incoming path, the output is `D:\SHARE\INSURANCE CLAIM\EXCEL\YYYY-MM-DD.xlsx`, beside METLIFE and LIBERTY, dated by the SERVER's local calendar. `INSURANCE_EXCEL_DIR` can override the output directory. A day with no successful records does not create an empty workbook.

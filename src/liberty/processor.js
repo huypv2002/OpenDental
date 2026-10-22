@@ -100,7 +100,7 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
       amount: splitAmount,
       amountCents: eobProc.benefitCents,
       code: eobProc.code,
-      desc: match?.Descript || `Liberty ${eobProc.code}`
+      desc: match?.Descript || `${claim.plan?.carrier||'Insurance'} ${eobProc.code}`
     });
   }
 
@@ -133,19 +133,20 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
   };
 }
 
-export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, log = console.log } = {}) {
-  const parsed = validateLibertyForPosting(parseLiberty(extracted),extracted);
+export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, log = console.log, normalized=null, carrier='LIBERTY Dental Plan', patientResolver=resolveLibertyPatient } = {}) {
+  const label=carrier==='CIGNA'?'Cigna':'Liberty';
+  const parsed = validateLibertyForPosting(normalized||parseLiberty(extracted),extracted,carrier==='CIGNA'?{claimPattern:/^[A-Z0-9-]{1,64}$/,requireMember:false}:{});
   const preflight=new Map();
-  if(extracted.ocr){
+  if(extracted.ocr||carrier==='CIGNA'){
     // Resolve every patient/procedure before importing or changing fees for the first claim.
     try{for(const claim of parsed.claims){
-      const patient=await resolveLibertyPatient(pool,{claim,strictMember:true});
+      const patient=await patientResolver(pool,{claim,strictMember:true,fileName,claimsCount:parsed.claimsCount});
       const dbProcs=await libertyProcedures(pool,patient.PatNum);
       matchLibertyProcedures(dbProcs,claim);preflight.set(claim.claimNumber,{patient,dbProcs});
     }}catch(e){e.code='EOB_REVIEW_REQUIRED';throw e;}
   }
 
-  log(`[Liberty Auto-Processor] Phát hiện ${parsed.claimsCount} claim trong check #${parsed.check.number}`);
+  log(`[${label} Auto-Processor] Phát hiện ${parsed.claimsCount} claim${parsed.check.number?` trong check #${parsed.check.number}`:''}`);
 
   const processedClaims = [];
   const incomingDir = path.dirname(filePath);
@@ -153,37 +154,38 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
   const archivePath = path.join(processedDir, `${Date.now()}_${fileName}`);
 
   for (const claim of parsed.claims) {
-    log(`[Liberty Auto-Processor] Đang xử lý claim #${claim.claimNumber} cho bệnh nhân ${claim.patient.lastName}, ${claim.patient.firstName}...`);
+    log(`[${label} Auto-Processor] Đang xử lý claim #${claim.claimNumber} cho bệnh nhân ${claim.patient.lastName}, ${claim.patient.firstName}...`);
 
-    log(`[Liberty Auto-Processor] Claim #${claim.claimNumber}: đối chiếu bệnh nhân...`);
-    const patient = preflight.get(claim.claimNumber)?.patient || await resolveLibertyPatient(pool, { claim });
+    log(`[${label} Auto-Processor] Claim #${claim.claimNumber}: đối chiếu bệnh nhân...`);
+    const patient = preflight.get(claim.claimNumber)?.patient || await patientResolver(pool, { claim });
     const patNum = patient.PatNum;
     const clinicNum = patient.ClinicNum || 0;
     const claimNumber = claim.claimNumber;
     const checkNumber = parsed.check.number;
     const groupNum = claim.plan.group || '';
-    const checkDate = parsed.check.date;
+    const claimCheck={...parsed.check,...claim.check};
+    const checkDate = claimCheck.date;
     const paymentFields = claimPaymentFields(claimNumber,checkDate);
     const totalBenefit = (claim.totals.planPaidCents / 100).toFixed(2);
 
-    log(`[Liberty Auto-Processor] Claim #${claimNumber}: lưu PDF vào Finished Claims...`);
+    log(`[${label} Auto-Processor] Claim #${claimNumber}: lưu PDF vào Finished Claims...`);
     // Import PDF to AtoZ
     const aToZResult = await importPdfToAtoZ(pool, {
       patient,
       fileBytes,
       fileName,
       claimNumber,
-      carrier: 'LIBERTY Dental Plan',
+      carrier,
       paymentDate: checkDate,
       amountCents: claim.totals.planPaidCents
     });
 
     // Prepare payload
-    log(`[Liberty Auto-Processor] Claim #${claimNumber}: đối chiếu dịch vụ, cập nhật phí và chuẩn bị phân bổ...`);
-    const payload = await preparePayload(pool, { claim, check: parsed.check, patient, dbProcs:preflight.get(claim.claimNumber)?.dbProcs });
+    log(`[${label} Auto-Processor] Claim #${claimNumber}: đối chiếu dịch vụ, cập nhật phí và chuẩn bị phân bổ...`);
+    const payload = await preparePayload(pool, { claim, check: claimCheck, patient, dbProcs:preflight.get(claim.claimNumber)?.dbProcs });
 
     // Select Payment Type
-    log(`[Liberty Auto-Processor] Claim #${claimNumber}: chọn loại thanh toán...`);
+    log(`[${label} Auto-Processor] Claim #${claimNumber}: chọn loại thanh toán...`);
     const [payTypes] = await pool.execute(
       'SELECT DefNum, ItemName FROM definition WHERE Category = 10 AND IsHidden = 0 ORDER BY ItemOrder'
     );
@@ -194,17 +196,17 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       { DefNum: 10, ItemName: 'Insurance Paid' };
 
     // DB Transaction with LOCK TABLES
-    log(`[Liberty Auto-Processor] Claim #${claimNumber}: chờ kết nối ghi thanh toán...`);
+    log(`[${label} Auto-Processor] Claim #${claimNumber}: chờ kết nối ghi thanh toán...`);
     const conn = await pool.getConnection();
     let payNum = 0;
 
     try {
-      log(`[Liberty Auto-Processor] Claim #${claimNumber}: chờ khóa bảng thanh toán...`);
+      log(`[${label} Auto-Processor] Claim #${claimNumber}: chờ khóa bảng thanh toán...`);
       await conn.query(
         'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE'
       );
 
-      log(`[Liberty Auto-Processor] Claim #${claimNumber}: ghi thanh toán $${totalBenefit}, ${payload.splits.length} phân bổ...`);
+      log(`[${label} Auto-Processor] Claim #${claimNumber}: ghi thanh toán $${totalBenefit}, ${payload.splits.length} phân bổ...`);
       // Revert duplicate payments for this check & claim
       const [existingPayments] = await conn.execute(
         'SELECT PayNum FROM payment WHERE PatNum = ? AND (ExternalId = ? OR CheckNum = ?)',
@@ -300,7 +302,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       conn.release();
     }
 
-    log(`[Liberty Auto-Processor] Claim #${claimNumber}: đã ghi Payment #${payNum}, đã mở khóa; cập nhật số dư...`);
+    log(`[${label} Auto-Processor] Claim #${claimNumber}: đã ghi Payment #${payNum}, đã mở khóa; cập nhật số dư...`);
     // Re-calculate BalTotal after releasing table locks
     try {
       const [balRes] = await pool.execute(
@@ -314,13 +316,16 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       const newBal = (Number(balRes[0]?.TotalCharges || 0) - Number(paySumRes[0]?.TotalPaid || 0)).toFixed(2);
       await pool.execute('UPDATE patient SET BalTotal = ? WHERE PatNum = ?', [newBal, patNum]);
     } catch (e) {
-      console.warn('[Liberty] Warning calculating BalTotal:', e.message);
+      console.warn(`[${label}] Warning calculating BalTotal:`, e.message);
     }
 
-    log(`[Liberty Auto-Processor] Claim #${claimNumber}: ghi lịch sử xử lý...`);
+    log(`[${label} Auto-Processor] Claim #${claimNumber}: ghi lịch sử xử lý...`);
     // Record in history table
     const details = JSON.stringify({
-      carrier: 'LIBERTY Dental Plan',
+      carrier,
+      settlementBasis:parsed.settlementBasis,
+      warnings:parsed.warnings,
+      sourceProcedures:carrier==='CIGNA'?claim.rawProcedures:undefined,
       sourceFormat: extracted.sourceFormat||'pdf',
       extractedText: extracted.ocr?parsed.text:undefined,
       archivePath,
@@ -369,12 +374,12 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
         feesUpdatedStr,
         payNum,
         aToZResult.docNum,
-        `[Liberty] Đã tự động import Finished Claims và ghi thanh toán $${totalBenefit} vào Open Dental.`,
+        `[${label}] Đã tự động import Finished Claims và ghi thanh toán $${totalBenefit} vào Open Dental.`,
         details
       ]
     );
 
-    log(`[Liberty Auto-Processor] ✓ CLAIM HOÀN TẤT: #${claimNumber} -> PayNum: ${payNum}, DocNum: ${aToZResult.docNum}, $${totalBenefit}`);
+    log(`[${label} Auto-Processor] ✓ CLAIM HOÀN TẤT: #${claimNumber} -> PayNum: ${payNum}, DocNum: ${aToZResult.docNum}, $${totalBenefit}`);
     processedClaims.push({
       claimNumber,
       patNum,
@@ -386,14 +391,14 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
   }
 
   // Move PDF to PROCESSED
-  log(`[Liberty Auto-Processor] Chuyển ${fileName} vào PROCESSED...`);
+  log(`[${label} Auto-Processor] Chuyển ${fileName} vào PROCESSED...`);
   await fs.mkdir(processedDir, { recursive: true });
   await fs.rename(filePath, archivePath);
-  log(`[Liberty Auto-Processor] ✓ HOÀN THÀNH: ${fileName} -> ${processedClaims.length} claim, ${processedClaims.map(c => `PayNum: ${c.payNum}, DocNum: ${c.docNum}`).join('; ')} -> PROCESSED`);
+  log(`[${label} Auto-Processor] ✓ HOÀN THÀNH: ${fileName} -> ${processedClaims.length} claim, ${processedClaims.map(c => `PayNum: ${c.payNum}, DocNum: ${c.docNum}`).join('; ')} -> PROCESSED`);
 
   return {
     success: true,
-    carrier: 'LIBERTY Dental Plan',
+    carrier,
     fileName,
     archivePath,
     claimsCount: processedClaims.length,
