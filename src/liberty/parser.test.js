@@ -30,14 +30,14 @@ test('parseLibertyToothAndDesc extracts tooth and description', () => {
   });
 });
 
-test('parseLiberty parses full Liberty Dental Plan PDF with multi-claim payload', async () => {
-  const samplePdfPath = '/Users/phamvanhuy/.gemini/antigravity-ide/brain/4a57ede7-764d-426c-9039-24fe987b472e/.user_uploaded/media_1792520482271.pdf';
+test('parseLiberty parses full Liberty Dental Plan PDF with multi-claim payload', async t => {
+  const samplePdfPath = process.env.LIBERTY_TEST_MULTI_PDF||'/Users/phamvanhuy/.gemini/antigravity-ide/brain/4a57ede7-764d-426c-9039-24fe987b472e/.user_uploaded/media_1792520482271.pdf';
   let buffer;
   try {
     buffer = await fs.readFile(samplePdfPath);
   } catch (err) {
-    // If not accessible in CI, skip test
-    return;
+    if(err.code==='ENOENT')return t.skip('Local multi-patient PDF fixture is unavailable.');
+    throw err;
   }
 
   const extracted = await extractPdf(buffer);
@@ -122,13 +122,14 @@ test('parseLiberty parses full Liberty Dental Plan PDF with multi-claim payload'
   assert.equal(c2.paymentPayload.splits.length, 7);
 });
 
-test('parseLiberty parses single-claim Liberty PDF (Lee, Liza - Check #110372)', async () => {
-  const samplePdfPath = '/Users/phamvanhuy/.gemini/antigravity-ide/brain/4a57ede7-764d-426c-9039-24fe987b472e/.user_uploaded/media_1792523692379.pdf';
+test('parseLiberty parses single-claim Liberty PDF (Lee, Liza - Check #110372)', async t => {
+  const samplePdfPath = process.env.LIBERTY_TEST_SINGLE_PDF||'/Users/phamvanhuy/.gemini/antigravity-ide/brain/4a57ede7-764d-426c-9039-24fe987b472e/.user_uploaded/media_1792523692379.pdf';
   let buffer;
   try {
     buffer = await fs.readFile(samplePdfPath);
   } catch (err) {
-    return;
+    if(err.code==='ENOENT')return t.skip('Local single-patient PDF fixture is unavailable.');
+    throw err;
   }
 
   const extracted = await extractPdf(buffer);

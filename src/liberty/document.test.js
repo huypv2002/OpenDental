@@ -117,3 +117,23 @@ test('supplied Liberty image regression (optional local fixture)',{skip:!process
  assert.equal(scan.extracted.sourceFormat,'scanned-pdf');
  assert.deepEqual(scanned.claims.map(c=>[c.claimNumber,c.totals.planPaidCents]),p.claims.map(c=>[c.claimNumber,c.totals.planPaidCents]));
 });
+
+for(const [key,count,total] of [['LIBERTY_TEST_SINGLE_PDF',1,16700],['LIBERTY_TEST_MULTI_PDF',2,173300]]){
+ test(`actual Liberty PDF and JPEG: ${count} patient(s), every claim/service matches`,{skip:!process.env[key],timeout:120000},async()=>{
+  const bytes=await fs.readFile(process.env[key]),original=await readInsuranceDocument(bytes,'original.pdf');
+  const baseline=validateLibertyForPosting(parseLiberty(original.extracted),original.extracted);
+  assert.equal(baseline.claimsCount,count);assert.equal(baseline.check.netPaymentCents,total);
+  const {getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const task=getDocument({data:new Uint8Array(bytes),isEvalSupported:false,useSystemFonts:true});
+  let jpeg;
+  try{
+   const pdf=await task.promise,p=await pdf.getPage(1),viewport=p.getViewport({scale:2}),canvas=createCanvas(Math.ceil(viewport.width),Math.ceil(viewport.height));
+   await p.render({canvasContext:canvas.getContext('2d'),viewport}).promise;jpeg=canvas.toBuffer('image/jpeg',95);
+  }finally{await task.destroy();}
+  const core=parsed=>({check:parsed.check.number,date:parsed.check.date,total:parsed.check.netPaymentCents,claims:parsed.claims.map(c=>({claim:c.claimNumber,patient:c.patient,amount:c.totals.planPaidCents,procedures:c.procedures.map(p=>({line:p.line,code:p.code,date:p.date,tooth:p.tooth,fee:p.feeCents,paid:p.benefitCents}))}))});
+  for(const [data,name] of [[jpeg,'sample.JPEG'],[await imagePdf(jpeg),'scan.pdf']]){
+   const r=await readInsuranceDocument(data,name),parsed=validateLibertyForPosting(parseLiberty(r.extracted),r.extracted);
+   assert.deepEqual(core(parsed),core(baseline));
+  }
+ });
+}

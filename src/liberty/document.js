@@ -46,21 +46,22 @@ async function recognizePage(worker,image){
  const left=name=>header.words.find(w=>w.text===name).x-7;
  const codeLeft=left('Code'),toothLeft=left('Tooth'),surfaceLeft=left('Surface');
  const dateHeader=header.words.find(w=>/Date/i.test(w.text));if(!dateHeader)throw new Error('Không đọc được cột ngày dịch vụ trong ảnh.');
- const dateLeft=dateHeader.x-7;
- async function cell(line,x,width,whitelist){
+ const dateLeft=dateHeader.x-7*scale;
+ async function cell(line,x,width,whitelist,mode='7'){
   const rowWords=line.words.filter(w=>w.x>=dateLeft&&w.x<toothLeft),top=Math.min(...rowWords.map(w=>w.y))-11,bottom=Math.max(...rowWords.map(w=>w.y+w.height))+17;
   // Re-read a single cell with an alphabet appropriate to that field. No digit substitution.
   const up=4/scale,pad=0,crop=createCanvas(Math.ceil(width*up)+pad*2,Math.ceil((bottom-top)*up)+pad*2);
   const ctx=crop.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,crop.width,crop.height);
   ctx.drawImage(image,x/scale,top/scale,width/scale,(bottom-top)/scale,pad,pad,width*up,(bottom-top)*up);
-  await worker.setParameters({tessedit_pageseg_mode:'7',tessedit_char_whitelist:whitelist,preserve_interword_spaces:'0'});
+  await worker.setParameters({tessedit_pageseg_mode:mode,tessedit_char_whitelist:whitelist,preserve_interword_spaces:'0'});
   return (await worker.recognize(crop.toBuffer('image/png'))).data.text.trim().replace(/\s+/g,'');
  }
  const output=[];let rows=0;
  for(const line of lines){
   const text=line.words.map(w=>w.text).join(' ');
-  const dateWords=line.words.filter(w=>w.x>=dateLeft&&w.x<codeLeft);
-  if(dateWords.some(w=>/^\d{2}\/\d/.test(w.text))&&line.words.some(w=>w.x>=codeLeft&&w.x<toothLeft)){
+  // OCR can join the row number to its date; use overlap, not only the word's left edge.
+  const dateWords=line.words.filter(w=>w.x+w.width>dateLeft&&w.x<codeLeft);
+  if(dateWords.some(w=>/\d{2}\/\d/.test(w.text))&&line.words.some(w=>w.x>=codeLeft&&w.x<toothLeft)){
    const dateRead=await cell(line,dateLeft,codeLeft-dateLeft,'0123456789/');
    const dateParts=/^(\d{2})\/?(\d{2})\/?(\d{2})$/.exec(dateRead);
    const date=dateParts?`${dateParts[1]}/${dateParts[2]}/${dateParts[3]}`:dateRead;
@@ -74,11 +75,21 @@ async function recognizePage(worker,image){
     if(!/^(?:[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(tooth))throw new Error('Ô răng trong ảnh chưa rõ; cần đối chiếu ảnh gốc.');
    }
    if(!/^\d{2}\/\d{2}\/\d{2}$/.test(date)||!/^D\d{4}$/.test(code))throw new Error('Ngày hoặc mã dịch vụ trong ảnh chưa rõ; chưa xử lý thanh toán.');
-   const rawDate=dateWords.map(w=>w.text).join('').replace(/\D/g,'');
+   const rawDate=dateWords.map(w=>w.text).join('').replace(/\D/g,'').slice(-6);
    if(rawDate!==date.replace(/\D/g,''))throw new Error('Hai lần đọc ngày dịch vụ không khớp.');
    const rawCode=line.words.filter(w=>w.x>=codeLeft&&w.x<toothLeft).map(w=>w.text).join('');
    if(/^D\d{4}$/.test(rawCode)&&rawCode!==code)throw new Error('Hai lần đọc mã dịch vụ không khớp.');
-   const number=line.words.find(w=>w.x<dateLeft)?.text;
+   let number=line.words.find(w=>w.x<dateLeft)?.text;
+   const rawNumber=number;
+   if(!/^\d+$/.test(number||'')){
+    const numberLeft=Math.max(0,dateLeft-(codeLeft-dateLeft)*0.65);
+    number=await cell(line,numberLeft,dateLeft-numberLeft,'0123456789');
+    if(!/^\d+$/.test(number))number=await cell(line,numberLeft,dateLeft-numberLeft,'0123456789','8');
+    if(!/^\d+$/.test(number))number=await cell(line,numberLeft,dateLeft-numberLeft,'0123456789','10');
+    // A thin printed row-index 1 can be recognized as I/l/|. This applies only
+    // to the non-financial index; validation still requires the full 1..N sequence.
+    if(!number&&/^[Il|]$/.test(rawNumber||''))number='1';
+   }
    if(!/^\d+$/.test(number||''))throw new Error('Không đọc rõ số thứ tự dịch vụ trong ảnh.');
    output.push(`${number} ${date} ${code} ${tooth} ${normalizeAmounts(line.words.filter(w=>w.x>=surfaceLeft).map(w=>w.text).join(' '))}`.replace(/\s+/g,' '));rows++;
   }else output.push(/CLAIM TOTALS|NET PAYMENT|VENDOR TOTALS|GRAND TOTALS/i.test(text)?normalizeAmounts(text):text);

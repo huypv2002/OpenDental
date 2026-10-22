@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {processLibertyPdf} from './processor.js';
 import {importPdfToAtoZ} from '../metlife/autoProcessor.js';
+import {readInsuranceDocument} from './document.js';
+import {parseLiberty} from './parser.js';
 
 function extractedClaims(count){
  const lines=['LIBERTY Dental Plan','PAYMENT DETAILS','Check Number: TESTCHECK','Check Date: 10/07/2026',`NET PAYMENT: ${count===1?'38.00':'80.00'}`];
@@ -17,14 +19,15 @@ function extractedClaims(count){
  return {sha256:'a'.repeat(64),pages:[{lines:lines.map(text=>({text}))}]};
 }
 
-async function fixture({claims=1,failHistory=false,failArchive=false}={}){
- const root=await fs.mkdtemp(path.join(os.tmpdir(),'liberty-completion-')),fileName='synthetic.pdf',filePath=path.join(root,fileName),fileBytes=Buffer.from('synthetic PDF bytes');
- await fs.writeFile(filePath,fileBytes);
+async function fixture({claims=1,failHistory=false,failArchive=false,input=null}={}){
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'liberty-completion-')),fileName=input?.fileName||'synthetic.pdf',filePath=path.join(root,fileName),fileBytes=input?.pdfBytes||Buffer.from('synthetic PDF bytes');
+ const extracted=input?.extracted||extractedClaims(claims),parsed=parseLiberty(extracted);
+ await fs.writeFile(filePath,input?.sourceBytes||fileBytes);
  await fs.mkdir(path.join(root,'images'));
  const messages=[],history=[],documents=[],events=[];let locked=false,released=0,payId=100;
  const conn={query:async sql=>{events.push(sql);if(sql.startsWith('LOCK TABLES'))locked=true;if(sql==='UNLOCK TABLES')locked=false;return [[]];},
   execute:async(sql,args)=>{
-   if(sql.includes('INSERT INTO payment')){assert.equal(args[3],'');assert.match(args[4],/^Claim number: 700[12]$/);assert.equal(args[1],'2026-10-07');}
+   if(sql.includes('INSERT INTO payment')){assert.equal(args[3],'');assert.ok(parsed.claims.some(c=>args[4]===`Claim number: ${c.claimNumber}`));assert.equal(args[1],parsed.check.date);}
    if(sql.includes('SELECT PayNum')){assert.ok(sql.includes('ExternalId'));assert.equal(args[1],args[2]);assert.ok(args[1]);}
    if(sql.includes('SELECT PayNum'))return [[]];
    if(sql.includes('INSERT INTO payment'))return [{insertId:++payId}];
@@ -34,7 +37,11 @@ async function fixture({claims=1,failHistory=false,failArchive=false}={}){
   },release(){assert.equal(locked,false);released++;}};
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
   assert.equal(locked,false,'pool queries must run after releasing financial table locks');
-  if(sql.includes('FROM patient p')){const id=args[0].includes('002')?100:99;return [[{PatNum:id,FName:'TEST',LName:'PERSON',ClinicNum:0,PriProv:1,ImageFolder:`Test${id}`}]];}
+  if(sql.includes('FROM patient p')){const i=parsed.claims.findIndex(c=>c.patient.memberId===args[0]),id=99+Math.max(i,0),p=parsed.claims[Math.max(i,0)].patient;return [[{PatNum:id,FName:p.firstName,LName:p.lastName,ClinicNum:0,PriProv:1,ImageFolder:`Test${id}`}]];}
+  if(sql.includes('procedurecode.ProcCode')&&sql.includes('FROM procedurelog')){
+   const claim=parsed.claims[Number(args[0])-99];
+   return [claim.procedures.map((p,i)=>({ProcNum:1000+(Number(args[0])-99)*100+i,ProcCode:p.code,ProcDate:p.date,ProcFee:'0.00',ToothNum:p.tooth||'',ProvNum:1,ClinicNum:0}))];
+  }
   if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:path.join(root,'images')},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];
   if(sql.includes('INFORMATION_SCHEMA.COLUMNS'))return [[{COLUMN_NAME:'DocNum',EXTRA:'auto_increment'},...['DocCategory','PatNum','FileName','Description','DateCreated','ImgType','MountItemNum','ExternalSource','RawBase64'].map(COLUMN_NAME=>({COLUMN_NAME,IS_NULLABLE:'NO',COLUMN_DEFAULT:null,EXTRA:''}))]];
   if(sql.includes('Category = 18'))return [[{DefNum:18}]];
@@ -48,8 +55,8 @@ async function fixture({claims=1,failHistory=false,failArchive=false}={}){
   }
   return [{affectedRows:1}];
  }};
- const preparePayload=async(_pool,{claim})=>({payNote:claim.paymentPayload.payNote,updatedFees:['D0150: synthetic'],splits:claim.procedures.map(p=>({ProcNum:51,ProvNum:1,ClinicNum:0,date:p.date,code:p.code,amount:(p.benefitCents/100).toFixed(2),SecurityHash:'synthetic-only'}))});
- return {root,pool,args:{filePath,fileName,fileBytes,extracted:extractedClaims(claims)},options:{preparePayload,log:message=>messages.push(message)},messages,history,documents,events,get released(){return released;}};
+ const preparePayload=async(_pool,{claim,patient})=>({payNote:claim.paymentPayload.payNote,updatedFees:['D0150: synthetic'],splits:claim.procedures.map((p,i)=>({ProcNum:1000+(patient.PatNum-99)*100+i,ProvNum:1,ClinicNum:0,date:p.date,code:p.code,amount:(p.benefitCents/100).toFixed(2),SecurityHash:'synthetic-only'}))});
+ return {root,pool,args:{filePath,fileName,fileBytes,extracted},options:{preparePayload,log:message=>messages.push(message)},messages,history,documents,events,get released(){return released;}};
 }
 
 for(const claims of [1,2])test(`Liberty logs completion after ${claims} claim history records and PDF archive`,async()=>{
@@ -86,3 +93,24 @@ test('shared document importer preserves default MetLife naming',async()=>{
   assert.ok(result.docNum);assert.match(f.documents[0][2],/^METLIFE_/);assert.equal(f.documents[0][3],'Claim TESTCLAIM  439.20');assert.equal(f.documents[0][4],'2026-09-29 00:00:00');
  }finally{await fs.rm(f.root,{recursive:true,force:true});}
 });
+
+for(const [key,count] of [['LIBERTY_TEST_SINGLE_IMAGE',1],['LIBERTY_TEST_IMAGE',2]]){
+ test(`JPEG with ${count} patient(s) creates isolated mock payments, Finished Claims PDFs and original archive`,{skip:!process.env[key],timeout:120000},async()=>{
+  const sourceBytes=await fs.readFile(process.env[key]),input=await readInsuranceDocument(sourceBytes,'synthetic.JPEG');
+  const parsed=parseLiberty(input.extracted);assert.equal(parsed.claimsCount,count);
+  const f=await fixture({input:{...input,sourceBytes,fileName:'synthetic.JPEG'}});
+  try{
+   const result=await processLibertyPdf(f.pool,f.args,f.options);
+   assert.equal(result.success,true);assert.equal(result.claimsCount,count);assert.equal(f.history.length,count);
+   assert.deepEqual(f.history.map(row=>row[2]),Array.from({length:count},(_,i)=>99+i));
+   assert.deepEqual(f.history.map(row=>row[6]),parsed.claims.map(c=>(c.totals.planPaidCents/100).toFixed(2)));
+   assert.deepEqual(await fs.readFile(result.archivePath),sourceBytes);
+   for(let i=0;i<count;i++){
+    const stored=await fs.readFile(path.join(f.root,'images','T',`Test${99+i}`,f.documents[i][2]));
+    assert.ok(stored.subarray(0,100).includes(Buffer.from('%PDF-')));
+    const details=JSON.parse(f.history[i][12]);assert.equal(details.splits.length,parsed.claims[i].procedures.length);
+    assert.ok(details.splits.every(s=>s.procNum>=1000+i*100&&s.procNum<1100+i*100));
+   }
+  }finally{await fs.rm(f.root,{recursive:true,force:true});}
+ });
+}

@@ -20,6 +20,8 @@ node scripts/inspect-liberty-eob.mjs 'C:\path\EOB.jpg' --json liberty-check.json
 
 Output files contain patient information; store them privately. Existing output files are not overwritten. Inspecting does not submit a payment. For an optional local image regression, set `LIBERTY_TEST_IMAGE` to a fixture path before running `npm run test:metlife`; no patient image is bundled with the source.
 
+Format regressions can additionally use `LIBERTY_TEST_SINGLE_PDF`, `LIBERTY_TEST_MULTI_PDF`, and `LIBERTY_TEST_SINGLE_IMAGE`. The PDF matrix checks the original PDF, a JPEG rendered from its claim page, and an image-only PDF against the same patient/member/claim/service/date/amount data. JPEG processor tests use a simulated DB and verify per-patient isolation, PDF document copies and preservation of the original image. Missing optional fixtures are explicitly skipped. Local results do not establish successful processing on the clinic's SERVER or validate every future EOB layout.
+
 ## Daily insurance Excel report
 
 After each automatic scan, successfully saved MetLife and Liberty claims are appended to a daily workbook. With the standard `D:\SHARE\INSURANCE CLAIM\METLIFE` incoming path, the output is `D:\SHARE\INSURANCE CLAIM\EXCEL\YYYY-MM-DD.xlsx`, beside METLIFE and LIBERTY, dated by the SERVER's local calendar. `INSURANCE_EXCEL_DIR` can override the output directory. A day with no successful records does not create an empty workbook.
