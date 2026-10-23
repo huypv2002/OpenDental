@@ -148,9 +148,13 @@ export function parseMetlife(extracted) {
           .filter((t) => t.x / p.width >= 0.38 && t.x / p.width < 0.46)
           .map((t) => t.str)
           .filter((t) => /^([A-T]|[1-9]|[12][0-9]|3[0-2])$/.test(t));
+        const areaText=row.filter(t=>t.x/p.width>=0.30&&t.x/p.width<0.46).map(t=>t.str).join(' ').toUpperCase();
+        const quadrants=[...new Set([...areaText.matchAll(/\b(?:UR|UL|LR|LL|Q0[1-4])\b/g)].map(m=>({Q01:'UR',Q02:'UL',Q03:'LL',Q04:'LR'}[m[0]]||m[0])))];
+        if(/^D434[12]$/.test(code)&&quadrants.length>1)errors.push(`${code}: vùng hàm không xác định duy nhất.`);
         procedures.push({
           code,
           tooth: teeth.length === 1 ? teeth[0] : null,
+          surface: /^D434[12]$/.test(code)&&quadrants.length===1?quadrants[0]:'',
           date: isoDate(take(rowText, /(\d{2}\/\d{2}\/\d{4})/)),
           status: /\bDenied\b/i.test(rowText) ? 'Denied' : /\bApproved\b/i.test(rowText) ? 'Approved' : 'Unknown',
           feeCents: field(0.44, 0.56),

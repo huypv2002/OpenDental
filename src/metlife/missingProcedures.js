@@ -1,11 +1,11 @@
 import {procedureDay,reviewError} from './insuranceSettlement.js';
+import {procedureAreaKey,procedureAreaMatches,procedureQuadrant} from './procedureIdentity.js';
 
 const tooth=s=>/^\d+$/.test(String(s||''))?String(Number(s)):String(s||'');
 const sameTooth=(a,b)=>tooth(a)===tooth(b);
-const quadrant={Q01:'UR',Q02:'UL',Q03:'LL',Q04:'LR',UR:'UR',UL:'UL',LL:'LL',LR:'LR'};
 function anatomy(p){
  const value=tooth(p.tooth),surf=p.surface||p.surf||'';
- if(quadrant[value])return {ToothNum:'',Surf:quadrant[value],TreatArea:4};
+ if(procedureQuadrant(p))return {ToothNum:'',Surf:procedureQuadrant(p),TreatArea:4};
  if(['UA','LA'].includes(value))return {ToothNum:'',Surf:value==='UA'?'U':'L',TreatArea:6};
  return {ToothNum:value==='FM'?'':value,Surf:surf,TreatArea:!value||value==='FM'?3:surf?1:2};
 }
@@ -14,17 +14,18 @@ function anatomy(p){
 export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=false,metlife=false}={}){
  const procs=[...dbProcs],additions=[],seen=new Set();
  for(const p of procedures.filter(p=>p.benefitCents>0)){
-  const key=JSON.stringify([p.code,p.date||'',tooth(p.tooth)]);
+  const key=JSON.stringify([p.code,p.date||'',procedureAreaKey(p)]);
   if(seen.has(key))throw reviewError(`${p.code}: nhiều dòng trả tiền cùng ngày/răng; cần đối chiếu trước khi thêm dịch vụ.`);
   seen.add(key);
   const byDate=procs.filter(r=>r.ProcCode===p.code&&(!p.date||procedureDay(r.ProcDate)===p.date));
-  if(new Set(byDate.map(r=>JSON.stringify([procedureDay(r.ProcDate),tooth(r.ToothNum)]))).size!==byDate.length)throw reviewError(`${p.code}: có nhiều dịch vụ trùng ngày/răng; cần đối chiếu trước khi thêm.`);
-  const exact=byDate.filter(r=>metlife||!/^\d+$/.test(p.tooth||'')||sameTooth(r.ToothNum,p.tooth));
-  if(exact.length||allowUniqueCodeDate&&byDate.length===1&&procedures.filter(r=>r.code===p.code&&r.date===p.date).length===1)continue;
+  if(new Set(byDate.map(r=>JSON.stringify([procedureDay(r.ProcDate),procedureAreaKey(r)]))).size!==byDate.length)throw reviewError(`${p.code}: có nhiều dịch vụ trùng ngày/răng/vùng hàm; cần đối chiếu trước khi thêm.`);
+  if(/^D434[12]$/.test(p.code)&&!procedureQuadrant(p)&&byDate.length!==1)throw reviewError(`${p.code}: chưa đọc rõ vùng hàm UR/UL/LR/LL; cần đối chiếu PDF, không tự phân bổ theo thứ tự.`);
+  const exact=byDate.filter(r=>procedureAreaMatches(p,r,{metlife}));
+  if(exact.length||!procedureQuadrant(p)&&allowUniqueCodeDate&&byDate.length===1&&procedures.filter(r=>r.code===p.code&&r.date===p.date).length===1)continue;
   const date=/^\d{4}-\d{2}-\d{2}$/.test(p.date||'')?new Date(p.date+'T12:00:00Z'):null;
   if(!/^D\d{4}$/.test(p.code)||!date||Number.isNaN(+date)||date.toISOString().slice(0,10)!==p.date||!Number.isSafeInteger(p.benefitCents)||p.benefitCents<=0)throw reviewError(`${p.code}: thiếu ngày/mã/số tiền để thêm dịch vụ.`);
   if(p.tooth&&!/^(?:0?[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(p.tooth))throw reviewError(`${p.code}: chưa đọc rõ răng để thêm dịch vụ.`);
-  const virtual={ProcNum:-(additions.length+1),ProcCode:p.code,ProcDate:p.date,ToothNum:tooth(p.tooth),ProcFee:(p.benefitCents/100).toFixed(2),Descript:p.description||p.desc||p.code};
+  const virtual={ProcNum:-(additions.length+1),ProcCode:p.code,ProcDate:p.date,ToothNum:anatomy(p).ToothNum,Surf:anatomy(p).Surf,ProcFee:(p.benefitCents/100).toFixed(2),Descript:p.description||p.desc||p.code};
   procs.push(virtual);additions.push({source:p,row:virtual});
  }
  return {procs,additions};
@@ -77,8 +78,8 @@ export async function createMissingProcedures(pool,{plan,patient,claimNumber,car
   const result=[];
   for(const {source:p,row} of plan.additions){
    const oldId=row.ProcNum;
-   const [existing]=await conn.execute(`SELECT procedurelog.ProcNum,procedurelog.ProcStatus,procedurelog.ProcDate,procedurelog.ProcFee,procedurelog.ToothNum,procedurelog.ProvNum,procedurelog.ClinicNum,procedurecode.ProcCode,procedurecode.Descript FROM procedurelog JOIN procedurecode ON procedurecode.CodeNum=procedurelog.CodeNum WHERE procedurelog.PatNum=? AND procedurecode.ProcCode=? AND procedurelog.ProcDate=?`,[patient.PatNum,p.code,p.date]);
-   const matches=existing.filter(r=>(!/^\d+$/.test(p.tooth||'')||sameTooth(r.ToothNum,p.tooth))&&Number(r.ProcStatus)!==6);
+   const [existing]=await conn.execute(`SELECT procedurelog.ProcNum,procedurelog.ProcStatus,procedurelog.ProcDate,procedurelog.ProcFee,procedurelog.ToothNum,procedurelog.Surf,procedurelog.ProvNum,procedurelog.ClinicNum,procedurecode.ProcCode,procedurecode.Descript FROM procedurelog JOIN procedurecode ON procedurecode.CodeNum=procedurelog.CodeNum WHERE procedurelog.PatNum=? AND procedurecode.ProcCode=? AND procedurelog.ProcDate=?`,[patient.PatNum,p.code,p.date]);
+   const matches=existing.filter(r=>procedureAreaMatches(p,r)&&Number(r.ProcStatus)!==6);
    if(matches.length>1||matches.some(r=>Number(r.ProcStatus)!==2))throw reviewError(`${p.code}: đã có dịch vụ cùng ngày/răng chưa xác định duy nhất; không thêm lặp.`);
    if(matches.length===1){Object.assign(row,matches[0]);result.push({oldId,procNum:row.ProcNum,code:p.code,reused:true});continue;}
    const [codes]=await conn.execute('SELECT CodeNum,ProcCode,Descript,TreatArea FROM procedurecode WHERE ProcCode=?',[p.code]);

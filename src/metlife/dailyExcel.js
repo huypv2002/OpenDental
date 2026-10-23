@@ -263,7 +263,12 @@ export async function exportDailyReports(pool,incomingDir,{now=new Date(),starte
         }
       }
       await fs.rm(path.join(pendingDir,day),{force:true});
-    }catch(e){errors.push({day,message:e.message});console.warn(`[Excel] Chưa cập nhật báo cáo ${day}: ${e.message}. Sẽ thử lại; không chạy lại thanh toán.`);}
+    }catch(e){
+      const message=['EPERM','EACCES','EBUSY'].includes(e.code)
+        ?`Windows chưa cho ghi file ${day}.xlsx (${e.code}). Hãy đóng file này trên các máy đang mở Excel; nếu vẫn lỗi, kiểm tra quyền ghi thư mục EXCEL`
+        :e.message;
+      errors.push({day,message});console.warn(`[Excel] Chưa cập nhật báo cáo ${day}: ${message}. Sẽ thử lại; không chạy lại thanh toán.`);
+    }
   }
   return {status:errors.length?'pending':reviews.length?'review':'ok',reports,errors,reviews};
 }

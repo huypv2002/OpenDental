@@ -1,4 +1,5 @@
 import {cents} from './parser.js';
+import {procedureAreaMatches} from './procedureIdentity.js';
 
 export const insuranceZeroFields=['InsPayEst','BaseEst','InsEstTotal','InsEstTotalOverride','WriteOff','WriteOffEst','WriteOffEstOverride'];
 export const reviewError=message=>Object.assign(new Error(message),{code:'EOB_REVIEW_REQUIRED'});
@@ -11,7 +12,7 @@ const same=(a,b)=>String(a)===String(b);
 export async function prepareInsuranceSettlement(db,{patNum,carrier,procedures,dbProcs,splits}){
  const ids=new Set(splits.filter(s=>Number(s.ProcNum)>0).map(s=>String(s.ProcNum)));
  for(const p of procedures){
-  const matches=dbProcs.filter(r=>r.ProcCode===p.code&&(!p.date||procedureDay(r.ProcDate)===p.date)&&(!/^\d+$/.test(p.tooth||'')||Number(r.ToothNum)===Number(p.tooth)));
+  const matches=dbProcs.filter(r=>r.ProcCode===p.code&&(!p.date||procedureDay(r.ProcDate)===p.date)&&procedureAreaMatches(p,r));
   if(matches.length===1)ids.add(String(matches[0].ProcNum));
  }
  if(!ids.size)throw reviewError('Chưa xác định dịch vụ để đặt Insurance Estimate và Write-off về 0.');

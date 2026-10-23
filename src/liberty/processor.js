@@ -49,7 +49,7 @@ export async function resolveLibertyPatient(pool, { claim, strictMember=false })
 
 export async function libertyProcedures(pool,patNum){
   const [dbProcs] = await pool.execute(
-    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurelog.ToothNum, procedurecode.ProcCode, procedurecode.Descript
+    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurelog.ToothNum, procedurelog.Surf, procedurecode.ProcCode, procedurecode.Descript
      FROM procedurelog
      JOIN procedurecode ON procedurecode.CodeNum = procedurelog.CodeNum
      WHERE procedurelog.PatNum = ? AND procedurelog.ProcStatus = 2`,

@@ -50,3 +50,11 @@ Use an existing procedurecode when present. A missing catalog code is added with
 Read-only preflight covers all claims before service creation. Creation rechecks the patient/provider and existing service under table locks, reads back saved identity/amount, and records the addition in `luk_eob_added_procedures` and successful processing history. Typical auto-increment OD schemas are supported; unsupported keys, required column types or procedure-level security hashes stop for review. No existing planned procedure is automatically marked complete.
 
 If a later PDF/hash/payment step fails, an already-created service remains in the patient's account; retry reuses it. Payment matching and duplicate protection remain active. Tests exercise actual private PDFs through simulated persistent ledgers for each carrier, including a missing catalog entry, preserved allocation amounts and repeated processing without a second service or payment. Live SERVER creation remains unverified.
+
+## D4341/D4342 quadrant matching
+
+The service-creation duplicate check originally compared code/date/tooth without OD `Surf`. Multiple periodontal quadrants can share the same code, date and blank tooth. Preserve explicit MetLife UR/UL/LR/LL (including Q01-Q04 labels) from the procedure area and include the quadrant in duplicate checks, service matching and scoped insurance defaults. Completed-service queries read `Surf`; new quadrant procedures store it correctly. MetLife fee updates and history use the exact matched ProcNum for each paid row, avoiding a first-by-code allocation.
+
+Synthetic regressions cover two same-code/day quadrants with different amounts totaling $468.80, separate fee/split/history IDs, a missing third quadrant, true duplicate rejection, missing-quadrant review and retry without another payment. The original 621.pdf was not available for this verification; the SERVER log alone does not prove its printed quadrant labels.
+
+Excel EPERM/EBUSY/EACCES keeps the report pending and preserves the existing workbook. The log now directs the operator to close the workbook on every machine and check write permissions if needed. Report retries never rerun payment posting.

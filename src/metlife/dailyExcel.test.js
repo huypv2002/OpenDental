@@ -65,7 +65,7 @@ test('an open/locked Excel workbook keeps the old file and retries its original 
   try{
     const rows=sampleRows();await appendDailyWorkbook(samplePool(),[rows[0]],f.file,day);const before=await fs.readFile(f.file);
     const failed=await exportDailyReports(samplePool(),incoming,{now,outputDir:f.root,writeWorkbook:(pool,r,file,d)=>appendDailyWorkbook(pool,r,file,d,{replace:async()=>{throw Object.assign(Error('Excel is open'),{code:'EBUSY'});}})});
-    assert.equal(failed.status,'pending');assert.deepEqual(await fs.readFile(f.file),before);assert.equal((await fs.readdir(path.join(f.root,'.pending')))[0],day);
+    assert.equal(failed.status,'pending');assert.match(failed.errors[0].message,/đóng file.*Excel/);assert.deepEqual(await fs.readFile(f.file),before);assert.equal((await fs.readdir(path.join(f.root,'.pending')))[0],day);
     const recovered=await exportDailyReports(samplePool(),incoming,{now:new Date(2026,9,23,1),outputDir:f.root});
     assert.equal(recovered.status,'ok');assert.equal((await load(f.file)).getWorksheet('PAYMENTS').rowCount,4);assert.deepEqual(await fs.readdir(path.join(f.root,'.pending')),[]);
   }finally{await fs.rm(f.root,{recursive:true,force:true});}

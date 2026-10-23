@@ -6,6 +6,7 @@ import {prepareInsuranceSettlement,applyInsuranceSettlement,verifyInsuranceSettl
 import { extractPdf, parseMetlife } from './parser.js';
 import { nativeSplitHashes } from './nativeSplitHashes.js';
 import {planMissingProcedures,createMissingProcedures} from './missingProcedures.js';
+import {procedureAreaMatches} from './procedureIdentity.js';
 import { odSecurityLogHash } from './directPayment.js';
 import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
 import {documentInsert} from './documentImport.js';
@@ -293,7 +294,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
 
   // 3. Find matching procedures in DB for splits
   const [completedProcs] = await pool.execute(
-    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurelog.ToothNum, procedurecode.ProcCode, procedurecode.Descript
+    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurelog.ToothNum, procedurelog.Surf, procedurecode.ProcCode, procedurecode.Descript
      FROM procedurelog
      JOIN procedurecode ON procedurecode.CodeNum = procedurelog.CodeNum
      WHERE procedurelog.PatNum = ? AND procedurelog.ProcStatus = 2`,
@@ -303,14 +304,16 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   const missingPlan=planMissingProcedures(completedProcs,parsed.procedures,{metlife:true});
   const dbProcs=missingPlan.procs;
 
-  const splitsPlan = [];
+  const splitsPlan = [],matchedProcedures=new Map();
   for (const eobProc of parsed.procedures) {
     if (!eobProc.benefitCents || eobProc.benefitCents <= 0) continue;
     const splitAmount = (eobProc.benefitCents / 100).toFixed(2);
 
-    const matches=dbProcs.filter(p=>p.ProcCode===eobProc.code&&(!eobProc.date||procedureDay(p.ProcDate)===eobProc.date));
+    const matches=dbProcs.filter(p=>p.ProcCode===eobProc.code&&(!eobProc.date||procedureDay(p.ProcDate)===eobProc.date)&&procedureAreaMatches(eobProc,p,{metlife:true}));
     if(matches.length!==1)throw reviewError(`${eobProc.code}: chưa khớp duy nhất dịch vụ hoàn tất theo ngày; cần đối chiếu.`);
     const match=matches[0];
+    if([...matchedProcedures.values()].some(p=>String(p.ProcNum)===String(match.ProcNum)))throw reviewError(`${eobProc.code}: nhiều dòng đang khớp cùng một dịch vụ; cần đối chiếu vùng hàm.`);
+    matchedProcedures.set(eobProc,match);
     splitsPlan.push({
       ProcNum: match ? match.ProcNum : 0,
       ProvNum: match?.ProvNum || provNum,
@@ -342,7 +345,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     amountCents: parsed.benefitCents
   });
 
-  const updatedFees=existing?[]:await autoPopulateProcedureFees(pool,{patNum,eobProcedures:parsed.procedures,dbProcs:dbProcs.filter(p=>settlement.procIds.includes(String(p.ProcNum))),settlement});
+  const updatedFees=existing?[]:await autoPopulateProcedureFees(pool,{patNum,eobProcedures:parsed.procedures.map(p=>({...p,procNum:matchedProcedures.get(p)?.ProcNum})),dbProcs:dbProcs.filter(p=>settlement.procIds.includes(String(p.ProcNum))),settlement});
 
   // 4. Generate SecurityHash for each split
   const hashPlan = {
@@ -470,10 +473,11 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     eobPayment: parsed.payment || null,
     subscriber: parsed.subscriber || '',
     procedures: (parsed.procedures || []).map((p) => ({
-      procNum:splitsPlan.find(s=>s.code===p.code)?.ProcNum,
+      procNum:matchedProcedures.get(p)?.ProcNum,
       code: p.code,
       date: p.date || '',
       tooth: p.tooth || '',
+      surface:p.surface||'',
       status: p.status || '',
       feeCents: p.feeCents ?? null,
       benefitCents: p.benefitCents || 0,

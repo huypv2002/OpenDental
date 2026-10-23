@@ -10,7 +10,7 @@ export async function insuranceLedger(root,claims){
  const patients=claims.map((c,i)=>({PatNum:c.patNum||101+i,FName:c.firstName,LName:c.lastName,ImageFolder:`Test${i}`,ClinicNum:0,PriProv:1,memberId:c.memberId,carrier:c.carrier,claimNumber:c.claimNumber}));
  const procs=[],claimprocs=[],payments=[],splits=[],documents=[],history=[],events=[],fees=[];let locked=false,payId=100,docId=200,hashCalls=0;
  for(const [i,c] of claims.entries())for(const [j,p] of c.procedures.entries()){
-  const id=1000+i*100+j;procs.push({ProcNum:id,PatNum:patients[i].PatNum,ProcCode:p.code,ProcDate:p.date||c.serviceDate,ProcFee:p.feeCents/100||0,ProvNum:1,ClinicNum:0,ToothNum:p.odTooth??p.tooth??'',Descript:'Synthetic procedure'});
+  const id=1000+i*100+j;procs.push({ProcNum:id,PatNum:patients[i].PatNum,ProcCode:p.code,ProcDate:p.date||c.serviceDate,ProcFee:p.feeCents/100||0,ProvNum:1,ClinicNum:0,ToothNum:p.odTooth??p.tooth??'',Surf:p.surface||p.surf||'',Descript:'Synthetic procedure'});
   claimprocs.push({ClaimProcNum:id+5000,PatNum:patients[i].PatNum,ProcNum:id,ClaimNum:500+i,PlanNum:700+i,InsSubNum:800+i,Status:0,InsPayAmt:0,ClaimPaymentNum:0,FeeBilled:p.feeCents/100||0,...Object.fromEntries(insuranceZeroFields.map(k=>[k,70]))});
  }
  const unrelated={ClaimProcNum:99999,PatNum:patients[0].PatNum,ProcNum:99998,ClaimNum:99997,PlanNum:99996,InsSubNum:99995,Status:0,InsPayAmt:0,ClaimPaymentNum:0,...Object.fromEntries(insuranceZeroFields.map(k=>[k,99]))};claimprocs.push(unrelated);procs.push({ProcNum:99998,PatNum:patients[0].PatNum,ProcCode:'D9999',ProcDate:claims[0].serviceDate,ProcFee:99,ProvNum:1,ClinicNum:0,ToothNum:'',Descript:'Unrelated same-day service'});
