@@ -40,3 +40,13 @@ Preserve explanation codes during OCR. Allow the submitted-fee exclusion only wi
 Private PDF regression: `DELTA_FLB_TEST_PDF=/path/to/1012.pdf node --test src/delta/parser.test.js`. Patient documents remain outside the repository.
 
 After this fix, the full four-carrier suite with the original private fixtures and the new FLB scan reports **132 tests, 130 passed, 0 failed, 2 skipped** (real database tests). The Delta suite alone passes all 11 tests with both scanned PDFs enabled. No live clinic payment was written.
+
+## Add missing paid services (all four carriers)
+
+Per the subsequent clinic instruction, retain every positive insurance-benefit allocation in the validated claim. When the patient's completed service is absent, create a completed procedure for that patient with the EOB service date/tooth/surface, primary provider and clinic, and fee equal to that line's insurance benefit (the existing settlement convention). Zero-benefit rows do not create procedures. Missing dates, unreadable anatomy, ambiguous duplicate rows and pending matching procedures require review.
+
+Use an existing procedurecode when present. A missing catalog code is added with its source description (or the code itself), source treatment area, and first visible procedure category. These are minimal source-based catalog entries, not a replacement CDT catalog. Refresh/reopen OD to load newly added catalog entries.
+
+Read-only preflight covers all claims before service creation. Creation rechecks the patient/provider and existing service under table locks, reads back saved identity/amount, and records the addition in `luk_eob_added_procedures` and successful processing history. Typical auto-increment OD schemas are supported; unsupported keys, required column types or procedure-level security hashes stop for review. No existing planned procedure is automatically marked complete.
+
+If a later PDF/hash/payment step fails, an already-created service remains in the patient's account; retry reuses it. Payment matching and duplicate protection remain active. Tests exercise actual private PDFs through simulated persistent ledgers for each carrier, including a missing catalog entry, preserved allocation amounts and repeated processing without a second service or payment. Live SERVER creation remains unverified.

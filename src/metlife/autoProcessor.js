@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {prepareInsuranceSettlement,applyInsuranceSettlement,verifyInsuranceSettlement,verifiedInsurancePayment,recordInsuranceResult,reviewError,procedureDay} from './insuranceSettlement.js';
 import { extractPdf, parseMetlife } from './parser.js';
 import { nativeSplitHashes } from './nativeSplitHashes.js';
+import {planMissingProcedures,createMissingProcedures} from './missingProcedures.js';
 import { odSecurityLogHash } from './directPayment.js';
 import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
 import {documentInsert} from './documentImport.js';
@@ -291,13 +292,16 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   console.log(`[MetLife Auto-Processor] Claim / Check: ${claimNumber} | Tổng tiền: $${totalBenefit}`);
 
   // 3. Find matching procedures in DB for splits
-  const [dbProcs] = await pool.execute(
+  const [completedProcs] = await pool.execute(
     `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurelog.ToothNum, procedurecode.ProcCode, procedurecode.Descript
      FROM procedurelog
      JOIN procedurecode ON procedurecode.CodeNum = procedurelog.CodeNum
      WHERE procedurelog.PatNum = ? AND procedurelog.ProcStatus = 2`,
     [patNum]
   );
+
+  const missingPlan=planMissingProcedures(completedProcs,parsed.procedures,{metlife:true});
+  const dbProcs=missingPlan.procs;
 
   const splitsPlan = [];
   for (const eobProc of parsed.procedures) {
@@ -319,8 +323,15 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     });
   }
 
-  const settlement=await prepareInsuranceSettlement(pool,{patNum,carrier:'MetLife',procedures:parsed.procedures,dbProcs,splits:splitsPlan});
-  const existing=await verifiedInsurancePayment(pool,{patNum,claimNumber,date:eobDate,amountCents:parsed.benefitCents,splits:splitsPlan});
+  let settlement=await prepareInsuranceSettlement(pool,{patNum,carrier:'MetLife',procedures:parsed.procedures,dbProcs,splits:splitsPlan});
+  let existing=await verifiedInsurancePayment(pool,{patNum,claimNumber,date:eobDate,amountCents:parsed.benefitCents,splits:splitsPlan});
+  const addedProcedures=await createMissingProcedures(pool,{plan:missingPlan,patient,claimNumber,carrier:'MetLife'});
+  for(const p of addedProcedures)console.log(`[MetLife Auto-Processor] Claim #${claimNumber}: ${p.reused?'dùng lại':'đã thêm'} dịch vụ ${p.code}, ProcNum: ${p.procNum}${p.newCode?' (đã thêm mã vào danh mục)':''}.`);
+  if(addedProcedures.length){
+    for(const split of splitsPlan){const added=addedProcedures.find(p=>p.oldId===split.ProcNum);if(added){const row=dbProcs.find(p=>String(p.ProcNum)===String(added.procNum));Object.assign(split,{ProcNum:row.ProcNum,ProvNum:row.ProvNum,ClinicNum:row.ClinicNum||0});}}
+    settlement=await prepareInsuranceSettlement(pool,{patNum,carrier:'MetLife',procedures:parsed.procedures,dbProcs,splits:splitsPlan});
+    existing=await verifiedInsurancePayment(pool,{patNum,claimNumber,date:eobDate,amountCents:parsed.benefitCents,splits:splitsPlan});
+  }
   // 2. Import PDF to AtoZ Finished Claims
   const aToZResult = await importPdfToAtoZ(pool, {
     patient,
@@ -448,6 +459,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     docNum: aToZResult.docNum,
     totalBenefit,
     updatedFees,
+    addedProcedures,
     insuranceDefaults:{estimate:0,writeOff:0,claimNums:settlement.claimIds,claimProcNums:settlement.rows.map(r=>r.ClaimProcNum)},
     splits: splitsPlan.map((s) => ({ code: s.code, amount: s.amount, procNum: s.ProcNum })),
     paymentDate: eobDate,

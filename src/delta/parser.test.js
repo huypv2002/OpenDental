@@ -93,7 +93,7 @@ test('Delta sibling folder is scanned and archived documents can be found',async
 });
 
 test('Delta patient/procedure preflight rejects mismatched services before any write',async()=>{
- let writes=0;const pool={execute:async sql=>{if(!/^\s*SELECT/.test(sql)){writes++;throw Error('unexpected write');}return sql.includes('FROM patient p')?[[{PatNum:280}]]:[[]];}};
+ let writes=0;const pool={execute:async sql=>{if(!/^\s*SELECT/.test(sql)){writes++;throw Error('unexpected write');}return sql.includes('FROM patient p')?[[{PatNum:280}]]:sql.includes('SELECT procedurelog.ProcNum')?[[{ProcNum:1,ProcCode:'D0120',ProcDate:'2026-06-11',ToothNum:''},{ProcNum:2,ProcCode:'D0120',ProcDate:'2026-06-11',ToothNum:''}]]:[[]];}};
  await assert.rejects(processDeltaPdf(pool,{fileName:'280.pdf',extracted:sample()}),e=>e.code==='EOB_REVIEW_REQUIRED');assert.equal(writes,0);
 });
 

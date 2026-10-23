@@ -5,6 +5,7 @@ import { parseLiberty } from './parser.js';
 import {validateLibertyForPosting,matchLibertyProcedures} from './validation.js';
 import {claimPaymentFields} from '../metlife/paymentFormat.js';
 import { nativeSplitHashes } from '../metlife/nativeSplitHashes.js';
+import {planMissingProcedures,createMissingProcedures} from '../metlife/missingProcedures.js';
 import {prepareInsuranceSettlement,applyInsuranceSettlement,verifyInsuranceSettlement,verifiedInsurancePayment,recordInsuranceResult,reviewError,procedureDay} from '../metlife/insuranceSettlement.js';
 import { odSecurityLogHash } from '../metlife/directPayment.js';
 import { autoPopulateProcedureFees, importPdfToAtoZ } from '../metlife/autoProcessor.js';
@@ -150,13 +151,29 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     // Resolve every patient/procedure before importing or changing fees for the first claim.
     try{for(const claim of parsed.claims){
       const patient=await patientResolver(pool,{claim,strictMember:!!extracted.ocr,fileName,claimsCount:parsed.claimsCount});
-      const dbProcs=await libertyProcedures(pool,patient.PatNum);
+      const missingPlan=planMissingProcedures(await libertyProcedures(pool,patient.PatNum),claim.procedures,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
+      const dbProcs=missingPlan.procs;
       const matches=matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
       const check={...parsed.check,...claim.check},splits=libertySplitPlan(claim,check,patient,matches);
       const settlement=await prepareInsuranceSettlement(pool,{patNum:patient.PatNum,carrier,procedures:claim.procedures,dbProcs,splits});
       const existing=await verifiedInsurancePayment(pool,{patNum:patient.PatNum,claimNumber:claim.claimNumber,date:check.date,amountCents:claim.totals.planPaidCents,splits});
-      preflight.set(claim.claimNumber,{patient,dbProcs,matches,splits,settlement,existing});
+      preflight.set(claim.claimNumber,{patient,dbProcs,matches,splits,settlement,existing,missingPlan});
     }}catch(e){e.code='EOB_REVIEW_REQUIRED';throw e;}
+  }
+
+  // All patients, allocations and existing payments passed read-only preflight.
+  // Missing services are now created once, before PDF/fee/payment writes.
+  for(const claim of parsed.claims){
+    const checked=preflight.get(claim.claimNumber);
+    checked.addedProcedures=await createMissingProcedures(pool,{plan:checked.missingPlan,patient:checked.patient,claimNumber:claim.claimNumber,carrier});
+    for(const p of checked.addedProcedures)log(`[${label} Auto-Processor] Claim #${claim.claimNumber}: ${p.reused?'dùng lại':'đã thêm'} dịch vụ ${p.code}, ProcNum: ${p.procNum}${p.newCode?' (đã thêm mã vào danh mục)':''}.`);
+    if(checked.addedProcedures.length){
+      checked.matches=matchLibertyProcedures(checked.dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
+      const check={...parsed.check,...claim.check};
+      checked.splits=libertySplitPlan(claim,check,checked.patient,checked.matches);
+      checked.settlement=await prepareInsuranceSettlement(pool,{patNum:checked.patient.PatNum,carrier,procedures:claim.procedures,dbProcs:checked.dbProcs,splits:checked.splits});
+      checked.existing=await verifiedInsurancePayment(pool,{patNum:checked.patient.PatNum,claimNumber:claim.claimNumber,date:check.date,amountCents:claim.totals.planPaidCents,splits:checked.splits});
+    }
   }
 
   log(`[${label} Auto-Processor] Phát hiện ${parsed.claimsCount} claim${parsed.check.number?` trong check #${parsed.check.number}`:''}`);
@@ -334,6 +351,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       documentDescription: aToZResult.description,
       documentDate: aToZResult.dateCreated,
       updatedFees: payload.updatedFees,
+      addedProcedures:checked.addedProcedures,
       splits: payload.splits.map((s) => ({ code: s.code, amount: s.amount, procNum: s.ProcNum })),
       procedures: claim.procedures.map((p) => ({
         procNum:checked.matches.get(p)?.ProcNum,

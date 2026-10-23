@@ -61,6 +61,24 @@ test('ERRORS and REVIEW do not replay automatically; explicit retry preserves in
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
+for(const [id,carrier,total] of cases.filter(c=>['493','1307','1283','1282'].includes(c[0])))test(`feedback ${id}: adds a missing paid service, allocates it, and retry adds nothing`,{skip:!fixtureDir,timeout:120000},async()=>{
+ const input=await loadCase(id,carrier),root=await fs.mkdtemp(path.join(os.tmpdir(),'insurance-missing-'));
+ const dir=path.join(root,carrier==='MetLife'?'METLIFE':carrier==='LIBERTY Dental Plan'?'LIBERTY':carrier);await fs.mkdir(dir);
+ const file=path.join(dir,`${id}.pdf`),f=await insuranceLedger(root,input.claims);
+ const target=f.procs.find(p=>input.claims[0].procedures.some(s=>s.code===p.ProcCode&&s.date===p.ProcDate&&s.benefitCents>0));
+ f.procs.splice(f.procs.indexOf(target),1);f.claimprocs.splice(f.claimprocs.findIndex(cp=>cp.ProcNum===target.ProcNum),1);
+ if(carrier==='DELTA DENTAL')f.codes.splice(f.codes.findIndex(c=>c.ProcCode===target.ProcCode),1);
+ try{
+  await fs.writeFile(file,input.bytes);await processSinglePdf(f.pool,file,{hashSplits:f.hashes});
+  assert.equal(f.addedAudit.length,1);assert.equal(f.payments.length,1);assert.equal(Math.round(Number(f.payments[0].PayAmt)*100),total);
+  const added=JSON.parse(f.addedAudit[0][5]);assert.ok(f.splits.some(s=>s.ProcNum===added.procNum));assert.equal(added.code,target.ProcCode);
+  const service=f.procs.find(p=>p.ProcNum===added.procNum);assert.equal(service.PatNum,f.patients[0].PatNum);assert.equal(service.ProcStatus,2);assert.equal(service.ProcDate,target.ProcDate);
+  const pay=f.payments[0].PayNum,procCount=f.procs.length;
+  await fs.writeFile(file,input.bytes);await processSinglePdf(f.pool,file,{hashSplits:f.hashes});
+  assert.equal(f.procs.length,procCount);assert.equal(f.addedAudit.length,1);assert.equal(f.payments.length,1);assert.equal(f.payments[0].PayNum,pay);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
 test('1041 second-patient failure is preflighted before the first PDF, fees or payment', {skip:!fixtureDir},async()=>{
  const input=await loadCase('1041','LIBERTY Dental Plan'),root=await fs.mkdtemp(path.join(os.tmpdir(),'insurance-preflight-'));const dir=path.join(root,'LIBERTY');await fs.mkdir(dir);const source=path.join(dir,'1041.pdf');await fs.writeFile(source,input.bytes);const f=await insuranceLedger(root,input.claims);
  try{

@@ -14,14 +14,31 @@ export async function insuranceLedger(root,claims){
   claimprocs.push({ClaimProcNum:id+5000,PatNum:patients[i].PatNum,ProcNum:id,ClaimNum:500+i,PlanNum:700+i,InsSubNum:800+i,Status:0,InsPayAmt:0,ClaimPaymentNum:0,FeeBilled:p.feeCents/100||0,...Object.fromEntries(insuranceZeroFields.map(k=>[k,70]))});
  }
  const unrelated={ClaimProcNum:99999,PatNum:patients[0].PatNum,ProcNum:99998,ClaimNum:99997,PlanNum:99996,InsSubNum:99995,Status:0,InsPayAmt:0,ClaimPaymentNum:0,...Object.fromEntries(insuranceZeroFields.map(k=>[k,99]))};claimprocs.push(unrelated);procs.push({ProcNum:99998,PatNum:patients[0].PatNum,ProcCode:'D9999',ProcDate:claims[0].serviceDate,ProcFee:99,ProvNum:1,ClinicNum:0,ToothNum:'',Descript:'Unrelated same-day service'});
+ const codes=[...new Set(procs.map(p=>p.ProcCode))].map((ProcCode,i)=>({CodeNum:100+i,ProcCode,Descript:'Synthetic procedure',TreatArea:3})),addedAudit=[];
+ const modelColumns=table=>{
+  const types=table==='procedurelog'?{ProcNum:'bigint',PatNum:'bigint',CodeNum:'bigint',ProcStatus:'int',ProcDate:'date',ProcFee:'double',ProvNum:'bigint',ClinicNum:'bigint',ToothNum:'varchar',Surf:'varchar',UnitQty:'int',DateComplete:'date',BillingNote:'text'}:{CodeNum:'bigint',ProcCode:'varchar',Descript:'varchar',AbbrDesc:'varchar',ProcCat:'bigint',TreatArea:'int',ProcTime:'varchar'};
+  return Object.entries(types).map(([COLUMN_NAME,DATA_TYPE],i)=>({COLUMN_NAME,DATA_TYPE,IS_NULLABLE:'NO',COLUMN_DEFAULT:null,EXTRA:i===0?'auto_increment':''}));
+ };
  const byIds=(rows,pat,ids,key='ClaimProcNum')=>rows.filter(r=>String(r.PatNum)===String(pat)&&ids.map(String).includes(String(r[key])));
  async function execute(sql,args=[]){
   events.push([sql,args]);assert.ok(!sql.startsWith('DELETE'),'processor must never delete old financial records');
+  if(sql.includes('INFORMATION_SCHEMA.COLUMNS')&&['procedurelog','procedurecode'].includes(args[0]))return [modelColumns(args[0])];
+  if(sql.startsWith('CREATE TABLE IF NOT EXISTS luk_eob_added_procedures'))return [{affectedRows:0}];
+  if(sql.includes('FROM provider WHERE ProvNum'))return [[{ProvNum:1}]];
+  if(sql.includes('FROM definition WHERE Category=11'))return [[{DefNum:11}]];
+  if(sql.startsWith('SELECT CodeNum,ProcCode'))return [codes.filter(c=>c.ProcCode===args[0])];
+  if(/^INSERT INTO procedure(?:log|code) /.test(sql)){
+   assert.ok(locked);const names=[...sql.split(') VALUES')[0].matchAll(/`(\w+)`/g)].map(m=>m[1]),row=Object.fromEntries(names.map((n,i)=>[n,args[i]]));
+   if(sql.startsWith('INSERT INTO procedurecode')){row.CodeNum=500+codes.length;codes.push(row);return [{insertId:row.CodeNum}];}
+   row.ProcNum=20000+procs.length;Object.assign(row,{ProcCode:codes.find(c=>c.CodeNum===row.CodeNum).ProcCode,Descript:'Synthetic added procedure'});procs.push(row);return [{insertId:row.ProcNum}];
+  }
+  if(sql.startsWith('SELECT ProcNum,PatNum,CodeNum'))return [procs.filter(p=>p.ProcNum===args[0])];
+  if(sql.startsWith('INSERT INTO luk_eob_added_procedures')){addedAudit.push(args);return [{insertId:addedAudit.length}];}
   if(sql.includes('FROM patient WHERE PatNum'))return [patients.filter(p=>p.PatNum===Number(args[0]))];
   if(sql.includes('FROM patient p')){
    const p=patients.find(p=>args.includes(p.memberId))||patients.find(p=>args.includes(p.FName)&&args.includes(p.LName));return [p?[p]:[]];
   }
-  if(sql.includes('SELECT procedurelog.ProcNum')||sql.includes('SELECT pl.ProcNum'))return [procs.filter(p=>p.PatNum===args[0])];
+  if(sql.includes('SELECT procedurelog.ProcNum')||sql.includes('SELECT pl.ProcNum'))return [procs.filter(p=>p.PatNum===args[0]&&(!args[1]||p.ProcCode===args[1])&&(!args[2]||p.ProcDate===args[2])).map(p=>({ProcStatus:2,...p}))];
   if(sql.includes('FROM claimproc cp'))return [byIds(claimprocs,args[0],args.slice(1,-1),'ProcNum').map(r=>({...r}))];
   if(sql.includes('FROM claimproc WHERE PatNum=? AND ClaimProcNum IN'))return [byIds(claimprocs,args[0],args.slice(1)).map(r=>({...r}))];
   if(sql.startsWith('UPDATE claimproc SET InsPayEst=')){
@@ -54,6 +71,6 @@ export async function insuranceLedger(root,claims){
   throw Error('Unexpected fixture query '+sql);
  }
  const connection={execute,query:async sql=>{events.push([sql,[]]);if(sql.startsWith('LOCK TABLES'))locked=true;if(sql==='UNLOCK TABLES')locked=false;return [[]];},release(){assert.equal(locked,false);}};
- return {pool:{execute,getConnection:async()=>connection},patients,procs,claimprocs,payments,splits,documents,history,events,fees,unrelated,
+ return {pool:{execute,getConnection:async()=>connection},patients,procs,codes,addedAudit,claimprocs,payments,splits,documents,history,events,fees,unrelated,
   hashes:async plan=>{hashCalls++;return plan.splits.map(()=>'synthetic-only');},get hashCalls(){return hashCalls;}};
 }
