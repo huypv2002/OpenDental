@@ -738,5 +738,89 @@ class PhoneLinkSenderSequenceTest(unittest.TestCase):
             app.uia_send_keys = old_uia_send_keys
 
 
+class DailyRecallTest(unittest.TestCase):
+    def config(self, dry_run=False):
+        return app.AppConfig(api_token="test-token", dry_run=dry_run,
+            recall_templates={"US": "Recall EN {first_name}", "ES": "Recall ES {first_name}", "VI": "Recall VI {first_name}"})
+
+    def rows(self):
+        return [{"PatNum": n, "FName": "Test", "LName": "Person", "Language": language,
+                 "LastProcDate": "2026-04-23", "WirelessPhone": "(281) 555-0123"}
+                for n, language in enumerate(["English", "Spanish", "Vietnamese"], 1)]
+
+    def test_language_defaults_and_one_row_per_patient_service_date(self):
+        rows = app.daily_recall_rows(self.config(), self.rows() + self.rows())
+        self.assertEqual([r["_TemplateKey"] for r in rows], ["US", "ES", "VI"])
+        self.assertEqual([r["_TemplateText"] for r in rows], ["Recall EN {first_name}", "Recall ES {first_name}", "Recall VI {first_name}"])
+        self.assertTrue(all(r["_DailyRecall"] and r["_Recall"] for r in rows))
+        cfg = self.config(); cfg.recall_templates.pop("ES")
+        with self.assertRaisesRegex(ValueError, "Missing ES"):
+            app.daily_recall_rows(cfg, self.rows())
+
+    def test_bridge_requires_daily_contract_and_paginates_by_patient_cursor(self):
+        client = app.BridgeClient(self.config())
+        calls = []
+        def request(_method, _path, **kwargs):
+            cursor = kwargs["params"]["afterPatNum"]; calls.append(cursor)
+            patients = [{"PatNum": n} for n in range(1, 501)] if not cursor else [{"PatNum": 501}]
+            return {"contract": "calendar-6-month-v1", "date": "2026-10-23", "patients": patients}
+        client.request = request
+        self.assertEqual(len(client.fetch_daily_recall_candidates(app.date(2026, 10, 23))), 501)
+        self.assertEqual(calls, [0, 500])
+        client.request = lambda *args, **kwargs: {"patients": self.rows()}
+        with self.assertRaisesRegex(RuntimeError, "Update SERVER"):
+            client.fetch_daily_recall_candidates(app.date(2026, 10, 23))
+
+    def test_real_worker_reserves_before_sending_and_never_replays_uncertain_attempt(self):
+        events = []; reservations = set()
+        class Repo:
+            def __init__(self, _config): pass
+            def claim_daily_recall(self, row, phone):
+                key = (row["PatNum"], row["LastProcDate"])
+                if key in reservations: return {"claimed": False}
+                reservations.add(key); events.append("claim")
+                return {"claimed": True, "token": "test-dispatch-token"}
+            def log_recall_result(self, row, message, status, error="", phone=None):
+                events.append(("log", status)); self.token = row.get("_DispatchToken")
+        class Sender:
+            def __init__(self, *_args, **_kwargs): pass
+            def send_sms(self, phone, message): events.append("send")
+        rows = app.daily_recall_rows(self.config(), self.rows()[:1])
+        with patch.object(app, "BridgeClient", Repo), patch.object(app, "PhoneLinkSender", Sender):
+            app.SendWorker(self.config(), rows).run()
+            app.SendWorker(self.config(), rows).run()
+        self.assertEqual(events, ["claim", "send", ("log", "needs-review")])
+
+    def test_dry_run_does_not_reserve_a_real_dispatch(self):
+        events = []
+        class Repo:
+            def __init__(self, _config): pass
+            def claim_daily_recall(self, *_args): raise AssertionError("dry run must not reserve")
+            def log_recall_result(self, row, message, status, error="", phone=None): events.append(status)
+        class Sender:
+            def __init__(self, *_args, **_kwargs): pass
+            def send_sms(self, *_args): events.append("dry-send")
+        rows = app.daily_recall_rows(self.config(True), self.rows()[:1])
+        with patch.object(app, "BridgeClient", Repo), patch.object(app, "PhoneLinkSender", Sender):
+            app.SendWorker(self.config(True), rows).run()
+        self.assertEqual(events, ["dry-send", "dry-run"])
+
+    def test_monitoring_queue_includes_recall_after_appointment_targets(self):
+        targets = [app.date(2026, 10, 24), app.date(2026, 10, 31)]
+        fake = types.SimpleNamespace(monitor_target_dates=lambda: targets,
+            append_activity=lambda text: None, process_next_monitor_target=lambda: None)
+        app.SmsReminderWindow.start_monitoring_batch(fake)
+        self.assertEqual(fake.monitor_send_queue, [*targets, "daily-recall"])
+        self.assertTrue(fake.monitor_batch_active)
+        calls = []
+        fake = types.SimpleNamespace(monitor_batch_active=True, monitoring_active=True,
+            append_activity=lambda text: None, process_next_monitor_target=lambda: calls.append("next"),
+            start_send=lambda patients, **kwargs: calls.append((patients, kwargs)) or True)
+        app.SmsReminderWindow.daily_recall_loaded(fake, self.rows())
+        self.assertEqual(calls[0][1], {"confirm_real": False, "silent": True})
+        app.SmsReminderWindow.daily_recall_loaded(fake, [])
+        self.assertEqual(calls[-1], "next")
+
+
 if __name__ == "__main__":
     unittest.main()

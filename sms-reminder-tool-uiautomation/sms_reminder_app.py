@@ -508,6 +508,28 @@ class BridgeClient:
         )
         return data.get("patients") or []
 
+    def fetch_daily_recall_candidates(self, run_date: date) -> list[dict[str, Any]]:
+        patients: list[dict[str, Any]] = []
+        while True:
+            data = self.request("GET", "/api/sms-reminders/recall-candidates", params={
+                "mode": "daily", "date": run_date.isoformat(), "limit": 500,
+                "afterPatNum": patients[-1]["PatNum"] if patients else 0,
+            })
+            if data.get("contract") != "calendar-6-month-v1" or data.get("date") != run_date.isoformat():
+                raise RuntimeError("Update SERVER Bridge before running daily Recall.")
+            batch = data.get("patients") or []
+            if batch and patients and int(batch[-1]["PatNum"]) <= int(patients[-1]["PatNum"]):
+                raise RuntimeError("Daily Recall patient cursor did not advance.")
+            patients.extend(batch)
+            if len(batch) < 500:
+                return patients
+
+    def claim_daily_recall(self, patient: dict[str, Any], phone: str) -> dict[str, Any]:
+        return self.request("POST", "/api/sms-reminders/recall-claim", json={
+            "patNum": patient["PatNum"], "lastProcDate": patient["LastProcDate"], "phone": phone,
+            "runDate": patient["_DailyRecallDate"], "wirelessPhone": patient.get("WirelessPhone", ""),
+        })
+
     def fetch_treatment_candidates(self, days: int, codes: str, treatment_statuses: str) -> list[dict[str, Any]]:
         data = self.request(
             "GET",
@@ -579,6 +601,8 @@ class BridgeClient:
                 "message": message,
                 "status": status,
                 "errorMessage": error,
+                "dailyRecall": bool(patient.get("_DispatchToken")),
+                "dispatchToken": patient.get("_DispatchToken", ""),
             },
         )
 
@@ -2027,6 +2051,14 @@ class SendWorker(QThread):
                 source = target.get("source") or "Phone"
                 try:
                     self.progress.emit(f"Preparing SMS: {patient} {source} -> {phone}")
+                    if appointment.get("_DailyRecall") and not self.config.dry_run and not self.fd2_mode:
+                        reservation = repo.claim_daily_recall(appointment, phone)
+                        if not reservation.get("claimed"):
+                            self.progress.emit(f"Skipped daily recall already reserved/sent: {patient}.")
+                            continue
+                        if not isinstance(reservation.get("token"), str) or not reservation["token"]:
+                            raise RuntimeError("Daily Recall reservation did not return a dispatch token.")
+                        appointment["_DispatchToken"] = reservation["token"]
                     sender.send_sms(phone, message)
                     if self.fd2_mode:
                         completed += 1
@@ -2037,7 +2069,7 @@ class SendWorker(QThread):
                         self.progress.emit("FD2 no-send mode stopped after one draft so the open draft is not replaced.")
                         self.finished.emit(completed, failed)
                         return
-                    status = "dry-run" if self.config.dry_run else ("sent" if is_manual_send_row(appointment) else "needs-review")
+                    status = "dry-run" if self.config.dry_run else ("sent" if is_manual_send_row(appointment) and not appointment.get("_DailyRecall") else "needs-review")
                     if appointment.get("_PatientManual"):
                         repo.log_patient_result(appointment, message, status, phone=phone)
                     elif appointment.get("_Treatment"):
@@ -2156,6 +2188,25 @@ class LoadRecallWorker(QThread):
             repo = BridgeClient(self.config)
             self.loaded.emit(repo.fetch_recall_candidates(self.months, self.codes))
         except Exception as exc:  # noqa: BLE001 - surface bridge/network errors in the UI
+            self.failed.emit(str(exc))
+
+
+class LoadDailyRecallWorker(QThread):
+    loaded = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, config: AppConfig, run_date: date):
+        super().__init__()
+        self.config = config
+        self.run_date = run_date
+
+    def run(self) -> None:
+        try:
+            patients = BridgeClient(self.config).fetch_daily_recall_candidates(self.run_date)
+            for patient in patients:
+                patient["_DailyRecallDate"] = self.run_date.isoformat()
+            self.loaded.emit(daily_recall_rows(self.config, patients))
+        except Exception as exc:
             self.failed.emit(str(exc))
 
 
@@ -2438,6 +2489,25 @@ def template_key_for_language_keys(keys: Any, language: str | None) -> str:
     return "US"
 
 
+def daily_recall_rows(config: AppConfig, patients: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for patient in patients:
+        identity = (str(patient["PatNum"]), str(patient["LastProcDate"]))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        preferred = template_key_for_language_keys(["US", "ES", "VI"], patient.get("Language"))
+        key = recall_template_key_for_language(config, patient.get("Language"))
+        text = config.recall_templates.get(key, "").strip()
+        if not text or not (key == preferred or key.startswith(preferred + "_") or key.startswith(preferred + "-")):
+            raise ValueError(f"Missing {preferred} Recall template; daily recall has not sent.")
+        rows.append({**patient, "_Recall": True, "_DailyRecall": True,
+                     "_TemplateKey": key, "_TemplateText": text,
+                     "_TemplateCountry": config.recall_template_countries.get(key) or infer_template_country(key)})
+    return rows
+
+
 def template_flag_path(key: str) -> Path | None:
     flags = {
         "US": "us.svg",
@@ -2578,7 +2648,7 @@ class SmsReminderWindow(QMainWindow):
         self.holiday_load_worker: QThread | None = None
         self.queued_load = False
         self.send_after_load = False
-        self.monitor_send_queue: list[date] = []
+        self.monitor_send_queue: list[date | str] = []
         self.monitor_batch_active = False
         self.monitor_batch_failed = False
         self.active_schedule_key = ""
@@ -3353,7 +3423,7 @@ class SmsReminderWindow(QMainWindow):
         eyebrow.setObjectName("Eyebrow")
         title = QLabel("Daily SMS monitoring")
         title.setObjectName("HeroTitle")
-        subtitle = QLabel("Start monitoring when Phone Link is ready. The app will send only appointment reminders for tomorrow and 8-day targets at the configured time.")
+        subtitle = QLabel("Start monitoring when Phone Link is ready. The app sends tomorrow and 8-day appointment reminders, plus daily 6-month Recall SMS in each patient's language.")
         subtitle.setObjectName("HeroSubtitle")
         hero_layout.addWidget(eyebrow)
         hero_layout.addWidget(title)
@@ -6850,7 +6920,9 @@ class SmsReminderWindow(QMainWindow):
                 return False
         self.save_settings()
         self.set_send_enabled(False)
-        if appointments and appointments[0].get("_PatientManual"):
+        if appointments and appointments[0].get("_DailyRecall"):
+            self.active_send_kind = "daily-recall"
+        elif appointments and appointments[0].get("_PatientManual"):
             self.active_send_kind = "patient"
         elif appointments and appointments[0].get("_Treatment"):
             self.active_send_kind = "treatment"
@@ -6936,6 +7008,10 @@ class SmsReminderWindow(QMainWindow):
         self.append_activity(f"Done. {label}: {sent}. Failed: {failed}.")
         if self.monitor_batch_active and failed:
             self.monitor_batch_failed = True
+        if self.active_send_kind == "daily-recall":
+            if self.monitor_batch_active:
+                self.process_next_monitor_target()
+            return
         if self.active_send_kind == "recall":
             self.load_recall_patients()
         elif self.active_send_kind == "treatment":
@@ -6992,7 +7068,7 @@ class SmsReminderWindow(QMainWindow):
         self.monitor_time_value.setText(self.config.scheduled_send_time)
         self.monitor_note_value.setText(
             "When monitoring is running, the app waits for the daily send time. "
-            "At that time it sends pending SMS reminders for tomorrow's patients and patients with appointments 8 days away. "
+            "At that time it sends appointment reminders and 6-month Recall SMS for D1110, D4341 and D4342. "
             f"It will only send within {SCHEDULE_SEND_GRACE_MINUTES} minutes after the configured time."
         )
         self.start_monitoring_button.setEnabled(not self.monitoring_active)
@@ -7067,6 +7143,9 @@ class SmsReminderWindow(QMainWindow):
             return
         if self.load_worker and self.load_worker.isRunning():
             return
+        daily_worker = getattr(self, "daily_recall_worker", None)
+        if daily_worker and daily_worker.isRunning():
+            return
         now = clinic_now()
         target_time = self.config.scheduled_send_time
         try:
@@ -7090,12 +7169,13 @@ class SmsReminderWindow(QMainWindow):
         self.start_monitoring_batch()
 
     def start_monitoring_batch(self) -> None:
-        self.monitor_send_queue = self.monitor_target_dates()
+        self.monitor_recall_for_date = clinic_today()
+        self.monitor_send_queue = [*self.monitor_target_dates(), "daily-recall"]
         self.monitor_batch_active = True
         self.monitor_batch_failed = False
         self.append_activity(
             "Scheduled monitoring started for "
-            + ", ".join(display_date(target) for target in self.monitor_send_queue)
+            + ", ".join(display_date(target) for target in self.monitor_send_queue if isinstance(target, date))
             + "."
         )
         self.process_next_monitor_target()
@@ -7116,6 +7196,14 @@ class SmsReminderWindow(QMainWindow):
                 self.statusBar().showMessage("Scheduled monitoring finished.", 5000)
             return
         target = self.monitor_send_queue.pop(0)
+        if target == "daily-recall":
+            self.append_activity("Loading daily 6-month recall (D1110, D4341, D4342).")
+            config_snapshot = AppConfig(**asdict(self.config))
+            self.daily_recall_worker = LoadDailyRecallWorker(config_snapshot, self.monitor_recall_for_date)
+            self.daily_recall_worker.loaded.connect(self.daily_recall_loaded)
+            self.daily_recall_worker.failed.connect(self.daily_recall_failed)
+            self.daily_recall_worker.start()
+            return
         try:
             self.suppress_auto_load = True
             self.date_edit.setDate(QDate(target.year, target.month, target.day))
@@ -7124,6 +7212,23 @@ class SmsReminderWindow(QMainWindow):
         self.append_activity(f"Loading scheduled reminder target {display_date(target)}.")
         self.send_after_load = True
         self.load_appointments()
+
+    def daily_recall_loaded(self, patients: list[dict[str, Any]]) -> None:
+        if not self.monitor_batch_active or not self.monitoring_active:
+            return
+        self.append_activity(f"Daily recall: {len(patients)} patients due today.")
+        if not patients:
+            self.process_next_monitor_target()
+        elif not self.start_send(patients, confirm_real=False, silent=True):
+            self.monitor_batch_failed = True
+            self.process_next_monitor_target()
+
+    def daily_recall_failed(self, message: str) -> None:
+        if not self.monitor_batch_active:
+            return
+        self.monitor_batch_failed = True
+        self.append_activity(f"Daily recall failed: {message}")
+        self.process_next_monitor_target()
 
 
 def status_label(status: Any) -> str:

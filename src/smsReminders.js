@@ -1,5 +1,6 @@
 import { pool } from './db.js';
 import { config } from './config.js';
+import {dailyRecallCandidates,completeDailyRecall} from './smsDailyRecall.js';
 
 const LOG_TABLE = 'luk_sms_reminder_log';
 const RECALL_LOG_TABLE = 'luk_sms_recall_log';
@@ -331,6 +332,7 @@ export async function getSmsBirthdayCandidates(query = {}) {
 
 export async function getSmsRecallCandidates(query = {}) {
   await ensureSmsRecallLogTable();
+  if(query.mode==='daily')return dailyRecallCandidates(pool,query);
   const months = parseMonths(query.months, 6);
   const codes = parseProcedureCodes(query.codes);
   const statuses = parseStatuses(query.statuses);
@@ -505,6 +507,7 @@ export async function getSmsTreatmentCandidates(query = {}) {
 
 export async function logSmsRecallResult(body) {
   await ensureSmsRecallLogTable();
+  if(body.dailyRecall)await completeDailyRecall(pool,body);
   const patNum = Number.parseInt(String(body.patNum ?? ''), 10);
   const phone = String(body.phone ?? '').trim();
   const procedureCodes = String(body.procedureCodes ?? '').trim();

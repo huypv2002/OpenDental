@@ -109,6 +109,7 @@ import {
   resetSmsPatientLog
 } from './smsReminders.js';
 import { getAvailableSlots, getAvailableSlotsRange, getReferenceData, parseSlotQuery, parseSlotRangeQuery } from './slots.js';
+import {claimDailyRecall} from './smsDailyRecall.js';
 
 const app = express();
 const upload = multer({
@@ -721,6 +722,10 @@ app.get('/api/sms-reminders/recall-candidates', requireApiToken, async (req, res
   } catch (error) {
     next(error);
   }
+});
+
+app.post('/api/sms-reminders/recall-claim', requireApiToken, async (req,res,next)=>{
+  try{res.json({ok:true,data:await claimDailyRecall(pool,req.body??{})});}catch(error){next(error);}
 });
 
 app.post('/api/sms-reminders/recall-log', requireApiToken, async (req, res, next) => {
