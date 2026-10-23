@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {linesOf,parseMetlife} from './parser.js';
+import {linesOf,parseMetlife,extractPdf} from './parser.js';
+import {appendDailyWorkbook} from './dailyExcel.js';
 import {planMissingProcedures} from './missingProcedures.js';
 import {matchLibertyProcedures} from '../liberty/validation.js';
 import {processSinglePdf} from './autoProcessor.js';
@@ -47,5 +48,26 @@ test('MetLife same-code/day quadrants receive separate fees, payment splits and 
   assert.equal(f.addedAudit.length,0);
   await fs.writeFile(file,bytes);await processSinglePdf(f.pool,file,{extract:async()=>extracted,hashSplits:f.hashes});
   assert.equal(f.payments.length,1);assert.equal(f.splits.length,2);assert.equal(f.fees.length,2);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('private MetLife quadrant PDF: six exact allocations, leading-zero tooth and complete Excel fees', {skip:!process.env.METLIFE_QUADRANT_TEST_PDF},async()=>{
+ const bytes=await fs.readFile(process.env.METLIFE_QUADRANT_TEST_PDF),extracted=await extractPdf(bytes),parsed=parseMetlife(extracted);
+ assert.deepEqual(parsed.errors,[]);assert.equal(parsed.benefitCents,46880);assert.equal(parsed.processed,'2026-06-17');
+ assert.deepEqual(parsed.procedures.map(p=>[p.code,p.date,p.tooth,p.surface,p.feeCents,p.benefitCents]),[
+  ['D4342','2026-05-14',null,'UR',10000,5680],['D4341','2026-05-14',null,'LR',15000,9360],['D2391','2026-05-14','5','',12000,6560],
+  ['D4341','2026-05-19',null,'UL',15000,9360],['D4341','2026-05-19',null,'LL',15000,9360],['D2391','2026-05-19','12','',12000,6560]
+ ]);
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-private-quadrants-'));
+ const f=await insuranceLedger(root,[{patNum:621,firstName:'TEST',lastName:'PERSON',claimNumber:parsed.claimRaw,serviceDate:'2026-05-14',procedures:parsed.procedures}]);
+ const file=path.join(root,'621.pdf');
+ try{
+  await fs.writeFile(file,bytes);await processSinglePdf(f.pool,file,{hashSplits:f.hashes});
+  assert.deepEqual(f.splits.map(s=>s.ProcNum),[1000,1001,1002,1003,1004,1005]);
+  assert.deepEqual(f.fees,[['56.80',1000],['93.60',1001],['65.60',1002],['93.60',1003],['93.60',1004],['65.60',1005]]);
+  assert.equal(f.payments.length,1);assert.equal(f.payments[0].PayDate,'2026-06-17');assert.equal(Number(f.payments[0].PayAmt),468.8);
+  const report=await appendDailyWorkbook(f.pool,f.history,path.join(root,'report.xlsx'),'2026-10-23');assert.equal(report.appended,1);assert.equal(report.reviewCount,0);
+  await fs.writeFile(file,bytes);await processSinglePdf(f.pool,file,{hashSplits:f.hashes});
+  assert.equal(f.payments.length,1);assert.equal(f.splits.length,6);assert.equal(f.documents.length,1);assert.equal(f.fees.length,6);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });

@@ -117,6 +117,10 @@ export function parseMetlife(extracted) {
     const totalLines = p.lines.filter((r) => /^Total\b/.test(r.text));
     if (codeItems.length) {
       const end = totalLines.find((r) => r.y > codeItems.at(-1).y)?.y;
+      const headerItems=p.items.filter(i=>i.y<codeItems[0].y&&(!claimDetail||i.y>claimDetail.y));
+      const moneyHeaders=['Charged','Negotiated','Expense','Applied','Plan'].map(label=>headerItems.find(i=>i.str===label)?.x/p.width);
+      const hasMoneyHeaders=moneyHeaders.every(Number.isFinite)&&moneyHeaders.every((x,i)=>!i||x>moneyHeaders[i-1]);
+      const columnBounds=hasMoneyHeaders?moneyHeaders.map((x,i)=>i?(x+moneyHeaders[i-1])/2:Math.max(0,x-(moneyHeaders[1]-x)/2)):null;
       if (!end) errors.push(`Trang ${p.page}: không tìm thấy Total của Claim Detail.`);
       for (let i = 0; i < codeItems.length; i++) {
         const c = codeItems[i];
@@ -135,7 +139,8 @@ export function parseMetlife(extracted) {
           return a.length === 1 ? a[0] : null;
         };
         const code = c.str.match(/D\d{4}/)[0];
-        let benefit = field(0.8, 0.93);
+        const moneyColumn=(index,lo,hi)=>columnBounds?field(columnBounds[index],columnBounds[index+1]??0.93):field(lo,hi);
+        let benefit = moneyColumn(4,0.8,0.93);
         if (benefit === null) {
           // Fallback: in MetLife EOB row, benefit is the last dollar amount before notes
           const allCurrencies = [...rowText.matchAll(/\$[\d,]+\.\d{2}/g)].map((m) => cents(m[0]));
@@ -147,20 +152,20 @@ export function parseMetlife(extracted) {
         const teeth = row
           .filter((t) => t.x / p.width >= 0.38 && t.x / p.width < 0.46)
           .map((t) => t.str)
-          .filter((t) => /^([A-T]|[1-9]|[12][0-9]|3[0-2])$/.test(t));
+          .filter((t) => /^([A-T]|0?[1-9]|[12][0-9]|3[0-2])$/.test(t));
         const areaText=row.filter(t=>t.x/p.width>=0.30&&t.x/p.width<0.46).map(t=>t.str).join(' ').toUpperCase();
         const quadrants=[...new Set([...areaText.matchAll(/\b(?:UR|UL|LR|LL|Q0[1-4])\b/g)].map(m=>({Q01:'UR',Q02:'UL',Q03:'LL',Q04:'LR'}[m[0]]||m[0])))];
         if(/^D434[12]$/.test(code)&&quadrants.length>1)errors.push(`${code}: vùng hàm không xác định duy nhất.`);
         procedures.push({
           code,
-          tooth: teeth.length === 1 ? teeth[0] : null,
+          tooth: teeth.length === 1 ? (/^\d+$/.test(teeth[0])?String(Number(teeth[0])):teeth[0]) : null,
           surface: /^D434[12]$/.test(code)&&quadrants.length===1?quadrants[0]:'',
           date: isoDate(take(rowText, /(\d{2}\/\d{2}\/\d{4})/)),
           status: /\bDenied\b/i.test(rowText) ? 'Denied' : /\bApproved\b/i.test(rowText) ? 'Approved' : 'Unknown',
-          feeCents: field(0.44, 0.56),
+          feeCents: moneyColumn(0,0.44,0.56),
           benefitCents: benefit,
-          coveredCents: field(0.62, 0.73),
-          deductibleCents: field(0.72, 0.82),
+          coveredCents: moneyColumn(2,0.62,0.73),
+          deductibleCents: moneyColumn(3,0.72,0.82),
           bundled: /Allowable/i.test(rowText),
           page: p.page,
           evidence: rowText
