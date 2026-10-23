@@ -23,6 +23,47 @@ test('Delta uses claim total, sent date, exact page overlap and modified service
  assert.equal(c.paymentPayload.checkNum,'');assert.equal(c.paymentPayload.payNote,'Claim number: 20261625116008');assert.equal(c.paymentPayload.amount,'154.00');assert.equal(p.warnings.length,2);
 });
 
+function bundledRadiographs(){
+ const s=sample();
+ const row=(explanation,code,fee,paid)=>({text:`${explanation} 04/26/2026 ${code} - $${fee} $${paid} $${paid} $0.00 100% $${paid} $0.00`});
+ s.pages[0].lines=s.pages[0].lines.slice(0,14);
+ s.pages[0].lines.push(row('-','D0150','100.00','42.00'),row('FLB','D0220','25.00','0.00'),row('FLB','D0230','38.00','0.00'),row('FLB','D0274','80.00','0.00'));
+ s.pages[1].lines=[row('FLB','D0274','80.00','0.00'),row('-','D0210','143.00','73.00'),{text:'Claim total $243.00 $115.00 $115.00 $0.00 $115.00 $0.00'},{text:'FLB: The combined fees for radiographic images are equal to or more than the fee for a complete intraoral radiographic image series. Therefore, according to our guidelines, the radiographic images are considered to be equivalent to a complete series.'}];
+ return s;
+}
+
+test('Delta FLB bundled radiographs reconcile submitted fees without changing source rows or benefits',()=>{
+ const p=parseDelta(bundledRadiographs());assert.deepEqual(p.errors,[]);
+ const c=p.claims[0];assert.equal(c.rawProcedures.length,5);
+ assert.equal(c.paymentPayload.amount,'115.00');
+ assert.deepEqual(c.procedures.map(p=>[p.code,p.feeCents,p.benefitCents]),[['D0150',10000,4200],['D0220',2500,0],['D0230',3800,0],['D0274',8000,0],['D0210',14300,7300]]);
+ assert.deepEqual(c.paymentPayload.splits.map(p=>[p.code,p.amount]),[['D0150','42.00'],['D0210','73.00']]);
+ assert.ok(p.warnings.some(s=>s.includes('FLB')));
+});
+
+test('Delta FLB still rejects missing evidence, incomplete rows, changed totals or unrelated services',()=>{
+ const variants=[
+  s=>s.pages[1].lines.pop(),
+  s=>{s.pages[0].lines[15].text=s.pages[0].lines[15].text.replace('FLB','OTHER');},
+  s=>{s.pages[1].lines[1].text=s.pages[1].lines[1].text.replace('D0210','D1110');},
+  s=>{s.pages[1].lines[1].text=s.pages[1].lines[1].text.replace('04/26/2026','04/27/2026');},
+  s=>{s.pages[0].lines[15].text=s.pages[0].lines[15].text.replace('D0220','D0120');},
+  s=>s.pages[0].lines.splice(15,1),
+  s=>{s.pages[1].lines[2].text=s.pages[1].lines[2].text.replace('$243.00','$244.00');},
+  s=>{s.pages[1].lines[2].text=s.pages[1].lines[2].text.replaceAll('$115.00','$116.00');}
+ ];
+ for(const change of variants){const s=bundledRadiographs();change(s);assert.ok(parseDelta(s).errors.length);}
+});
+
+test('supplied Delta FLB PDF regression (optional private fixture)',{skip:!process.env.DELTA_FLB_TEST_PDF},async()=>{
+ const {extracted}=await readDeltaDocument(await fs.readFile(process.env.DELTA_FLB_TEST_PDF),'1012.pdf');
+ const p=parseDelta(extracted);assert.deepEqual(p.errors,[]);assert.equal(p.claimsCount,1);
+ const c=p.claims[0];assert.equal(c.claimNumber,'20261165105694');assert.equal(c.date,'2026-04-30');assert.equal(c.headerPaidCents,23000);
+ assert.equal(c.rawProcedures.length,5);assert.equal(c.paymentPayload.amount,'115.00');
+ assert.deepEqual(c.paymentPayload.splits.map(p=>[p.code,p.amount]),[['D0150','42.00'],['D0210','73.00']]);
+ assert.deepEqual(c.procedures.filter(p=>p.explanationCode==='FLB').map(p=>p.code),['D0220','D0230','D0274']);
+});
+
 test('Delta incomplete scans, wrong totals, invalid dates and ambiguous repeated rows stop before DB access',async()=>{
  const missing=sample();missing.pages.pop();
  const wrong=sample();wrong.pages[1].lines.at(-1).text=wrong.pages[1].lines.at(-1).text.replaceAll('$154.00','$155.00');

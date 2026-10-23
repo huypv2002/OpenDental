@@ -1,11 +1,11 @@
 import {cents,isoDate,money} from '../metlife/parser.js';
 
 const amounts=text=>[...text.matchAll(/\$([\d,]+\.\d{2})/g)].map(m=>cents(m[1]));
-const signature=p=>JSON.stringify([p.date,p.code,p.tooth,p.feeCents,p.allowedCents,p.maximumCents,p.deductibleCents,p.percent,p.benefitCents,p.patientDueCents]);
+const signature=p=>JSON.stringify([p.date,p.code,p.tooth,p.feeCents,p.allowedCents,p.maximumCents,p.deductibleCents,p.percent,p.benefitCents,p.patientDueCents,p.explanationCode]);
 const fail=(message)=>Object.assign(new Error(message),{code:'EOB_REVIEW_REQUIRED'});
 
 export function parseDelta(extracted){
- const errors=[],warnings=[],claims=[];let current;
+ const errors=[],warnings=[],claims=[],claimTexts=new Map();let current;
  try{
  for(const page of extracted.pages){
   const lines=page.lines.map(l=>l.text.trim()).filter(Boolean),text=lines.join('\n');
@@ -27,6 +27,7 @@ export function parseDelta(extracted){
    if(parts.length<2||!current.patient.birthdate||!member||!payDate||!Number.isSafeInteger(headerPaid)||!/\bCleared\b|\bPaid\b/.test(text))throw fail('Thiếu thông tin bệnh nhân, ngày gửi tiền hoặc trạng thái thanh toán Delta.');
    claims.push(current);
   }
+  if(current)claimTexts.set(current.claimNumber,(claimTexts.get(current.claimNumber)||'')+'\n'+text);
   const rows=[];
   for(const line of lines){
    if(/[-−]\$|\$\s*[-−]/.test(line))throw fail('Claim Delta có số tiền âm; cần đối chiếu trước khi xử lý.');
@@ -37,7 +38,8 @@ export function parseDelta(extracted){
     if(a.length!==6||!date||!Number.isFinite(percent)||percent<0||percent>100||!/^(?:|[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(tooth))throw fail('Dòng Delta thiếu ngày, răng, tỷ lệ hoặc cột tiền.');
     const [feeCents,allowedCents,maximumCents,deductibleCents,benefitCents,patientDueCents]=a;
     if(Math.round(Math.max(0,maximumCents-deductibleCents)*percent/100)!==benefitCents)throw fail('Tiền Delta trả không khớp mức hưởng và tỷ lệ trên dòng dịch vụ.');
-    rows.push({date,code:match[2],tooth,feeCents,allowedCents,maximumCents,deductibleCents,benefitCents,patientDueCents,percent});
+    const explanationCode=/^([A-Z]+)\s+\d{2}\//.exec(line)?.[1]||'';
+    rows.push({date,code:match[2],tooth,feeCents,allowedCents,maximumCents,deductibleCents,benefitCents,patientDueCents,percent,explanationCode});
    }else if(/\bD\d{4}\b/.test(line)&&line.includes('$'))throw fail('Có dòng dịch vụ Delta chưa đọc đầy đủ.');
    if(/^Claim total\b/i.test(line)){
     if(!current||current.printedTotals)throw fail('Tổng claim Delta bị thiếu hoặc lặp.');
@@ -64,7 +66,25 @@ export function parseDelta(extracted){
    normalized.push({...paid[0],feeCents:denied[0].feeCents});
   }
   const keys=['feeCents','allowedCents','maximumCents','deductibleCents','benefitCents','patientDueCents'];
-  if(keys.some((k,i)=>normalized.reduce((n,p)=>n+p[k],0)!==claim.printedTotals[i]))throw fail('Tổng từng cột dịch vụ Delta không khớp Claim total; cần đủ trang và đọc rõ số tiền.');
+  const totals=keys.map(k=>normalized.reduce((n,p)=>n+p[k],0));
+  if(totals[0]!==claim.printedTotals[0]){
+   // FLB replaces separate radiographs with a complete series. The portal
+   // excludes their submitted fees from Claim total, while still printing
+   // the original rows. Preserve those rows/fees for history and reporting.
+   const claimText=claimTexts.get(claim.claimNumber)||'';
+   const flbExplained=/\bFLB:\s*The combined fees for radiographic images[\s\S]*?equivalent to a complete series\b/i.test(claimText);
+   const bundled=normalized.filter(p=>p.explanationCode==='FLB'&&/^D0(?:220|230|274)$/.test(p.code)&&keys.slice(1).every(k=>p[k]===0)&&normalized.some(s=>s.code==='D0210'&&s.date===p.date&&s.benefitCents>0));
+   const excluded=bundled.reduce((n,p)=>n+p.feeCents,0);
+   const completeSeries=[...new Set(bundled.map(p=>p.date))].every(date=>{
+    const series=normalized.filter(p=>p.code==='D0210'&&p.date===date&&p.benefitCents>0);
+    return series.length===1&&bundled.filter(p=>p.date===date).reduce((n,p)=>n+p.feeCents,0)>=series[0].feeCents;
+   });
+   if(flbExplained&&completeSeries&&excluded>0&&totals[0]-excluded===claim.printedTotals[0]){
+    totals[0]-=excluded;
+    warnings.push(`Claim ${claim.claimNumber}: Claim total không cộng phí ${money(excluded)} của ${bundled.length} dòng X-quang FLB đã gộp vào D0210; giữ nguyên các dòng gốc.`);
+   }
+  }
+  if(totals.some((n,i)=>n!==claim.printedTotals[i]))throw fail('Tổng từng cột dịch vụ Delta không khớp Claim total; cần đủ trang và đọc rõ số tiền.');
   const paid=claim.printedTotals[4];if(paid<=0)throw fail('Claim Delta không có khoản hưởng dương.');
   // Confirmed clinic rule: deposit Amount may combine multiple claims.
   // Only this claim's reconciled Delta Dental pays column is posted.

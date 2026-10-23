@@ -30,3 +30,13 @@ The six private feedback PDFs were exercised through their actual readers/proces
 Additional 1041 tests prove: (1) an ambiguous second-patient service blocks the first write; (2) a failure after the first patient's successful payment resumes without replacing that payment or document. Tests cover conflict/partial-payment rejection, zero-value readback failure, changed claim association, foreign patient/claim preservation, and explicit retry without overwriting an incoming file.
 
 No clinic financial write was executed during development. Actual SERVER/client display after deployment remains unverified. No retrospective clinic-data cleanup is performed by this change.
+
+## Delta 1012: FLB radiograph bundling
+
+The supplied two-page scan has five service rows, including three zero-benefit radiographs marked FLB and a paid D0210 complete series. Submitted fees sum to $386, while Claim total correctly excludes the $143 of bundled radiographs and shows $243. Benefits reconcile to $115 ($42 D0150 + $73 D0210); payment sent date is 2026-04-30. The $230 deposit header is separate from this claim's benefits.
+
+Preserve explanation codes during OCR. Allow the submitted-fee exclusion only with the FLB explanation in the same claim, eligible zero-value radiographs, one paid D0210 on the same date, combined radiograph fees at least the series fee, and an exact adjusted total. All other money columns must still reconcile. Preserve original service rows and submitted fees in parsed history/report data. Missing evidence and inconsistent financial totals still stop processing.
+
+Private PDF regression: `DELTA_FLB_TEST_PDF=/path/to/1012.pdf node --test src/delta/parser.test.js`. Patient documents remain outside the repository.
+
+After this fix, the full four-carrier suite with the original private fixtures and the new FLB scan reports **132 tests, 130 passed, 0 failed, 2 skipped** (real database tests). The Delta suite alone passes all 11 tests with both scanned PDFs enabled. No live clinic payment was written.

@@ -62,7 +62,8 @@ export async function recognizeDeltaPage(worker,image){
    }
    const percent=l.words.find(w=>w.x/c.width>=.736&&w.x/c.width<.813&&/^\d+(?:\.\d+)?%$/.test(w.text))?.text;
    if(!percent)throw new Error('Thiếu tỷ lệ hưởng dịch vụ Delta Dental.');
-   result.push({text:`${serviceDate} ${code} ${tooth||'-'} ${money.slice(0,4).join(' ')} ${percent} ${money.slice(4).join(' ')}`});
+   const explanation=l.words.filter(w=>w.x/c.width<.115).map(w=>w.text).join('');
+   result.push({text:`${/^[A-Z]+$/.test(explanation)?explanation+' ':''}${serviceDate} ${code} ${tooth||'-'} ${money.slice(0,4).join(' ')} ${percent} ${money.slice(4).join(' ')}`});
   }else if(/^Claim total\b/i.test(l.text)){
    const money=[];for(const [a,b] of [[.38,.466],[.466,.542],[.542,.637],[.637,.73],[.807,.902],[.902,.975]]){
     const s=await cell(l,a,b,'$0123456789,.-');if(!/^\$?\d[\d,]*\.\d{2}$/.test(s))throw new Error('Chưa đọc rõ tổng claim Delta Dental.');money.push(s.startsWith('$')?s:'$'+s);
