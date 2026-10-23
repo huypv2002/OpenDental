@@ -126,6 +126,8 @@ test('MetLife full processor writes blank check, processed date, claim-only note
  await fs.writeFile(filePath,bytes);
  let payment=null,document=null,history=null,released=false;const splits=[];
  const conn={query:async()=>[[]],release(){released=true;},execute:async(sql,args)=>{
+  if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
   if(sql.includes('SELECT PayNum')){assert.match(sql,/ExternalId/);assert.deepEqual(args,[99,'1234567890 99','1234567890 99']);return [[]];}
   if(sql.includes('INSERT INTO payment')){payment=args;return [{insertId:77}];}
   if(sql.includes('INSERT INTO paysplit')){splits.push(args);return [{insertId:splits.length}];}
@@ -135,6 +137,8 @@ test('MetLife full processor writes blank check, processed date, claim-only note
  }};
  const procs=['D0150','D1110','D0210'].map((ProcCode,i)=>({ProcNum:51+i,ProcDate:new Date('2026-09-13T12:00:00Z'),ProcFee:0,ProvNum:1,ClinicNum:0,ProcCode,Descript:'Synthetic procedure'}));
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
+  if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
   if(sql.includes('FROM patient WHERE PatNum'))return [[{PatNum:99,FName:'TEST',LName:'PERSON',ImageFolder:'Test99',ClinicNum:0,PriProv:1}]];
   if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:imageRoot},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];
   if(sql.includes('Category = 18')){assert.match(sql,/IsHidden = 0/);return [[{DefNum:55}]];}

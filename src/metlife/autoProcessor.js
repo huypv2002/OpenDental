@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import {randomUUID} from 'node:crypto';
+import {prepareInsuranceSettlement,applyInsuranceSettlement,verifyInsuranceSettlement,verifiedInsurancePayment,recordInsuranceResult,reviewError,procedureDay} from './insuranceSettlement.js';
 import { extractPdf, parseMetlife } from './parser.js';
 import { nativeSplitHashes } from './nativeSplitHashes.js';
 import { odSecurityLogHash } from './directPayment.js';
@@ -137,7 +139,16 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
   if(relative.startsWith('..')||path.isAbsolute(relative))throw new Error('Thư mục ảnh bệnh nhân nằm ngoài AtoZ.');
   const safeClaim=claimNumber.replace(/[^a-zA-Z0-9]/g,'_');
   const prefix=carrier==='DELTA DENTAL'?'DELTA':carrier==='CIGNA'?'CIGNA':carrier==='LIBERTY Dental Plan'?'LIBERTY':'METLIFE';
-  const destFileName=`${prefix}_${safeClaim}_${paymentDate}_${Date.now()}.pdf`;
+  const [existingDocs]=await pool.execute('SELECT DocNum,FileName FROM document WHERE PatNum=? AND DocCategory=? AND Description=? AND DateCreated=? AND FileName LIKE ? ORDER BY DocNum DESC LIMIT 5',[patient.PatNum,cats[0].DefNum,description,dateCreated,`${prefix}_%`]);
+  for(const doc of existingDocs){
+    if(!doc.FileName||/[\\/]/.test(doc.FileName))continue;
+    const existingPath=path.join(resolvedDir,doc.FileName);
+    try{
+      const real=await fs.realpath(existingPath);if(path.dirname(real)!==resolvedDir)continue;
+      if((await fs.readFile(real)).equals(fileBytes))return {docNum:doc.DocNum,savedPath:real,description,dateCreated,reused:true};
+    }catch(e){if(e.code!=='ENOENT')throw e;}
+  }
+  const destFileName=`${prefix}_${safeClaim}_${paymentDate}_${randomUUID()}.pdf`;
   const fullDestPath=path.join(resolvedDir,destFileName);
   await fs.writeFile(fullDestPath,fileBytes,{flag:'wx'});
   const statement=documentInsert({DocCategory:cats[0].DefNum,PatNum:patient.PatNum,FileName:destFileName,Description:description,DateCreated:dateCreated},columns);
@@ -146,7 +157,7 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
   return {docNum:docRes.insertId,savedPath:fullDestPath,description,dateCreated};
 }
 
-export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbProcs }) {
+export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbProcs, settlement }) {
   const procs = dbProcs || (await db.execute(
     `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurecode.ProcCode, procedurelog.CodeNum
      FROM procedurelog
@@ -171,7 +182,10 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
 
     if (match) {
       await db.execute('UPDATE procedurelog SET ProcFee = ? WHERE ProcNum = ?', [splitFee, match.ProcNum]);
-      await db.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [splitFee, match.ProcNum]);
+      if(settlement){
+        const ids=settlement.rows.filter(r=>String(r.ProcNum)===String(match.ProcNum)).map(r=>r.ClaimProcNum);
+        if(ids.length)await db.execute(`UPDATE claimproc SET FeeBilled=? WHERE PatNum=? AND ClaimProcNum IN (${ids.map(()=>'?').join(',')})`,[splitFee,patNum,...ids]);
+      }else await db.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [splitFee, match.ProcNum]);
       updatedFees.push(`${item.code}: $${splitFee}`);
       match.ProcFee = splitFee;
     }
@@ -182,13 +196,16 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
     const isEob = eobProcedures.some((ep) => (ep.procNum ? ep.procNum===p.ProcNum : ep.code === p.ProcCode) && ep.benefitCents > 0);
     if (!isEob) {
       await db.execute('UPDATE procedurelog SET ProcFee = 0.00 WHERE ProcNum = ?', [p.ProcNum]);
-      await db.execute('UPDATE claimproc SET FeeBilled = 0.00 WHERE ProcNum = ?', [p.ProcNum]);
+      if(settlement){
+        const ids=settlement.rows.filter(r=>String(r.ProcNum)===String(p.ProcNum)).map(r=>r.ClaimProcNum);
+        if(ids.length)await db.execute(`UPDATE claimproc SET FeeBilled=0 WHERE PatNum=? AND ClaimProcNum IN (${ids.map(()=>'?').join(',')})`,[patNum,...ids]);
+      }else await db.execute('UPDATE claimproc SET FeeBilled = 0.00 WHERE ProcNum = ?', [p.ProcNum]);
       p.ProcFee = '0.00';
     }
   }
 
   // Update claim.ClaimFee if claim exists
-  const [claims] = await db.execute('SELECT ClaimNum FROM claim WHERE PatNum = ?', [patNum]);
+  const claims=settlement?settlement.claimIds.map(ClaimNum=>({ClaimNum})):(await db.execute('SELECT ClaimNum FROM claim WHERE PatNum = ?', [patNum]))[0];
   for (const c of claims) {
     const [sums] = await db.execute(
       'SELECT SUM(FeeBilled) AS TotalFee FROM claimproc WHERE ClaimNum = ?',
@@ -237,19 +254,19 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
 
   if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
     const {processDeltaPdf}=await import('../delta/processor.js');
-    return processDeltaPdf(pool,{filePath,fileName,fileBytes,extracted});
+    return processDeltaPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits});
   }
 
   if(path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA'||(/Claim\/Reference Number:/.test(fullText)&&/Claim Amount Paid:/.test(fullText)&&/Date Processed:/.test(fullText))){
     const {processCignaPdf}=await import('../cigna/processor.js');
-    return processCignaPdf(pool,{filePath,fileName,fileBytes,extracted});
+    return processCignaPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits});
   }
 
   // Carrier auto-detection: Liberty vs MetLife
   const isLiberty = /LIBERTY Dental Plan/i.test(fullText) || /PAYMENT DETAILS/i.test(fullText);
   if (isLiberty) {
     const { processLibertyPdf } = await import('../liberty/processor.js');
-    return await processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted });
+    return await processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted },{hashSplits});
   }
 
   if(extracted.ocr)throw Object.assign(new Error('Ảnh/PDF scan chưa xác nhận được là EOB Liberty; cần đối chiếu tài liệu gốc.'),{code:'EOB_REVIEW_REQUIRED'});
@@ -273,44 +290,23 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   console.log(`[MetLife Auto-Processor] Bệnh nhân: ${patient.LName}, ${patient.FName} (#${patNum})`);
   console.log(`[MetLife Auto-Processor] Claim / Check: ${claimNumber} | Tổng tiền: $${totalBenefit}`);
 
-  // 2. Import PDF to AtoZ Finished Claims
-  const aToZResult = await importPdfToAtoZ(pool, {
-    patient,
-    fileBytes,
-    fileName,
-    claimNumber,
-    paymentDate: eobDate,
-    amountCents: parsed.benefitCents
-  });
-
   // 3. Find matching procedures in DB for splits
   const [dbProcs] = await pool.execute(
-    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurecode.ProcCode, procedurecode.Descript
+    `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurelog.ProvNum, procedurelog.ClinicNum, procedurelog.ToothNum, procedurecode.ProcCode, procedurecode.Descript
      FROM procedurelog
      JOIN procedurecode ON procedurecode.CodeNum = procedurelog.CodeNum
      WHERE procedurelog.PatNum = ? AND procedurelog.ProcStatus = 2`,
     [patNum]
   );
 
-  // Auto-fix 0.00 ProcFee BEFORE locking tables
-  const updatedFees = await autoPopulateProcedureFees(pool, {
-    patNum,
-    eobProcedures: parsed.procedures,
-    dbProcs
-  });
-
   const splitsPlan = [];
   for (const eobProc of parsed.procedures) {
     if (!eobProc.benefitCents || eobProc.benefitCents <= 0) continue;
     const splitAmount = (eobProc.benefitCents / 100).toFixed(2);
 
-    let match = dbProcs.find(
-      (p) => p.ProcCode === eobProc.code && (!eobProc.date || p.ProcDate?.toISOString?.()?.slice(0, 10) === eobProc.date)
-    );
-    if (!match) {
-      match = dbProcs.find((p) => p.ProcCode === eobProc.code);
-    }
-
+    const matches=dbProcs.filter(p=>p.ProcCode===eobProc.code&&(!eobProc.date||procedureDay(p.ProcDate)===eobProc.date));
+    if(matches.length!==1)throw reviewError(`${eobProc.code}: chưa khớp duy nhất dịch vụ hoàn tất theo ngày; cần đối chiếu.`);
+    const match=matches[0];
     splitsPlan.push({
       ProcNum: match ? match.ProcNum : 0,
       ProvNum: match?.ProvNum || provNum,
@@ -323,13 +319,27 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     });
   }
 
+  const settlement=await prepareInsuranceSettlement(pool,{patNum,carrier:'MetLife',procedures:parsed.procedures,dbProcs,splits:splitsPlan});
+  const existing=await verifiedInsurancePayment(pool,{patNum,claimNumber,date:eobDate,amountCents:parsed.benefitCents,splits:splitsPlan});
+  // 2. Import PDF to AtoZ Finished Claims
+  const aToZResult = await importPdfToAtoZ(pool, {
+    patient,
+    fileBytes,
+    fileName,
+    claimNumber,
+    paymentDate: eobDate,
+    amountCents: parsed.benefitCents
+  });
+
+  const updatedFees=existing?[]:await autoPopulateProcedureFees(pool,{patNum,eobProcedures:parsed.procedures,dbProcs:dbProcs.filter(p=>settlement.procIds.includes(String(p.ProcNum))),settlement});
+
   // 4. Generate SecurityHash for each split
   const hashPlan = {
     patNum,
     date: eobDate,
     splits: splitsPlan
   };
-  const hashes = await hashSplits(hashPlan);
+  const hashes = existing?[]:await hashSplits(hashPlan);
   hashes.forEach((h, idx) => {
     splitsPlan[idx].SecurityHash = h;
   });
@@ -353,26 +363,11 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
       'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE'
     );
 
-    // Revert any previous attempt for this check to avoid duplicates
-    const [existingPayments] = await conn.execute(
-      'SELECT PayNum FROM payment WHERE PatNum = ? AND (ExternalId = ? OR CheckNum = ?)',
-      [patNum, claimNumber, claimNumber]
-    );
-    for (const p of existingPayments) {
-      await conn.execute('DELETE FROM paysplit WHERE PayNum = ?', [p.PayNum]);
-      await conn.execute('DELETE FROM payment WHERE PayNum = ?', [p.PayNum]);
-    }
-
-    // Reset old claimproc state if re-running
-    await conn.execute(
-      "UPDATE claimproc SET InsPayAmt = 0, Status = 0, DateCP = '0001-01-01' WHERE PatNum = ? AND Status = 1",
-      [patNum]
-    );
-    await conn.execute(
-      "UPDATE claim SET ClaimStatus = 'W', DateReceived = '0001-01-01' WHERE PatNum = ? AND ClaimStatus = 'R'",
-      [patNum]
-    );
-
+    await verifyInsuranceSettlement(conn,settlement);
+    const previous=await verifiedInsurancePayment(conn,{patNum,claimNumber,date:eobDate,amountCents:parsed.benefitCents,splits:splitsPlan});
+    if(previous){payNum=previous.PayNum;console.log(`[MetLife Auto-Processor] Claim #${claimNumber}: đã xác minh Payment #${payNum}; giữ nguyên khoản đã lưu.`);}
+    else {
+     if(existing)throw reviewError('Khoản đã lưu thay đổi sau đối chiếu; chưa tạo lại thanh toán.');
     // Insert Payment
     const payNote = paymentFields.note;
     const [payRes] = await conn.execute(
@@ -397,20 +392,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
         [split.amount, patNum, split.date, eobDate, split.ProcNum, split.ProvNum, split.ClinicNum, payNum, split.SecurityHash]
       );
 
-      // Ensure claimproc does not trigger a duplicate unfinalized InsPay line in Open Dental
-      if (split.ProcNum > 0) {
-        await conn.execute(
-          `UPDATE claimproc SET InsPayAmt = 0, Status = 0, ClaimPaymentNum = 0, DateCP = '0001-01-01' WHERE PatNum = ? AND ProcNum = ?`,
-          [patNum, split.ProcNum]
-        );
-      }
     }
-
-    // Update Claim to Received
-    await conn.execute(
-      `UPDATE claim SET ClaimStatus = 'R', DateReceived = ? WHERE PatNum = ?`,
-      [eobDate, patNum]
-    );
 
     // Audit SecurityLog & SecurityLogHash
     const logText = `Payment created for ${patient.LName}, ${patient.FName} with payment type '${selectedPayType.ItemName}', amount '$${totalBenefit}'`;
@@ -442,6 +424,8 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
       );
     }
 
+    }
+    await applyInsuranceSettlement(conn,settlement,eobDate);
     await conn.query('UNLOCK TABLES');
   } finally {
     try { await conn.query('UNLOCK TABLES'); } catch {}
@@ -453,7 +437,6 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   const processedDir = path.join(incomingDir, 'PROCESSED');
   await fs.mkdir(processedDir, { recursive: true });
   const archivePath = path.join(processedDir, `${Date.now()}_${fileName}`);
-  await fs.rename(filePath, archivePath);
 
   // 8. Record in luk_metlife_history
   const details = JSON.stringify({
@@ -465,6 +448,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     docNum: aToZResult.docNum,
     totalBenefit,
     updatedFees,
+    insuranceDefaults:{estimate:0,writeOff:0,claimNums:settlement.claimIds,claimProcNums:settlement.rows.map(r=>r.ClaimProcNum)},
     splits: splitsPlan.map((s) => ({ code: s.code, amount: s.amount, procNum: s.ProcNum })),
     paymentDate: eobDate,
     paymentNote: paymentFields.note,
@@ -474,6 +458,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     eobPayment: parsed.payment || null,
     subscriber: parsed.subscriber || '',
     procedures: (parsed.procedures || []).map((p) => ({
+      procNum:splitsPlan.find(s=>s.code===p.code)?.ProcNum,
       code: p.code,
       date: p.date || '',
       tooth: p.tooth || '',
@@ -487,12 +472,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
 
   const feesUpdatedStr = updatedFees.join(', ') || 'Không cần bù (đã có phí)';
 
-  await pool.execute(
-    `INSERT INTO luk_metlife_history (
-      FileName, FileHash, PatNum, PatientName, ClaimNumber, CheckNumber,
-      TotalAmount, ProceduresCount, FeesUpdated, PayNum, DocNum, Status,
-      Message, Details, ProcessedAt
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?, NOW())`,
+  await recordInsuranceResult(pool,
     [
       fileName,
       extracted.sha256,
@@ -509,6 +489,8 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
       details
     ]
   );
+
+  await fs.rename(filePath,archivePath);
 
   console.log(`[MetLife Auto-Processor] ✓ HOÀN THÀNH: ${fileName} -> PayNum: ${payNum}, DocNum: ${aToZResult.docNum}`);
   return {
@@ -552,26 +534,8 @@ export async function scanIncomingFolder(pool, incomingDir, {processFile=process
 
       let pdfs = entries.filter((e) => e.isFile() && isInsuranceFile(e.name));
 
-      if (pdfs.length === 0) {
-        // Auto-recover files from ERRORS folder if main folder is empty
-        try {
-          const errorsDir = path.join(cDir, 'ERRORS');
-          const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
-          const errPdfs = errEntries.filter((e) => e.isFile() && isInsuranceFile(e.name));
-          if (errPdfs.length > 0) {
-            console.log(`[Auto-Processor] Tìm thấy ${errPdfs.length} file trong ${errorsDir}. Đang tự động chuyển ra ngoài để thử lại...`);
-            for (const errFile of errPdfs) {
-              const cleanName = errFile.name.replace(/^\d{13}_/, '');
-              const src = path.join(errorsDir, errFile.name);
-              const dst = path.join(cDir, cleanName);
-              await fs.rename(src, dst);
-            }
-            entries = await fs.readdir(cDir, { withFileTypes: true });
-            pdfs = entries.filter((e) => e.isFile() && isInsuranceFile(e.name));
-          }
-        } catch {}
-      }
-
+      // ERRORS/REVIEW require an explicit retry. Replaying automatically can
+      // repeatedly revisit the first successful claim in a multi-patient file.
       for (const p of pdfs) {
         const stat=await fs.stat(path.join(cDir,p.name));
         if(Date.now()-stat.mtimeMs<3000)continue;
@@ -706,27 +670,18 @@ export async function getProcessorStatus(pool, incomingDir) {
 }
 
 export async function retryErrorFiles(pool, incomingDir) {
-  const dir = incomingDir || process.env.METLIFE_INCOMING_DIR || 'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
-  const candidateDirs = insuranceIncomingDirs(dir);
-
-  let moved = 0;
-  for (const cDir of candidateDirs) {
-    const errorsDir = path.join(cDir, 'ERRORS');
-    try {
-      const errEntries = await fs.readdir(errorsDir, { withFileTypes: true });
-      const errPdfs = errEntries.filter((e) => e.isFile() && isInsuranceFile(e.name));
-      for (const errFile of errPdfs) {
-        const cleanName = errFile.name.replace(/^\d{13}_/, '');
-        const src = path.join(errorsDir, errFile.name);
-        const dst = path.join(cDir, cleanName);
-        await fs.rename(src, dst);
-        moved++;
-      }
-    } catch {}
+  const dir=incomingDir||process.env.METLIFE_INCOMING_DIR||'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
+  const {constants}=await import('node:fs');let moved=0;const conflicts=[];
+  for(const cDir of insuranceIncomingDirs(dir))for(const category of ['ERRORS','REVIEW']){
+    const errorsDir=path.join(cDir,category);let entries;
+    try{entries=await fs.readdir(errorsDir,{withFileTypes:true});}catch(e){if(e.code==='ENOENT')continue;throw e;}
+    for(const file of entries.filter(e=>e.isFile()&&isInsuranceFile(e.name))){
+      const cleanName=file.name.replace(/^\d{13}_/,''),src=path.join(errorsDir,file.name),dst=path.join(cDir,cleanName);
+      try{await fs.copyFile(src,dst,constants.COPYFILE_EXCL);await fs.unlink(src);moved++;}
+      catch(e){if(e.code==='EEXIST')conflicts.push({fileName:cleanName,message:'Thư mục chờ đã có file cùng tên; giữ nguyên cả hai file.'});else throw e;}
+    }
   }
-
-  const scanResult = await scanIncomingFolder(pool, dir);
-  return { movedCount: moved, scanResult };
+  return {movedCount:moved,conflicts,scanResult:await scanIncomingFolder(pool,dir)};
 }
 
 async function historyPdf(filename,bytes){

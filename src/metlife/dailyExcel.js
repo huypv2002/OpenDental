@@ -96,7 +96,7 @@ export async function reportEntry(pool,row){
   const procedures=details.procedures.map(p=>{
     const split=(details.splits||[]).filter(s=>s.code===p.code);
     const hasDate=!!dateValue(p.date);
-    let candidates=procs.filter(r=>r.ProcCode===p.code&&(hasDate?isoDay(r.ProcDate)===p.date:linkedIds.has(String(r.ProcNum)))&&(!p.tooth||String(r.ToothNum)===p.tooth||/^Q0[1-4]$/.test(p.tooth)));
+    let candidates=procs.filter(r=>r.ProcCode===p.code&&(hasDate?isoDay(r.ProcDate)===p.date:linkedIds.has(String(r.ProcNum)))&&(p.procNum?String(r.ProcNum)===String(p.procNum):!p.tooth||String(r.ToothNum)===p.tooth||(/^\d+$/.test(String(r.ToothNum))&&/^\d+$/.test(p.tooth)&&Number(r.ToothNum)===Number(p.tooth))||/^Q0[1-4]$/.test(p.tooth)));
     if(candidates.length>1&&split.length)candidates=candidates.filter(r=>split.some(s=>String(s.procNum)===String(r.ProcNum)));
     const match=candidates.length===1?candidates[0]:null;
     return {date:hasDate?p.date:match?isoDay(match.ProcDate):null,code:p.code,treatment:[p.tooth,p.surface,match?.Descript||p.description].filter(Boolean).join(' '),chargeCents:match?amount(match.ProcFee):null,billedCents:p.feeCents??null,paidCents:p.benefitCents??null};
@@ -255,7 +255,7 @@ export async function exportDailyReports(pool,incomingDir,{now=new Date(),starte
         const result=await writeWorkbook(pool,rows,path.join(dir,`${day}.xlsx`),day);reports.push(result);
         const saved=await fs.stat(result.filePath);
         if(!saved.isFile()||saved.size===0)throw new Error(`Chưa tạo được file Excel: ${result.filePath}`);
-        console.log(`[Excel] File đã tồn tại: ${path.resolve(result.filePath)} (${saved.size} bytes) | Thêm ${result.appended} hồ sơ | ${result.reviewCount||0} hồ sơ cần đối chiếu.`);
+        if(result.appended||result.reviewCount)console.log(`[Excel] Đã cập nhật báo cáo: ${path.resolve(result.filePath)} (${saved.size} bytes) | Thêm ${result.appended} hồ sơ | ${result.reviewCount||0} hồ sơ cần đối chiếu.`);
         if(result.reviewCount){
           reviews.push({day,count:result.reviewCount});
           console.warn(`[Excel] Báo cáo ${day}: ${result.reviewCount} hồ sơ thiếu dữ liệu nằm trong tab CAN DOI CHIEU. Các hồ sơ đủ dữ liệu vẫn được xuất; không chạy lại thanh toán.`);

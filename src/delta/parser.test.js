@@ -36,7 +36,9 @@ test('Delta incomplete scans, wrong totals, invalid dates and ambiguous repeated
 
 test('Delta resolves exact patient, DOB, subscriber and carrier; rejects multiple matches',async()=>{
  const claim=parseDelta(sample()).claims[0];
- await assert.rejects(resolveDeltaPatient({execute:async(sql,args)=>{assert.match(sql,/%DELTA%/);assert.match(sql,/SubscriberID=\?/);assert.deepEqual(args,['PERSON','TEST','1998-09-14','280','123456789012']);return [[{PatNum:280},{PatNum:281}]];}},{claim,fileName:'280.pdf',claimsCount:1}),/duy nhất/);
+ await assert.rejects(resolveDeltaPatient({execute:async(sql,args)=>{
+  if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];assert.match(sql,/%DELTA%/);assert.match(sql,/SubscriberID=\?/);assert.deepEqual(args,['PERSON','TEST','1998-09-14','280','123456789012']);return [[{PatNum:280},{PatNum:281}]];}},{claim,fileName:'280.pdf',claimsCount:1}),/duy nhất/);
 });
 
 test('Delta sibling folder is scanned and archived documents can be found',async()=>{
@@ -64,6 +66,8 @@ test('DELTA DENTAL reuses payment/doc/history/Excel workflow and keeps the claim
  const documents=[],history=[],payments=[],splits=[],logs=[];
  const procs=[['D0120','30.00'],['D0220','3.12'],['D0230','59.88'],['D1110','61.00']].map(([ProcCode,ProcFee],i)=>({ProcNum:501+i,ProcCode,ProcDate:'2026-06-11',ToothNum:'',ProcFee,Descript:'Synthetic service',ProvNum:1,ClinicNum:0}));
  const conn={query:async()=>[[]],release(){},execute:async(sql,args)=>{
+  if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
   if(sql.includes('SELECT PayNum'))return [[]];
   if(sql.includes('INSERT INTO payment')){payments.push(args);return [{insertId:1841}];}
   if(sql.includes('INSERT INTO paysplit'))splits.push(args);
@@ -72,6 +76,8 @@ test('DELTA DENTAL reuses payment/doc/history/Excel workflow and keeps the claim
   return [{affectedRows:1}];
  }};
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
+  if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
   if(sql.includes('FROM patient p')){assert.match(sql,/%DELTA%/);assert.deepEqual(args,['PERSON','TEST','1998-09-14','280','123456789012']);return [[{PatNum:280,FName:'PERSON',LName:'TEST',ImageFolder:'Test280',PriProv:1,ClinicNum:0}]];}
   if(sql.includes('procedurecode.ProcCode')||sql.includes('FROM procedurelog pl'))return [procs];
   if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:path.join(root,'images')},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];

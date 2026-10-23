@@ -27,6 +27,8 @@ async function fixture({claims=1,failHistory=false,failArchive=false,input=null}
  const messages=[],history=[],documents=[],events=[];let locked=false,released=0,payId=100;
  const conn={query:async sql=>{events.push(sql);if(sql.startsWith('LOCK TABLES'))locked=true;if(sql==='UNLOCK TABLES')locked=false;return [[]];},
   execute:async(sql,args)=>{
+  if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
    if(sql.includes('INSERT INTO payment')){assert.equal(args[3],'');assert.ok(parsed.claims.some(c=>args[4]===`Claim number: ${c.claimNumber}`));assert.equal(args[1],parsed.check.date);}
    if(sql.includes('SELECT PayNum')){assert.ok(sql.includes('ExternalId'));assert.equal(args[1],args[2]);assert.ok(args[1]);}
    if(sql.includes('SELECT PayNum'))return [[]];
@@ -36,6 +38,8 @@ async function fixture({claims=1,failHistory=false,failArchive=false,input=null}
    return [{affectedRows:1}];
   },release(){assert.equal(locked,false);released++;}};
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
+  if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
   assert.equal(locked,false,'pool queries must run after releasing financial table locks');
   if(sql.includes('FROM patient p')){const i=parsed.claims.findIndex(c=>c.patient.memberId===args[0]),id=99+Math.max(i,0),p=parsed.claims[Math.max(i,0)].patient;return [[{PatNum:id,FName:p.firstName,LName:p.lastName,ClinicNum:0,PriProv:1,ImageFolder:`Test${id}`}]];}
   if(sql.includes('procedurecode.ProcCode')&&sql.includes('FROM procedurelog')){
@@ -114,3 +118,13 @@ for(const [key,count] of [['LIBERTY_TEST_SINGLE_IMAGE',1],['LIBERTY_TEST_IMAGE',
   }finally{await fs.rm(f.root,{recursive:true,force:true});}
  });
 }
+
+test('Liberty uses MetLife unique-code/date matching but never guesses between repeated procedures',async()=>{
+ const {matchLibertyProcedures}=await import('./validation.js');
+ const makeClaim=()=>({procedures:[{code:'D0220',date:'2026-09-22',tooth:'13',benefitCents:1400}]});
+ const proc={ProcNum:1,ProcCode:'D0220',ProcDate:'2026-09-22',ToothNum:'8'};
+ assert.throws(()=>matchLibertyProcedures([proc],makeClaim()),e=>e.code==='EOB_REVIEW_REQUIRED');
+ const c=makeClaim();assert.equal(matchLibertyProcedures([proc],c,{allowUniqueCodeDate:true}).get(c.procedures[0]).ProcNum,1);assert.match(c.procedures[0].matchWarning,/PDF răng 13, OD răng 8/);
+ assert.throws(()=>matchLibertyProcedures([proc,{...proc,ProcNum:2}],makeClaim(),{allowUniqueCodeDate:true}),e=>e.code==='EOB_REVIEW_REQUIRED');
+ const multiple=makeClaim();multiple.procedures.push({...multiple.procedures[0],tooth:'23'});assert.throws(()=>matchLibertyProcedures([proc],multiple,{allowUniqueCodeDate:true}),e=>e.code==='EOB_REVIEW_REQUIRED');
+});

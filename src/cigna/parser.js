@@ -37,7 +37,8 @@ export function parseCigna(extracted){
       const block=page.lines.filter(l=>l.y>=row.y&&l.y<next),a=amounts(block);
       const code=row.items.find(i=>/^D\d{4}\b/.test(i.str)).str.match(/D\d{4}/)[0];
       const dates=unique([...block.map(l=>l.text).join(' ').matchAll(/\b\d{2}\/\d{2}\/\d{4}\b/g)].map(m=>isoDate(m[0])));
-      const tooth=row.items.find(i=>i.x>=toothLeft&&i.x<left[0]&&/^(?:[1-9]|[12]\d|3[0-2]|[A-T])$/.test(i.str))?.str||'';
+      const rawTooth=row.items.find(i=>i.x>=toothLeft&&i.x<left[0]&&/^(?:0?[1-9]|[12]\d|3[0-2]|[A-T])$/.test(i.str))?.str||'';
+      const tooth=/^\d+$/.test(rawTooth)?String(Number(rawTooth)):rawTooth;
       if(a.some(v=>v.length!==1)||dates.length!==1||!dates[0]){fail(`${code}: thiếu ngày hoặc cột tiền CIGNA không rõ.`);continue;}
       const [charged,notAllowed,deductible,covered,contracted,paid]=a.map(v=>v[0]);
       const percent=Number(/(\d+(?:\.\d+)?)%\s*=/.exec(block.map(l=>l.text).join(' '))?.[1]);

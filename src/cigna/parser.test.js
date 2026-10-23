@@ -73,6 +73,8 @@ test('CIGNA reuses payment/doc/history/Excel workflow and keeps the same-code te
  const documents=[],history=[],payments=[],splits=[],logs=[];
  const procs=['30','31'].map((ToothNum,i)=>({ProcNum:501+i,ProcCode:'D2392',ProcDate:'2026-10-11',ToothNum,ProcFee:'56.80',Descript:'Composite filling',ProvNum:1,ClinicNum:0}));
  const conn={query:async()=>[[]],release(){},execute:async(sql,args)=>{
+  if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
   if(sql.includes('SELECT PayNum'))return [[]];
   if(sql.includes('INSERT INTO payment')){payments.push(args);return [{insertId:1841}];}
   if(sql.includes('INSERT INTO paysplit'))splits.push(args);
@@ -81,6 +83,8 @@ test('CIGNA reuses payment/doc/history/Excel workflow and keeps the same-code te
   return [{affectedRows:1}];
  }};
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
+  if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
   if(sql.includes('FROM patient p')){assert.match(sql,/%CIGNA%/);assert.deepEqual(args,['PERSON','TEST','1275']);return [[{PatNum:1275,FName:'PERSON',LName:'TEST',ImageFolder:'Test1275',PriProv:1,ClinicNum:0}]];}
   if(sql.includes('procedurecode.ProcCode')||sql.includes('FROM procedurelog pl'))return [procs];
   if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:path.join(root,'images')},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];
@@ -105,4 +109,10 @@ test('CIGNA reuses payment/doc/history/Excel workflow and keeps the same-code te
 
 test('actual supplied CIGNA PDF regression (optional local fixture)',{skip:!process.env.CIGNA_TEST_PDF},async()=>{
  const p=parseCigna(await extractPdf(await fs.readFile(process.env.CIGNA_TEST_PDF)));assert.deepEqual(p.errors,[]);assert.equal(p.claimsCount,1);assert.equal(p.claims[0].claimNumber,'E262868007800');assert.equal(p.claims[0].date,'2026-10-15');assert.equal(p.check.netPaymentCents,11360);assert.deepEqual(p.claims[0].procedures.map(p=>[p.code,p.tooth,p.benefitCents]),[['D2392','30',5680],['D2392','31',5680]]);
+});
+
+test('CIGNA leading-zero tooth is retained through alternate-benefit normalization and matching',()=>{
+ const source=sample();for(const page of source.pages)for(const row of page.lines)for(const item of row.items)if(item.str==='30')item.str='03';
+ const p=parseCigna(source);assert.deepEqual(p.errors,[]);assert.deepEqual(p.claims[0].procedures.map(r=>r.tooth),['3','31']);
+ const matches=matchLibertyProcedures([{ProcNum:1,ProcCode:'D2392',ProcDate:'2026-10-11',ToothNum:'03'},{ProcNum:2,ProcCode:'D2392',ProcDate:'2026-10-11',ToothNum:'31'}],p.claims[0]);assert.equal(matches.size,2);
 });

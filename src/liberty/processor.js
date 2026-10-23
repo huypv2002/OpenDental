@@ -5,6 +5,7 @@ import { parseLiberty } from './parser.js';
 import {validateLibertyForPosting,matchLibertyProcedures} from './validation.js';
 import {claimPaymentFields} from '../metlife/paymentFormat.js';
 import { nativeSplitHashes } from '../metlife/nativeSplitHashes.js';
+import {prepareInsuranceSettlement,applyInsuranceSettlement,verifyInsuranceSettlement,verifiedInsurancePayment,recordInsuranceResult,reviewError,procedureDay} from '../metlife/insuranceSettlement.js';
 import { odSecurityLogHash } from '../metlife/directPayment.js';
 import { autoPopulateProcedureFees, importPdfToAtoZ } from '../metlife/autoProcessor.js';
 
@@ -15,11 +16,11 @@ export async function resolveLibertyPatient(pool, { claim, strictMember=false })
   if (memberId) {
     const cleanId = memberId.replace(/-.*$/, ''); // e.g. 346M97946 from 346M97946-01
     const [matches] = await pool.execute(
-      `SELECT p.PatNum, p.FName, p.LName, p.Birthdate, p.ClinicNum, p.PriProv, p.ImageFolder, p.ChartNumber
+      `SELECT DISTINCT p.PatNum, p.FName, p.LName, p.Birthdate, p.ClinicNum, p.PriProv, p.ImageFolder, p.ChartNumber
        FROM patient p
        JOIN patplan pp ON pp.PatNum = p.PatNum
        JOIN inssub s ON s.InsSubNum = pp.InsSubNum
-       WHERE (s.SubscriberID = ? OR s.SubscriberID = ?) AND LOWER(TRIM(p.LName)) = LOWER(?) AND LOWER(TRIM(p.FName)) = LOWER(?)
+       WHERE (TRIM(s.SubscriberID) = ? OR TRIM(s.SubscriberID) = ?) AND LOWER(TRIM(p.LName)) = LOWER(?) AND LOWER(TRIM(p.FName)) = LOWER(?)
        ORDER BY p.PatNum ASC LIMIT 2`,
       [memberId,cleanId,lastName,firstName]
     );
@@ -31,7 +32,7 @@ export async function resolveLibertyPatient(pool, { claim, strictMember=false })
   // 2. Try matching by Exact Last Name + First Name
   if (!strictMember && lastName && firstName) {
     const [matches] = await pool.execute(
-      `SELECT p.PatNum, p.FName, p.LName, p.Birthdate, p.ClinicNum, p.PriProv, p.ImageFolder, p.ChartNumber
+      `SELECT DISTINCT p.PatNum, p.FName, p.LName, p.Birthdate, p.ClinicNum, p.PriProv, p.ImageFolder, p.ChartNumber
        FROM patient p
        WHERE LOWER(p.LName) = LOWER(?) AND LOWER(p.FName) = LOWER(?)
        ORDER BY p.PatNum ASC LIMIT 2`,
@@ -57,34 +58,8 @@ export async function libertyProcedures(pool,patNum){
   return dbProcs;
 }
 
-export async function prepareLibertyClaimPayload(pool, { claim, check, patient, dbProcs: suppliedProcs }) {
-  const patNum = patient.PatNum;
-  const clinicNum = patient.ClinicNum || 0;
-  const provNum = patient.PriProv || 1;
-  const checkDate = check.date;
-  const claimNumber = claim.claimNumber;
-  const checkNumber = check.number;
-  const groupNumber = claim.plan.group || '';
-
-  const dbProcs = suppliedProcs || await libertyProcedures(pool,patNum);
-  const matches = matchLibertyProcedures(dbProcs,claim);
-  const claimDates = new Set(claim.procedures.map(p=>p.date));
-
-  const eobProcedures = claim.procedures.map((p) => ({
-    procNum: matches.get(p)?.ProcNum,
-    code: p.code,
-    date: p.date,
-    benefitCents: p.benefitCents,
-    feeCents: p.feeCents,
-    tooth: p.tooth
-  }));
-
-  const updatedFees = await autoPopulateProcedureFees(pool, {
-    patNum,
-    eobProcedures,
-    dbProcs:dbProcs.filter(p=>claimDates.has(p.ProcDate?.toISOString?.().slice(0,10)||String(p.ProcDate).slice(0,10)))
-  });
-
+export function libertySplitPlan(claim,check,patient,matches){
+ const checkDate=check.date,clinicNum=patient.ClinicNum||0,provNum=patient.PriProv||1;
   const splitsPlan = [];
   for (const eobProc of claim.procedures) {
     if (!eobProc.benefitCents || eobProc.benefitCents <= 0) continue;
@@ -104,13 +79,47 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
     });
   }
 
+ return splitsPlan;
+}
+
+export async function prepareLibertyClaimPayload(pool, { claim, check, patient, dbProcs: suppliedProcs, settlement, hashSplits=nativeSplitHashes }) {
+  const patNum = patient.PatNum;
+  const clinicNum = patient.ClinicNum || 0;
+  const provNum = patient.PriProv || 1;
+  const checkDate = check.date;
+  const claimNumber = claim.claimNumber;
+  const checkNumber = check.number;
+  const groupNumber = claim.plan.group || '';
+
+  const dbProcs = suppliedProcs || await libertyProcedures(pool,patNum);
+  const matches = matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:claim.plan?.carrier==='LIBERTY Dental Plan'});
+  const claimDates = new Set(claim.procedures.map(p=>p.date));
+
+  const eobProcedures = claim.procedures.map((p) => ({
+    procNum: matches.get(p)?.ProcNum,
+    code: p.code,
+    date: p.date,
+    benefitCents: p.benefitCents,
+    feeCents: p.feeCents,
+    tooth: p.tooth
+  }));
+
+  const updatedFees = await autoPopulateProcedureFees(pool, {
+    patNum,
+    eobProcedures,
+    settlement,
+    dbProcs:dbProcs.filter(p=>settlement?settlement.procIds.includes(String(p.ProcNum)):claimDates.has(procedureDay(p.ProcDate)))
+  });
+
+  const splitsPlan=libertySplitPlan(claim,check,patient,matches);
+
   // Generate Security Hashes
   const hashPlan = {
     patNum,
     date: checkDate,
     splits: splitsPlan
   };
-  const hashes = await nativeSplitHashes(hashPlan);
+  const hashes = await hashSplits(hashPlan);
   hashes.forEach((h, idx) => {
     splitsPlan[idx].SecurityHash = h;
   });
@@ -133,16 +142,20 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
   };
 }
 
-export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, log = console.log, normalized=null, carrier='LIBERTY Dental Plan', patientResolver=resolveLibertyPatient } = {}) {
+export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, hashSplits=nativeSplitHashes, log = console.log, normalized=null, carrier='LIBERTY Dental Plan', patientResolver=resolveLibertyPatient } = {}) {
   const label=carrier==='DELTA DENTAL'?'Delta Dental':carrier==='CIGNA'?'Cigna':'Liberty';
   const parsed = validateLibertyForPosting(normalized||parseLiberty(extracted),extracted,carrier==='DELTA DENTAL'?{verifyLibertyOcr:false}:carrier==='CIGNA'?{claimPattern:/^[A-Z0-9-]{1,64}$/,requireMember:false}:{});
   const preflight=new Map();
-  if(extracted.ocr||carrier==='CIGNA'||carrier==='DELTA DENTAL'){
+  {
     // Resolve every patient/procedure before importing or changing fees for the first claim.
     try{for(const claim of parsed.claims){
-      const patient=await patientResolver(pool,{claim,strictMember:true,fileName,claimsCount:parsed.claimsCount});
+      const patient=await patientResolver(pool,{claim,strictMember:!!extracted.ocr,fileName,claimsCount:parsed.claimsCount});
       const dbProcs=await libertyProcedures(pool,patient.PatNum);
-      matchLibertyProcedures(dbProcs,claim);preflight.set(claim.claimNumber,{patient,dbProcs});
+      const matches=matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
+      const check={...parsed.check,...claim.check},splits=libertySplitPlan(claim,check,patient,matches);
+      const settlement=await prepareInsuranceSettlement(pool,{patNum:patient.PatNum,carrier,procedures:claim.procedures,dbProcs,splits});
+      const existing=await verifiedInsurancePayment(pool,{patNum:patient.PatNum,claimNumber:claim.claimNumber,date:check.date,amountCents:claim.totals.planPaidCents,splits});
+      preflight.set(claim.claimNumber,{patient,dbProcs,matches,splits,settlement,existing});
     }}catch(e){e.code='EOB_REVIEW_REQUIRED';throw e;}
   }
 
@@ -182,7 +195,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
 
     // Prepare payload
     log(`[${label} Auto-Processor] Claim #${claimNumber}: đối chiếu dịch vụ, cập nhật phí và chuẩn bị phân bổ...`);
-    const payload = await preparePayload(pool, { claim, check: claimCheck, patient, dbProcs:preflight.get(claim.claimNumber)?.dbProcs });
+    const checked=preflight.get(claim.claimNumber);
+    const payload=checked.existing?{splits:checked.splits,updatedFees:[]}:await preparePayload(pool, { claim, check: claimCheck, patient, dbProcs:checked.dbProcs,settlement:checked.settlement,hashSplits });
 
     // Select Payment Type
     log(`[${label} Auto-Processor] Claim #${claimNumber}: chọn loại thanh toán...`);
@@ -207,26 +221,11 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       );
 
       log(`[${label} Auto-Processor] Claim #${claimNumber}: ghi thanh toán $${totalBenefit}, ${payload.splits.length} phân bổ...`);
-      // Revert duplicate payments for this check & claim
-      const [existingPayments] = await conn.execute(
-        'SELECT PayNum FROM payment WHERE PatNum = ? AND (ExternalId = ? OR CheckNum = ?)',
-        [patNum, claimNumber, claimNumber]
-      );
-      for (const p of existingPayments) {
-        await conn.execute('DELETE FROM paysplit WHERE PayNum = ?', [p.PayNum]);
-        await conn.execute('DELETE FROM payment WHERE PayNum = ?', [p.PayNum]);
-      }
-
-      // Reset claimproc
-      await conn.execute(
-        "UPDATE claimproc SET InsPayAmt = 0, Status = 0, DateCP = '0001-01-01' WHERE PatNum = ? AND Status = 1",
-        [patNum]
-      );
-      await conn.execute(
-        "UPDATE claim SET ClaimStatus = 'W', DateReceived = '0001-01-01' WHERE PatNum = ? AND ClaimStatus = 'R'",
-        [patNum]
-      );
-
+      await verifyInsuranceSettlement(conn,checked.settlement);
+      const previous=await verifiedInsurancePayment(conn,{patNum,claimNumber,date:checkDate,amountCents:claim.totals.planPaidCents,splits:payload.splits});
+      if(previous){payNum=previous.PayNum;log(`[${label} Auto-Processor] Claim #${claimNumber}: đã xác minh Payment #${payNum}; giữ nguyên khoản đã lưu.`);}
+      else {
+       if(checked.existing)throw reviewError('Khoản đã lưu thay đổi sau đối chiếu; chưa tạo lại thanh toán.');
       // Insert Payment
       const payNote = paymentFields.note;
       const [payRes] = await conn.execute(
@@ -251,20 +250,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
           [split.amount, patNum, split.date, checkDate, split.ProcNum, split.ProvNum, split.ClinicNum, payNum, split.SecurityHash]
         );
 
-        // Ensure claimproc does not trigger a duplicate unfinalized InsPay line in Open Dental
-        if (split.ProcNum > 0) {
-          await conn.execute(
-            `UPDATE claimproc SET InsPayAmt = 0, Status = 0, ClaimPaymentNum = 0, DateCP = '0001-01-01' WHERE PatNum = ? AND ProcNum = ?`,
-            [patNum, split.ProcNum]
-          );
-        }
       }
-
-      // Update matching claim to Received ('R')
-      await conn.execute(
-        `UPDATE claim SET ClaimStatus = 'R', DateReceived = ? WHERE PatNum = ?`,
-        [checkDate, patNum]
-      );
 
       // Audit SecurityLog & SecurityLogHash
       const logText = `Payment created for ${patient.LName}, ${patient.FName} with payment type '${selectedPayType.ItemName}', amount '$${totalBenefit}'`;
@@ -296,6 +282,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
         );
       }
 
+      }
+      await applyInsuranceSettlement(conn,checked.settlement,checkDate);
       await conn.query('UNLOCK TABLES');
     } finally {
       try { await conn.query('UNLOCK TABLES'); } catch {}
@@ -323,6 +311,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     // Record in history table
     const details = JSON.stringify({
       carrier,
+      insuranceDefaults:{estimate:0,writeOff:0,claimNums:checked.settlement.claimIds,claimProcNums:checked.settlement.rows.map(r=>r.ClaimProcNum)},
+      procedureMatchWarnings:claim.procedures.filter(p=>p.matchWarning).map(p=>p.matchWarning),
       settlementBasis:parsed.settlementBasis,
       warnings:parsed.warnings,
       sourceProcedures:claim.rawProcedures,
@@ -346,6 +336,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       updatedFees: payload.updatedFees,
       splits: payload.splits.map((s) => ({ code: s.code, amount: s.amount, procNum: s.ProcNum })),
       procedures: claim.procedures.map((p) => ({
+        procNum:checked.matches.get(p)?.ProcNum,
         code: p.code,
         date: p.date,
         tooth: p.tooth,
@@ -357,13 +348,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
 
     const feesUpdatedStr = payload.updatedFees.join(', ') || 'Không cần bù (đã có phí)';
 
-    await pool.execute(
-      `INSERT INTO luk_metlife_history (
-        FileName, FileHash, PatNum, PatientName, ClaimNumber, CheckNumber,
-        TotalAmount, ProceduresCount, FeesUpdated, PayNum, DocNum, Status,
-        Message, Details, ProcessedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?, NOW())`,
-      [
+    await recordInsuranceResult(pool,
+    [
         fileName,
         extracted.sha256,
         patNum,

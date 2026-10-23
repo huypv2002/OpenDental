@@ -182,3 +182,16 @@ node scripts/inspect-delta-eob.mjs "D:\SHARE\INSURANCE CLAIM\DELTA DENTAL\280.pd
 ```
 
 Set `DELTA_TEST_PDF` to a private sample path to enable the real scanned-file regression in `npm run test:metlife`. Simulated DB tests cover payload, document, history, archive and Excel. These tests do not establish a successful deployment or financial write on SERVER.
+
+
+## Insurance defaults and repeated processing
+
+MetLife, Liberty, CIGNA and Delta now explicitly set the resolved procedures' insurance estimate and write-off values to zero, including estimate overrides. The fields are `InsPayEst`, `BaseEst`, `InsEstTotal`, `InsEstTotalOverride`, `WriteOff`, `WriteOffEst`, and `WriteOffEstOverride`. Values are read back on the locked connection; only the resolved claim totals/date are updated. Other claims, plans and same-day services are preserved. Existing actual claimproc insurance payments require review; they are not reset to force a new payment.
+
+Liberty checks every patient/service in a PDF before its first import or financial write. Following the MetLife matching convention, a single EOB service and single completed OD service with the same code/date can match even if their tooth labels differ; the discrepancy is retained in history. Multiple same-code/date services still require an exact, unique tooth match. CIGNA leading-zero numeric teeth (e.g. `03`) normalize to `3`; CIGNA and Delta retain strict tooth matching.
+
+A repeated claim is verified against its existing Payment and all procedure/provider/clinic/date allocations. Matching payments, identical Finished Claims PDFs and successful history are reused. Conflicts or partial financial records go to REVIEW; the scanner does not delete/recreate payments. New PDF copies use UUID filenames. Explicitly retrying a verified old payment also applies the new zero defaults without posting money again.
+
+ERRORS and REVIEW never replay themselves every 30 seconds. After resolving the issue or updating the Bridge, use the existing **Thử lại file lỗi** action (or move the intended source back into its carrier folder). Explicit retry includes both ERRORS and REVIEW, and preserves both sources when an incoming filename already exists. Excel now logs **Đã cập nhật báo cáo** when there is a change; unchanged scans do not repeat “file already exists”. Excel retry remains separate from posting.
+
+See [the feedback checklist and validation evidence](docs/insurance-feedback-2026-10-23.md). Set `INSURANCE_FEEDBACK_DIR` to the private directory containing the six named feedback PDFs to run the full regressions; source documents and clinic credentials are not part of the repository.
