@@ -24,7 +24,7 @@ export async function prepareInsuranceSettlement(db,{patNum,carrier,procedures,d
  const linked=rows.filter(r=>Number(r.ClaimNum)>0),plans=new Set((linked.length?linked:rows).map(r=>`${r.PlanNum}/${r.InsSubNum}`));
  if(plans.size>1)throw reviewError('Dịch vụ liên quan nhiều hợp đồng bảo hiểm; chưa cập nhật ước tính.');
  const selected=rows.filter(r=>Number(r.ClaimNum)>0||plans.has(`${r.PlanNum}/${r.InsSubNum}`));
- if(selected.some(r=>cents(r.InsPayAmt||0)!==0||Number(r.ClaimPaymentNum)>0))throw reviewError('Dịch vụ đã có thanh toán bảo hiểm trong claimproc; cần đối chiếu trước khi tạo Insurance Paid.');
+ if(selected.some(r=>cents(r.InsPayAmt||0)!==0||Number(r.ClaimPaymentNum)>0))throw reviewError('Dịch vụ đã có thanh toán bảo hiểm trong hồ sơ; cần đối chiếu trước khi lưu khoản mới.');
  return {patNum,claimIds,procIds:[...ids],rows:selected};
 }
 
