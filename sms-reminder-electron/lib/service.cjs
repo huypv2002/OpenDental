@@ -94,7 +94,7 @@ class SmsService {
       const data = await this.bridge.request("GET", "/api/sms-reminders/recall-candidates", {
         mode: "daily", date, limit: 500, afterPatNum,
       });
-      if (data.contract !== "calendar-6-month-v1" || data.date !== date)
+      if (data.contract !== "calendar-6-month-v2" || data.date !== date)
         throw new Error("Update SERVER Bridge before running daily Recall.");
       const batch = data.patients || [];
       if (batch.length && Number(batch.at(-1).PatNum) <= afterPatNum)

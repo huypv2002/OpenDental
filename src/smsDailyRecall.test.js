@@ -7,14 +7,14 @@ test('daily recall uses calendar months, including month ends and leap years',()
  for(const invalid of ['2026-02-30','','10/23/2026'])assert.throws(()=>recallServiceDate(invalid),e=>e.status===400);
 });
 
-test('daily selection is exact latest completed service date, three requested codes, no upcoming appointment or existing dispatch',async()=>{
+test('daily selection is any completed service on the exact date, regardless of newer treatment or appointments',async()=>{
  let query;
  const db={execute:async(sql,args)=>{if(sql.startsWith('CREATE'))return [{}];query={sql,args};return [[{PatNum:9,Language:'Spanish',LastProcDate:'2026-04-23'}]];}};
  const result=await dailyRecallCandidates(db,{date:'2026-10-23',codes:'D1120',months:1,afterPatNum:8,limit:500});
- assert.equal(result.contract,'calendar-6-month-v1');assert.equal(result.serviceDate,'2026-04-23');
- assert.deepEqual(query.args,['D1110','D4341','D4342','2026-04-23',8,'2026-10-23 00:00:00',500]);
- assert.match(query.sql,/pl.ProcStatus=2/);assert.match(query.sql,/MAX\(pl.ProcDate\)/);assert.match(query.sql,/DATE\(s.LastProcDate\)=\?/);
- assert.match(query.sql,/p.PatStatus=0/);assert.match(query.sql,/a.AptStatus=1/);assert.match(query.sql,/luk_sms_daily_recall_dispatch/);assert.match(query.sql,/r.Status IN \('sent','needs-review'\)/);
+ assert.equal(result.contract,'calendar-6-month-v2');assert.equal(result.serviceDate,'2026-04-23');
+ assert.deepEqual(query.args,['D1110','D4341','D4342','2026-04-23','2026-04-23',8,500]);
+ assert.match(query.sql,/pl.ProcStatus=2/);assert.match(query.sql,/pl.ProcDate=\?/);assert.match(query.sql,/DATE\(s.LastProcDate\)=\?/);
+ assert.match(query.sql,/p.PatStatus=0/);assert.doesNotMatch(query.sql,/appointment/);assert.match(query.sql,/luk_sms_daily_recall_dispatch/);assert.match(query.sql,/r.Status IN \('sent','needs-review'\)/);
  assert.deepEqual(result.patients.map(p=>p.Language),['Spanish']);
 });
 
@@ -22,7 +22,7 @@ test('concurrent workers reserve a patient/service date once; pending/failed dis
  const records=new Map();
  const db={execute:async(sql,args)=>{
   if(sql.startsWith('CREATE')){assert.match(sql,/PRIMARY KEY \(PatNum,LastProcDate\)/);return [{}];}
-  if(sql.startsWith('INSERT IGNORE')){const key=args.slice(0,2).join('/');if(records.has(key))return [{affectedRows:0}];records.set(key,{phone:args[2],token:args[3],status:'pending'});return [{affectedRows:1}];}
+  if(sql.startsWith('INSERT IGNORE')){assert.match(sql,/AND EXISTS/);assert.match(sql,/pl.ProcDate=\?/);assert.doesNotMatch(sql,/MAX|appointment/);const key=args.slice(0,2).join('/');if(records.has(key))return [{affectedRows:0}];records.set(key,{phone:args[2],token:args[3],status:'pending'});return [{affectedRows:1}];}
   if(sql.startsWith('UPDATE')){const r=records.get(args.slice(1,3).join('/'));if(!r||r.token!==args[4]||r.phone!==args[3])return [{affectedRows:0}];r.status=args[0];return [{affectedRows:1}];}
   throw Error('unexpected query');
  }};

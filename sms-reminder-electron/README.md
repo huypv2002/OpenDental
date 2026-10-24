@@ -86,7 +86,7 @@ Detailed source comparison and pending R5 acceptance: [DOI-CHIEU-PYTHON.md](DOI-
 
 ## v1.0.3 — automatic six-month Recall
 
-Start Monitoring on R5 now runs appointment reminders followed by Recall for patients whose latest completed D1110, D4341 or D4342 was exactly six calendar months before the Houston clinic date. For example, October 23 selects April 23. Existing filters exclude inactive patients, newer qualifying treatment and scheduled appointments on/after the run date. The automatic list is distinct from the manual overdue Recall tab.
+Start Monitoring on R5 now runs appointment reminders followed by Recall for patients who completed any D1110, D4341 or D4342 on the date exactly six calendar months before the Houston clinic date. For example, October 23 selects April 23. Inactive patients are excluded. Newer treatment and existing appointments do not remove patients from this daily feed. The automatic list is distinct from the manual overdue Recall tab.
 
 Recall messages use the existing Recall templates in English, Spanish or Vietnamese according to OD Language; missing language templates stop the Recall batch. Blank/other languages use English. Only Wireless phones are used. A server reservation plus the Electron ledger prevents repeated attempts across restarts/workstations; uncertain attempts remain needs-review, and Sync pending logs sends logs only. No appointment date/time is required for Recall. FD2 remains manual draft-only.
 

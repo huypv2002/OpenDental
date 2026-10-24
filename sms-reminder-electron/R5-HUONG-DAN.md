@@ -46,6 +46,6 @@ Có thể chạy `r5-check.bat` để xuất `r5-check-result.json`: chỉ đọ
 
 Dựa trên capture R5: ưu tiên InputTextBox và NewMessageButton theo AutomationId, gọi UIA SetFocus rồi kiểm tra focus thực tế, tránh vùng emoji/GIF khi click fallback, thống nhất tọa độ theo DPI. Capture mới bổ sung name/focused/focusable để chẩn đoán. Hãy đóng Electron cũ, giải nén bản mới, mở rồi dùng Test selected (no send) trước. Chưa có xác nhận chạy thành công trên R5.
 
-## Cập nhật v1.0.3: Recall tự động theo code
+## Cập nhật v1.0.4: Recall tự động theo code
 
-Cập nhật Bridge trên SERVER trước. Đóng Electron cũ, giải nén toàn bộ gói v1.0.3 và mở LUK Dental SMS Electron.exe. Giữ nguyên cấu hình, template và lịch cũ; bấm Start Monitoring như trước. Sau lượt nhắc hẹn, tool chạy Recall đúng 6 tháng cho D1110/D4341/D4342 và chọn template Recall theo ngôn ngữ bệnh nhân. Không cần chạy bản Python.
+Cập nhật Bridge trên SERVER trước. Đóng Electron cũ, giải nén toàn bộ gói v1.0.4 và mở LUK Dental SMS Electron.exe. Giữ nguyên cấu hình, template và lịch cũ; bấm Start Monitoring như trước. Sau lượt nhắc hẹn, tool chạy Recall đúng 6 tháng cho D1110/D4341/D4342 và chọn template Recall theo ngôn ngữ bệnh nhân. Không cần chạy bản Python.

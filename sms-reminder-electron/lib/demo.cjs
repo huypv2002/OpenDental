@@ -108,7 +108,7 @@ class DemoBridge {
       const day = d.getUTCDate(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 6);
       const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
       d.setUTCDate(Math.min(day, end));
-      return {contract: "calendar-6-month-v1", date, patients: rows.slice(0, 3).map(r => ({...r, AptNum: null, AptDateTime: "", LastProcDate: d.toISOString().slice(0,10), ProcedureCodes: "D1110"}))};
+      return {contract: "calendar-6-month-v2", date, patients: rows.slice(0, 3).map(r => ({...r, AptNum: null, AptDateTime: "", LastProcDate: d.toISOString().slice(0,10), ProcedureCodes: "D1110"}))};
     }
     if (path.endsWith("/appointments")) return { appointments: rows };
     if (params.q)

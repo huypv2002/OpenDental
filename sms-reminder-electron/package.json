@@ -1,6 +1,6 @@
 {
   "name": "luk-dental-sms-electron",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "LUK Dental SMS Reminder Tool for R5 and FD2",
   "main": "main.cjs",

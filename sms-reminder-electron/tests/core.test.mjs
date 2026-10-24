@@ -406,7 +406,7 @@ test("Each manual category records the same Bridge route after staff confirmatio
 test("daily Recall loads exact-date contract, all pages, and language templates with no appointment dependency",()=>using({
   request:async(method,route,params)=>{
     assert.equal(route,"/api/sms-reminders/recall-candidates");assert.equal(params.mode,"daily");
-    return {contract:"calendar-6-month-v1",date:params.date,patients:params.afterPatNum?[
+    return {contract:"calendar-6-month-v2",date:params.date,patients:params.afterPatNum?[
       row(501,{PatNum:501,Language:"Vietnamese",AptDateTime:"",LastProcDate:"2026-04-23"})
     ]:Array.from({length:500},(_,i)=>row(i+1,{PatNum:i+1,Language:i%2?"Spanish":"English",AptDateTime:"",LastProcDate:"2026-04-23"}))};
   }
@@ -419,7 +419,7 @@ test("daily Recall loads exact-date contract, all pages, and language templates 
 }));
 test("old Bridge and missing-language Recall templates block automatic sending",()=>using({request:async()=>({patients:[]})},async f=>{
   await assert.rejects(f.service.loadDailyRecall("2026-10-23"),/Update SERVER/);assert.equal(f.native.length,0);
-  f.service.bridge.request=async()=>({contract:"calendar-6-month-v1",date:"2026-10-23",patients:[row(1,{Language:"Spanish",LastProcDate:"2026-04-23"})]});
+  f.service.bridge.request=async()=>({contract:"calendar-6-month-v2",date:"2026-10-23",patients:[row(1,{Language:"Spanish",LastProcDate:"2026-04-23"})]});
   await assert.rejects(f.service.loadDailyRecall("2026-10-23"),/Missing ES/);assert.equal(f.native.length,0);
   f.service.library.templates.recall.ES="Cita {date_full}";
   await assert.rejects(f.service.loadDailyRecall("2026-10-23"),/appointment fields/);
@@ -452,7 +452,7 @@ test("uncertain daily Recall stays blocked and failed log sync retries only the 
 }));
 test("Monitoring includes Recall after both appointment feeds and persists the daily completion",()=>using({
  request:async(method,route,params)=>{
-  if(route.endsWith("recall-candidates"))return {contract:"calendar-6-month-v1",date:params.date,patients:[row(1,{AptDateTime:"",LastProcDate:"2026-04-23"})]};
+  if(route.endsWith("recall-candidates"))return {contract:"calendar-6-month-v2",date:params.date,patients:[row(1,{AptDateTime:"",LastProcDate:"2026-04-23"})]};
   if(route.endsWith("recall-claim"))return {claimed:true,token:"dispatch-test"};
   return {appointments:[],logs:[]};
  }

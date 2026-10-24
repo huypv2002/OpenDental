@@ -30,14 +30,13 @@ export async function dailyRecallCandidates(db,query){
  FROM patient p JOIN (SELECT pl.PatNum,MAX(pl.ProcDate) AS LastProcDate,
  GROUP_CONCAT(DISTINCT pc.ProcCode ORDER BY pc.ProcCode SEPARATOR ', ') AS ProcedureCodes
  FROM procedurelog pl JOIN procedurecode pc ON pc.CodeNum=pl.CodeNum
- WHERE pl.ProcStatus=2 AND pc.ProcCode IN (?,?,?) GROUP BY pl.PatNum) s ON s.PatNum=p.PatNum
+ WHERE pl.ProcStatus=2 AND pc.ProcCode IN (?,?,?) AND pl.ProcDate=? GROUP BY pl.PatNum) s ON s.PatNum=p.PatNum
  WHERE p.PatStatus=0 AND DATE(s.LastProcDate)=? AND p.PatNum>?
- AND NOT EXISTS (SELECT 1 FROM appointment a WHERE a.PatNum=p.PatNum AND a.AptStatus=1 AND a.AptDateTime>=?)
  AND NOT EXISTS (SELECT 1 FROM ${table} d WHERE d.PatNum=p.PatNum AND d.LastProcDate=DATE(s.LastProcDate))
  AND NOT EXISTS (SELECT 1 FROM luk_sms_recall_log r WHERE r.PatNum=p.PatNum
  AND r.LastProcDate=DATE(s.LastProcDate) AND r.Status IN ('sent','needs-review'))
- ORDER BY p.PatNum LIMIT ?`,[...DAILY_RECALL_CODES,serviceDate,after,runDate+' 00:00:00',limit]);
- return {contract:'calendar-6-month-v1',date:runDate,serviceDate,months:6,codes:DAILY_RECALL_CODES,patients};
+ ORDER BY p.PatNum LIMIT ?`,[...DAILY_RECALL_CODES,serviceDate,serviceDate,after,limit]);
+ return {contract:'calendar-6-month-v2',date:runDate,serviceDate,months:6,codes:DAILY_RECALL_CODES,patients};
 }
 export async function claimDailyRecall(db,body){
  const patNum=Number(body.patNum),lastProcDate=date(body.lastProcDate),phone=String(body.phone||'');
@@ -51,10 +50,9 @@ export async function claimDailyRecall(db,body){
  const [result]=await db.execute(`INSERT IGNORE INTO ${table} (PatNum,LastProcDate,Phone,ClaimToken,Status,UpdatedAt)
  SELECT ?,?,?,?,'pending',NOW() FROM patient p WHERE p.PatNum=? AND p.PatStatus=0
  AND p.WirelessPhone=?
- AND (SELECT DATE(MAX(pl.ProcDate)) FROM procedurelog pl JOIN procedurecode pc ON pc.CodeNum=pl.CodeNum
- WHERE pl.PatNum=p.PatNum AND pl.ProcStatus=2 AND pc.ProcCode IN (?,?,?))=?
- AND NOT EXISTS (SELECT 1 FROM appointment a WHERE a.PatNum=p.PatNum AND a.AptStatus=1 AND a.AptDateTime>=?)`,
- [patNum,lastProcDate,phone,token,patNum,body.wirelessPhone,...DAILY_RECALL_CODES,lastProcDate,runDate+' 00:00:00']);
+ AND EXISTS (SELECT 1 FROM procedurelog pl JOIN procedurecode pc ON pc.CodeNum=pl.CodeNum
+ WHERE pl.PatNum=p.PatNum AND pl.ProcStatus=2 AND pc.ProcCode IN (?,?,?) AND pl.ProcDate=?)`,
+ [patNum,lastProcDate,phone,token,patNum,body.wirelessPhone,...DAILY_RECALL_CODES,lastProcDate]);
  return {claimed:result.affectedRows===1,token:result.affectedRows===1?token:null};
 }
 export async function completeDailyRecall(db,body){
