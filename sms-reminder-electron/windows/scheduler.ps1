@@ -13,7 +13,10 @@ try {
       Unregister-ScheduledTask -TaskName "$prefix - $_" -Confirm:$false -ErrorAction SilentlyContinue
     }
     Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' AutoAdminLogon '0'
-    Write-Host 'Electron scheduler disabled. Python tasks were not changed.'
+    if (Test-Path -LiteralPath $config.exe) {
+      Start-Process -FilePath $config.exe -ArgumentList '--stop-reminder-monitoring' -WorkingDirectory (Split-Path -Parent $config.exe)
+    }
+    Write-Host 'Appointment scheduler disabled. Recall task was not changed.'
     exit 0
   }
   if ($config.mode -ne 'on') {throw 'Invalid scheduler mode.'}

@@ -326,7 +326,7 @@ test("monitoring runs configured and 8-day dates once, and ignores late startup"
     await f.service.tick(new Date("2026-10-11T16:00:00Z"));
     await f.service.tick(new Date("2026-10-11T16:10:00Z"));
     assert.deepEqual(dates, ["2026-10-12", "2026-10-19"]);
-    assert.deepEqual(recallDates,["2026-10-11"]);
+    assert.deepEqual(recallDates,[]);
     assert.equal(f.store.state.lastSchedule,"2026-10-11 11:00");
     f.store.state.lastSchedule = "";
     await f.service.tick(new Date("2026-10-11T16:31:00Z"));
@@ -428,7 +428,7 @@ test("daily Recall reserves before Phone Link, logs Recall token and reuses loca
  request:async(method,route)=>route.endsWith("recall-claim")?{claimed:true,token:"dispatch-test"}:{}
 },async f=>{
  const target=row(1,{_Kind:"recall",_DailyRecall:true,_DailyRecallDate:"2026-10-23",LastProcDate:"2026-04-23",AptNum:null,AptDateTime:""});
- f.service.monitoring=true;
+ f.service.recallMonitoring=true;
  const result=await f.service.send([target],true);assert.equal(result.completed,1);assert.equal(f.native.length,1);
  assert.equal(f.native[0].message,"Recall Alex");
  assert.equal(f.requests[0].route,"/api/sms-reminders/recall-claim");
@@ -445,12 +445,12 @@ test("uncertain daily Recall stays blocked and failed log sync retries only the 
  native:async()=>{throw Error("Uncertain send");}
 },async f=>{
  const target=row(1,{_Kind:"recall",_DailyRecall:true,_DailyRecallDate:"2026-10-23",LastProcDate:"2026-04-23",AptDateTime:""});
- f.service.monitoring=true;assert.equal((await f.service.send([target],true)).failed,1);
+ f.service.recallMonitoring=true;assert.equal((await f.service.send([target],true)).failed,1);
  assert.equal(f.store.state.outbox.length,1);assert.equal(f.store.state.outbox[0].body.dailyRecall,true);
  assert.equal((await f.service.send([target],true)).skipped,1);assert.equal(f.native.length,1);
  f.service.bridge.request=async()=>({});await f.service.syncOutbox();assert.equal(f.store.state.outbox.length,0);assert.equal(f.native.length,1);
 }));
-test("Monitoring includes Recall after both appointment feeds and persists the daily completion",()=>using({
+test("Appointment and Recall run only when separately enabled and persist independent completion",()=>using({
  request:async(method,route,params)=>{
   if(route.endsWith("recall-candidates"))return {contract:"calendar-6-month-v2",date:params.date,patients:[row(1,{AptDateTime:"",LastProcDate:"2026-04-23"})]};
   if(route.endsWith("recall-claim"))return {claimed:true,token:"dispatch-test"};
@@ -458,8 +458,44 @@ test("Monitoring includes Recall after both appointment feeds and persists the d
  }
 },async f=>{
  await f.service.startMonitoring();await f.service.tick(new Date("2026-10-23T16:00:00Z"));
- assert.equal(f.store.state.lastSchedule,"2026-10-23 11:00");assert.equal(f.native.length,1);
+ assert.equal(f.store.state.lastSchedule,"2026-10-23 11:00");assert.equal(f.native.length,0);
+ assert.equal(f.requests.some(r=>r.route.endsWith("recall-candidates")),false);
+ await f.service.startMonitoring("recall");
+ await f.service.tick(new Date("2026-10-23T16:05:00Z"));
+ assert.equal(f.store.state.lastRecallSchedule,"2026-10-23 11:00");assert.equal(f.native.length,1);
  assert.deepEqual(f.requests.filter(r=>r.route.endsWith("appointments")).map(r=>r.params.date),["2026-10-24","2026-10-31"]);
  await f.service.tick(new Date("2026-10-23T16:10:00Z"));assert.equal(f.native.length,1);
+}));
+test("Recall-only monitoring never loads appointments and respects its own send time",()=>using({config:{recall_send_time:"12:00"}},async f=>{
+ const calls=[];f.service.load=async()=>{throw Error("Appointment must not run");};
+ f.service.loadDailyRecall=async date=>{calls.push(date);return [];};
+ await f.service.startMonitoring("recall");
+ await f.service.tick(new Date("2026-10-23T16:00:00Z"));assert.deepEqual(calls,[]);
+ await f.service.tick(new Date("2026-10-23T17:00:00Z"));
+ assert.deepEqual(calls,["2026-10-23"]);assert.equal(f.store.state.lastSchedule,"");
+ assert.equal(f.store.state.lastRecallSchedule,"2026-10-23 12:00");
+ await f.service.tick(new Date("2026-10-23T17:01:00Z"));assert.equal(calls.length,1);
+}));
+test("Stopping one monitoring stream leaves the other enabled",()=>using({},async f=>{
+ await f.service.startMonitoring();await f.service.startMonitoring("recall");
+ f.service.stopMonitoring("appointment");assert.equal(f.service.monitoring,false);assert.equal(f.service.recallMonitoring,true);
+ await f.service.startMonitoring();f.service.stopMonitoring("recall");assert.equal(f.service.monitoring,true);assert.equal(f.service.recallMonitoring,false);
+ f.service.stop();assert.equal(f.service.monitoring,false);assert.equal(f.service.recallMonitoring,false);
+}));
+test("Appointment failure does not block Recall or its completion state",()=>using({},async f=>{
+ f.service.load=async()=>{throw Error("appointment feed down");};
+ let recall=0;f.service.loadDailyRecall=async()=>{recall++;return [];};
+ await f.service.startMonitoring();await f.service.startMonitoring("recall");
+ await f.service.tick(new Date("2026-10-23T16:00:00Z"));
+ assert.equal(recall,1);assert.equal(f.store.state.lastSchedule,"");assert.equal(f.store.state.lastRecallSchedule,"2026-10-23 11:00");
+ assert.ok(f.service.scheduleRetry.appointment);assert.equal(f.service.scheduleRetry.recall,undefined);
+}));
+test("Stop Recall during an active send finishes only that patient and leaves Appointment running",()=>using({},async f=>{
+ await f.service.startMonitoring();await f.service.startMonitoring("recall");
+ f.service.demo=true;f.service.library.templates.recall={US:"Hello {first_name}"};
+ f.service.windows.run=async payload=>{f.native.push(payload);f.service.stopMonitoring("recall");return {};};
+ const rows=[1,2].map(n=>row(n,{_DailyRecall:true,_Kind:"recall",_TemplateKey:"US",LastProcDate:"2026-04-23",AptDateTime:""}));
+ const result=await f.service.send(rows,true);
+ assert.equal(result.completed,1);assert.equal(f.native.length,1);assert.equal(f.service.monitoring,true);assert.equal(f.service.recallMonitoring,false);
 }));
 export default cases;

@@ -9,6 +9,8 @@ const { DemoBridge } = require("./lib/demo.cjs");
 const { WindowsAdapter } = require("./lib/windows.cjs");
 const { SmsService } = require("./lib/service.cjs");
 let window, service, store, model, timer;
+const pendingMonitoringArgs = [process.argv];
+let monitoringArgsReady = false, drainingMonitoringArgs = false;
 const demo = process.argv.includes("--demo");
 app.commandLine.appendSwitch("lang", "en-US");
 // Stable data location shared by development and packaged Windows builds.
@@ -23,8 +25,8 @@ else {
       window.show();
       window.focus();
     }
-    if (args.includes("--start-reminder-monitoring"))
-      service?.startMonitoring().catch((e) => service.activity(e.message));
+    pendingMonitoringArgs.push(args);
+    drainMonitoringArgs().catch((e) => service?.activity(e.message));
   });
   app
     .whenReady()
@@ -36,6 +38,24 @@ else {
 }
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => clearInterval(timer));
+async function drainMonitoringArgs() {
+  if (!monitoringArgsReady || drainingMonitoringArgs) return;
+  drainingMonitoringArgs = true;
+  try {
+    while (pendingMonitoringArgs.length) {
+      try { await applyMonitoringArgs(pendingMonitoringArgs.shift()); }
+      catch (error) { service.activity(error.message); }
+    }
+  } finally { drainingMonitoringArgs = false; }
+}
+async function applyMonitoringArgs(args) {
+  if (!service) return;
+  if (args.includes("--stop-reminder-monitoring")) service.stopMonitoring("appointment");
+  if (args.includes("--stop-recall-monitoring")) service.stopMonitoring("recall");
+  if (args.includes("--start-monitoring") || args.includes("--start-reminder-monitoring")) await service.startMonitoring("appointment");
+  if (args.includes("--start-recall-monitoring")) await service.startMonitoring("recall");
+  service.tick().catch(e => service.activity(e.message));
+}
 function emit(event) {
   if (store && event.type === "activity") {
     const logFile = path.join(store.dir, "scheduler-run.log");
@@ -130,18 +150,7 @@ async function start() {
     () => service.tick().catch((e) => service.activity(e.message)),
     15000,
   );
-  if (
-    process.argv.includes("--start-monitoring") ||
-    process.argv.includes("--start-reminder-monitoring")
-  )
-    setTimeout(
-      () =>
-        service
-          .startMonitoring()
-          .then(() => service.tick())
-          .catch((e) => service.activity(e.message)),
-      2000,
-    );
+  setTimeout(() => { monitoringArgsReady = true; drainMonitoringArgs().catch(e => service.activity(e.message)); }, 2000);
   if (process.argv.includes("--smoke"))
     setTimeout(async () => {
       const result = await window.webContents.executeJavaScript(
@@ -182,7 +191,7 @@ function readSchedulerTimes() {
 function saveConfig(input) {
   if (
     service.busy ||
-    service.monitoring ||
+    service.monitoring || service.recallMonitoring ||
     service.monitorBusy ||
     store.state.pendingDraft
   )
@@ -201,7 +210,7 @@ function saveConfig(input) {
     url.password
   )
     throw new Error("Use an HTTP/HTTPS Bridge URL.");
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(next.scheduled_send_time))
+  if (![next.scheduled_send_time,next.recall_send_time].every(t => /^([01]\d|2[0-3]):[0-5]\d$/.test(t)))
     throw new Error("Send time must be HH:MM.");
   new Intl.DateTimeFormat("en", { timeZone: next.time_zone });
   if (!["auto", "r5", "fd2"].includes(next.workstation_mode))
@@ -409,7 +418,13 @@ async function dispatch(action, p, resources) {
         : {};
     }
     case "start-monitoring":
-      return service.startMonitoring();
+      return service.startMonitoring("appointment");
+    case "start-recall-monitoring":
+      return service.startMonitoring("recall");
+    case "stop-appointment-monitoring":
+      return service.stopMonitoring("appointment");
+    case "stop-recall-monitoring":
+      return service.stopMonitoring("recall");
     case "stop":
       return service.stop();
     case "sync":
@@ -462,7 +477,7 @@ async function dispatch(action, p, resources) {
 async function scheduler(p, resources) {
   if (demo || process.platform !== "win32" || !app.isPackaged)
     throw new Error("Scheduler setup requires the packaged Windows app.");
-  if (service.busy || service.monitoring || store.state.pendingDraft)
+  if (service.busy || service.monitoring || service.recallMonitoring || store.state.pendingDraft)
     throw new Error(
       "Finish jobs and stop Monitoring before setting up Windows tasks.",
     );

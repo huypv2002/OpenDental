@@ -86,10 +86,17 @@ Detailed source comparison and pending R5 acceptance: [DOI-CHIEU-PYTHON.md](DOI-
 
 ## v1.0.3 — automatic six-month Recall
 
-Start Monitoring on R5 now runs appointment reminders followed by Recall for patients who completed any D1110, D4341 or D4342 on the date exactly six calendar months before the Houston clinic date. For example, October 23 selects April 23. Inactive patients are excluded. Newer treatment and existing appointments do not remove patients from this daily feed. The automatic list is distinct from the manual overdue Recall tab.
+## Independent daily schedules — v1.0.5
 
-Recall messages use the existing Recall templates in English, Spanish or Vietnamese according to OD Language; missing language templates stop the Recall batch. Blank/other languages use English. Only Wireless phones are used. A server reservation plus the Electron ledger prevents repeated attempts across restarts/workstations; uncertain attempts remain needs-review, and Sync pending logs sends logs only. No appointment date/time is required for Recall. FD2 remains manual draft-only.
+Appointment and six-month Recall are separate. Starting Appointment never enables Recall. Each has its own Start/Stop buttons, send time, retry state and daily completion marker. Stopping one leaves the other enabled. When both are due, Phone Link operations run sequentially.
 
-Update Bridge on SERVER, close the old Electron app and extract the whole v1.0.3 Windows folder. Keep the existing settings in %APPDATA%/LUK Dental SMS Electron/workstation. If replacing a deployed folder, retain its existing sms_config.json. The release ZIP contains no patient records or configured API token. Reopen Electron and use Start Monitoring at the existing configured time; no additional scheduler is needed.
+- `scheduler-on.bat` / `scheduler-off.bat`: existing Appointment schedule only. These also manage the existing R5 auto-login/restart/lock tasks.
+- `recall-scheduler-on.bat` / `recall-scheduler-off.bat`: separate Windows task `LUK Dental SMS Electron - Daily Recall`. These do not change Appointment tasks, auto-login, restart or locking. Run as Administrator under the intended R5 Windows account. The off file also stops Recall monitoring in the running Electron instance.
+- Both task launch times default to 10:55 Windows time. Change `RECALL_START_TOOL_TIME` in the Recall on BAT if needed. Set Recall send time separately in Electron Settings (default 11:00 clinic time). Open the app before that send time. Ensure Windows and the configured clinic time zone agree when choosing task times.
+- On BAT files register future daily launches; use Start Appointment / Start Recall in the UI to enable a stream immediately. Each stream sends only within its own 30-minute daily window.
 
-Validation: 37 service/model tests, JavaScript syntax checks and the Electron demo UI test passed. Windows x64 packaging completed on macOS; the PE executable, ASAR version/feature, archive integrity and absence of a configured token were checked separately. This does not prove live Phone Link delivery on R5.
+Recall selects active patients with any completed D1110, D4341 or D4342 on the exact date six calendar months earlier (October 23 selects April 23). Existing appointments and newer treatment do not exclude them. Multiple qualifying codes yield one SMS per patient/service date. Recall language templates follow OD Language; missing Spanish/Vietnamese templates block the Recall batch instead of substituting English. Wireless phone only. Bridge dispatch reservations and the local ledger prevent retrying uncertain attempts.
+
+Upgrade: close the old app, extract the entire v1.0.5 package and rerun the Appointment BAT from the new folder to replace the old EXE path. Enable Recall using its separate BAT only when wanted. Existing workstation settings/logs are preserved. Bridge must support `calendar-6-month-v2` (82bc316 or later).
+
+Recall requires an already signed-in, unlocked R5 with Phone Link ready. If Appointment off disables the existing auto-login/restart infrastructure, arrange Windows availability separately for Recall. Recall never wakes, unlocks or signs into Windows by itself. FD2 remains manual draft only. Package/unit/demo UI validation does not prove actual Windows task execution or SMS delivery.

@@ -41,6 +41,7 @@ export const DEFAULTS = {
   clinic_phone: "281-760-1357",
   reminder_days_ahead: 1,
   scheduled_send_time: "11:00",
+  recall_send_time: "11:00",
   appointment_statuses: [1],
   fallback_duration_minutes: 30,
   recall_months: 6,

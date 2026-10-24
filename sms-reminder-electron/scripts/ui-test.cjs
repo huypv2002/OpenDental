@@ -12,6 +12,12 @@ async function run() {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   try {
+    // A second scheduled EXE can arrive while the first instance is still loading.
+    await application.evaluate(({app}) => app.emit("second-instance", {}, ["--start-recall-monitoring"]));
+    await page.waitForFunction(() => document.getElementById("recall-monitor-state")?.textContent === "Running");
+    assert.equal(await page.locator("#monitor-state").innerText(),"Stopped");
+    await application.evaluate(({app}) => app.emit("second-instance", {}, ["--stop-recall-monitoring"]));
+    await page.waitForFunction(() => document.getElementById("recall-monitor-state").textContent === "Stopped");
     await page.waitForSelector("#stat-0");
     await page.waitForFunction(
       () => document.getElementById("stat-0").textContent === "240",
@@ -156,7 +162,7 @@ async function run() {
     await page.waitForFunction(()=>document.querySelectorAll("#table-holiday tr[data-row]").length===0);
     // Scheduler controls must really reach main process, not silently return early.
     await page.getByRole("button",{name:"Monitoring",exact:true}).first().click();
-    assert.match(await page.locator("#monitor-dates").innerText(), /D1110.*D4341.*D4342.*6 months/);
+    assert.match(await page.locator("#page-monitoring").innerText(), /6-month Recall.*D1110.*D4341.*D4342/);
     assert.match(await page.locator("#page-monitoring").innerText().catch(()=>page.locator("body").innerText()), /Recall/);
     await page.fill("#scheduler-lock","12:17");await page.click("#save-scheduler-times");
     await page.waitForFunction(()=>document.getElementById("toast").textContent.includes("times saved"));
@@ -165,6 +171,9 @@ async function run() {
     await page.click("#scheduler-on");
     await page.waitForFunction(()=>document.getElementById("toast").textContent.includes("packaged Windows app"));
     await page.fill("#scheduler-lock","12:05");await page.click("#save-scheduler-times");
+    await page.click("#start-recall-monitoring");
+    await page.waitForFunction(() => document.getElementById("recall-monitor-state").textContent === "Running");
+    assert.equal(await page.locator("#monitor-state").innerText(),"Stopped");
     await page.click("#start-monitoring");
     await page.waitForFunction(
       () => document.getElementById("monitor-state").textContent === "Running",
@@ -174,6 +183,9 @@ async function run() {
     await page.waitForFunction(
       () => document.getElementById("monitor-state").textContent === "Stopped",
     );
+    assert.equal(await page.locator("#recall-monitor-state").innerText(),"Running");
+    await page.click("#stop-recall-monitoring");
+    await page.waitForFunction(() => document.getElementById("recall-monitor-state").textContent === "Stopped");
     await page.screenshot({
       path: path.join(__dirname, "../test-results/monitoring.png"),
     });

@@ -19,11 +19,12 @@ class SmsService {
     this.busy = false;
     this.stopping = false;
     this.monitoring = false;
+    this.recallMonitoring = false;
+    this.scheduleRetry = {};
     this.monitorBusy = false;
     this.library = { templates: {}, countries: {} };
     this.smsSettings = {};
     this.activeSchedule = "";
-    this.nextRetry = 0;
   }
   get config() {
     return {
@@ -41,6 +42,7 @@ class SmsService {
     return {
       busy: this.busy,
       monitoring: this.monitoring,
+      recallMonitoring: this.recallMonitoring,
       monitorBusy: this.monitorBusy,
       pendingDraft: this.store.state.pendingDraft,
       outbox: this.store.state.outbox.length,
@@ -48,6 +50,7 @@ class SmsService {
       machine: this.machine,
       demo: this.demo,
       lastSchedule: this.store.state.lastSchedule,
+      lastRecallSchedule: this.store.state.lastRecallSchedule || "",
     };
   }
   notify() {
@@ -409,7 +412,7 @@ class SmsService {
         failed = 0,
         skipped = 0;
       for (const original of rows) {
-        if (this.stopping || (scheduled && !this.monitoring)) break;
+        if (this.stopping || (scheduled && !(original._DailyRecall ? this.recallMonitoring : this.monitoring))) break;
         const dailyRecall = scheduled && original._DailyRecall === true;
         const row = this.rowWithTemplate(original, dailyRecall ? "recall" : "appointment");
         const key = dailyRecall
@@ -494,80 +497,74 @@ class SmsService {
   stop() {
     this.stopping = true;
     this.monitoring = false;
+    this.recallMonitoring = false;
     this.notify();
     this.activity(
       "Stop requested. The current SMS operation finishes; no next patient will start.",
     );
     return this.status();
   }
-  async startMonitoring() {
+  stopMonitoring(kind = "appointment") {
+    if (!["appointment", "recall"].includes(kind)) throw new Error("Unknown monitoring kind.");
+    this[kind === "recall" ? "recallMonitoring" : "monitoring"] = false;
+    this.activity(`${kind} monitoring stopped. The current SMS may finish.`);
+    this.notify();
+    return this.status();
+  }
+  async startMonitoring(kind = "appointment") {
+    if (!["appointment", "recall"].includes(kind)) throw new Error("Unknown monitoring kind.");
     if (this.model.isFD2(this.config, this.machine))
-      throw new Error(
-        "Monitoring runs on R5. FD2 remains in manual draft mode.",
-      );
+      throw new Error("Monitoring runs on R5. FD2 remains in manual draft mode.");
     if (!this.config.api_token && !this.demo)
       throw new Error("Set the Bridge URL and API token first.");
-    if (this.busy || this.monitorBusy || this.store.state.pendingDraft)
-      throw new Error("Finish the current job or draft first.");
-    this.monitoring = true;
+    if (this.store.state.pendingDraft) throw new Error("Finish the open draft first.");
+    this[kind === "recall" ? "recallMonitoring" : "monitoring"] = true;
     this.stopping = false;
     this.notify();
-    this.activity(
-      "Monitoring started for appointment reminders and daily 6-month Recall (D1110, D4341, D4342).",
-    );
+    this.activity(`${kind} monitoring started independently.`);
     return this.status();
   }
   async tick(now = new Date()) {
-    if (
-      !this.monitoring ||
-      this.busy ||
-      this.monitorBusy ||
-      this.store.state.pendingDraft ||
-      Date.now() < this.nextRetry
-    )
-      return;
+    if (this.busy || this.monitorBusy || this.store.state.pendingDraft) return;
     const clock = this.model.clinicClock(now, this.config.time_zone);
-    const [hour, minute] = this.config.scheduled_send_time
-        .split(":")
-        .map(Number),
-      target = hour * 60 + minute;
-    const key = `${clock.date} ${this.config.scheduled_send_time}`;
-    if (
-      clock.minutes < target ||
-      clock.minutes > target + 30 ||
-      this.store.state.lastSchedule === key ||
-      this.activeSchedule === key
-    )
-      return;
-    this.monitorBusy = true;
-    this.activeSchedule = key;
-    this.notify();
-    try {
-      for (const offset of new Set([this.config.reminder_days_ahead, 8])) {
-        if (!this.monitoring) break;
-        const { rows } = await this.load("dashboard", {
-          date: this.model.addDays(clock.date, offset),
-        });
-        if (!this.monitoring) break;
-        await this.send(rows, true);
-      }
-      if (this.monitoring) {
-        const rows = await this.loadDailyRecall(clock.date);
-        this.activity(`Daily 6-month Recall: ${rows.length} patients due today.`);
-        if (this.monitoring) await this.send(rows, true);
-      }
-      if (this.monitoring) {
-        this.store.state.lastSchedule = key;
-        this.store.saveState();
-        this.activity("Daily appointment and 6-month Recall batch complete.");
-      }
-    } catch (error) {
-      this.activity(`Monitoring error: ${error.message}`);
-      this.nextRetry = Date.now() + 60000;
-    } finally {
-      this.activeSchedule = "";
-      this.monitorBusy = false;
+    // Separate schedules and completion/retry state; Phone Link operations stay serialized.
+    for (const kind of ["appointment", "recall"]) {
+      const enabled = kind === "recall" ? "recallMonitoring" : "monitoring";
+      const stateKey = kind === "recall" ? "lastRecallSchedule" : "lastSchedule";
+      const time = kind === "recall" ? (this.config.recall_send_time || "11:00") : this.config.scheduled_send_time;
+      const [hour, minute] = time.split(":").map(Number);
+      const target = hour * 60 + minute, key = `${clock.date} ${time}`;
+      if (!this[enabled] || Date.now() < (this.scheduleRetry[kind] || 0) ||
+          clock.minutes < target || clock.minutes > target + 30 ||
+          this.store.state[stateKey] === key) continue;
+      this.monitorBusy = true;
+      this.activeSchedule = kind;
       this.notify();
+      try {
+        if (kind === "appointment") {
+          for (const offset of new Set([this.config.reminder_days_ahead, 8])) {
+            if (!this[enabled]) break;
+            const {rows} = await this.load("dashboard", {date:this.model.addDays(clock.date, offset)});
+            if (this[enabled]) await this.send(rows, true);
+          }
+        } else {
+          const rows = await this.loadDailyRecall(clock.date);
+          this.activity(`Daily 6-month Recall: ${rows.length} patients due today.`);
+          if (this[enabled]) await this.send(rows, true);
+        }
+        if (this[enabled]) {
+          this.store.state[stateKey] = key;
+          this.store.saveState();
+          this.activity(`Daily ${kind} batch complete.`);
+        }
+      } catch (error) {
+        this.activity(`${kind} monitoring error: ${error.message}`);
+        this.scheduleRetry[kind] = Date.now() + 60000;
+      } finally {
+        this.activeSchedule = "";
+        this.monitorBusy = false;
+        this.notify();
+      }
     }
   }
   async resetOrMark(rows, sent) {

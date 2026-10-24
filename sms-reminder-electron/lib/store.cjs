@@ -8,6 +8,7 @@ class Store {
     this.config = this.read("sms_config.json", defaults);
     this.state = this.read("state.json", {
       lastSchedule: "",
+      lastRecallSchedule: "",
       ledger: {},
       outbox: [],
       pendingDraft: null,
