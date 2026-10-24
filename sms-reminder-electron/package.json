@@ -1,0 +1,81 @@
+{
+  "name": "luk-dental-sms-electron",
+  "version": "1.0.3",
+  "private": true,
+  "description": "LUK Dental SMS Reminder Tool for R5 and FD2",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "demo": "electron . --demo",
+    "test": "node scripts/test.mjs",
+    "test:ui": "node scripts/ui-test.cjs",
+    "check": "node scripts/check.cjs",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win --x64",
+    "pack:win": "electron-builder --win dir --x64 --config.win.signAndEditExecutable=false",
+    "dist:mac": "electron-builder --mac --arm64",
+    "test:parity": "node scripts/python-parity.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "playwright": "1.64.0"
+  },
+  "build": {
+    "appId": "us.lukdental.sms.electron",
+    "productName": "LUK Dental SMS Electron",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "lib/**",
+      "shared/**",
+      "renderer/**",
+      "assets/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "windows",
+        "to": "windows"
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "assets/tooth.ico",
+      "extraFiles": [
+        {
+          "from": "windows/scheduler-on.bat",
+          "to": "scheduler-on.bat"
+        },
+        {
+          "from": "windows/scheduler-off.bat",
+          "to": "scheduler-off.bat"
+        },
+        {
+          "from": "windows/setup-scheduler-tasks.ps1",
+          "to": "setup-scheduler-tasks.ps1"
+        },
+        {
+          "from": "windows/r5-check.bat",
+          "to": "r5-check.bat"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "mac": {
+      "target": "zip",
+      "category": "public.app-category.medical"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+test-results/
+sms_config.json
+*.log
+
+**/bin/
+**/obj/

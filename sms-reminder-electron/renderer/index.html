@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>LUK Dental SMS Reminder Tool</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <nav aria-label="App tabs" id="tabs"></nav>
+    <main id="pages"></main>
+    <footer>
+      <span id="status-text">Starting…</span><span id="workstation"></span>
+    </footer>
+    <div id="toast" role="status" hidden></div>
+    <dialog id="modal"><div id="modal-content"></div></dialog>
+    <script type="module" src="app.mjs"></script>
+  </body>
+</html>
