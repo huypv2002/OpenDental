@@ -1,16 +1,16 @@
 # LUK Dental SMS Electron
 
-Independent Electron port of `../sms-reminder-tool`. **R5 (Windows) is the first rollout target.** FD2 is also Windows; its manual workflow is implemented in source but requires its own workstation acceptance pass later. This is the primary SMS client. Daily Recall uses the Bridge daily Recall endpoints introduced in c1f9c65; update SERVER before using this version.
+Independent Electron port of `../sms-reminder-tool`. **R5 (Windows) is the first rollout target.** FD2 is also Windows; its manual workflow is implemented in source but requires its own workstation acceptance pass later. This is the primary SMS client. Daily Recall uses the Bridge daily Recall calendar-6-month-v2 contract from 82bc316; update SERVER before using this version.
 
 ## Run on R5
 
-1. Extract the **entire** `LUK-Dental-SMS-Electron-R5-v1.0.3-win-x64.zip` folder to a permanent location, for example `C:\LUK\SMS-Electron`. Keep `resources`, DLLs and other files beside the EXE.
+1. Extract the **entire** `LUK-Dental-SMS-Electron-v1.0.5-win-x64.zip` folder to a permanent location, for example `C:\LUK\SMS-Electron`. Keep `resources`, DLLs and other files beside the EXE.
 2. Open `LUK Dental SMS Electron.exe`.
 3. Open **Settings → Import Python config** and select R5's existing `sms_config.json`. This explicitly copies known workstation settings and the token into Electron's own settings directory. It does not overwrite the Python file. Templates and review settings come from the same Bridge database.
 4. Verify the Bridge URL points to **SERVER**, not R5's loopback address. Click **Test bridge connection**.
 5. Choose **R5 — automated reminders**, clinic time zone `America/Chicago`, and the existing daily send time (normally `11:00`). Save settings.
 6. Keep Phone Link paired, logged in, and the desktop unlocked. Select a test patient and use **Test selected (no send)**. Verify the recipient and full template in Phone Link before any real sending.
-7. Use **Send selected** or **Start Monitoring** only after the no-send check passes. Appointment send attempts remain `needs-review`, matching the Python reminder behavior. Inspect Phone Link, then **Mark sent**.
+7. Use **Send selected** or **Start Appointment** or **Start Recall** only after the no-send check passes. Appointment send attempts remain `needs-review`, matching the Python reminder behavior. Inspect Phone Link, then **Mark sent**.
 
 The package needs no Python or Node installation. Phone Link/Open Dental integrations use Windows PowerShell 5.1, built-in .NET UI Automation and the Windows clipboard. It is an unsigned local build; no signing certificate is configured.
 
@@ -51,7 +51,7 @@ Tables virtualize rows and preserve per-patient selection/template choices while
 - Native automation requires verifying the recipient input and the complete compose message. If Phone Link's UIA tree does not expose those fields, it stops rather than declaring an unverified paste successful. Use Settings → Phone Link UI snapshot when adapting a new Phone Link build.
 - FD2 blocks automated reminder sending/Monitoring. Manual categories remain available.
 
-Settings and ledger live in `%APPDATA%\LUK Dental SMS Electron\workstation`; the app shows the exact path. The API token is workstation-local; protect the Windows user account and configuration folder. Do not share this folder. The application archive contains no patient data or credentials. The private R5 deployment ZIP intentionally includes the supplied Bridge token in a sidecar sms_config.json beside the EXE; do not share that ZIP publicly.
+Settings and ledger live in `%APPDATA%\LUK Dental SMS Electron\workstation`; the app shows the exact path. The API token is workstation-local; protect the Windows user account and configuration folder. Do not share this folder. The application archive contains no patient data or credentials. The generic v1.0.5 ZIP contains no workstation credentials; retain or import your existing settings.
 
 ## Development and validation
 
@@ -83,8 +83,6 @@ Local validation covers JavaScript syntax, domain/service tests and the running 
 Electron renderer isolation follows the [official IPC/context-isolation guidance](https://www.electronjs.org/docs/latest/tutorial/context-isolation). The renderer has no Node integration, cannot make network requests, and receives only the app's explicit IPC methods.
 
 Detailed source comparison and pending R5 acceptance: [DOI-CHIEU-PYTHON.md](DOI-CHIEU-PYTHON.md).
-
-## v1.0.3 — automatic six-month Recall
 
 ## Independent daily schedules — v1.0.5
 
