@@ -43,7 +43,7 @@ const paymentPlan={patNum:7,claimNumber:'CLAIM7',date:'2026-10-21',amountCents:3
 function previousDb({payment={},split={},extra=false,missing=false}={}){
  return {execute:async(sql,args)=>{
   assert.match(sql,/^SELECT/);
-  if(sql.includes('FROM payment WHERE')){assert.deepEqual(args,[7,'CLAIM7','CLAIM7']);return [[{PayNum:18,PatNum:7,PayDate:'2026-10-21',PayAmt:'30.00',...payment}]];}
+  if(sql.includes('FROM payment WHERE')){assert.deepEqual(args,[7,'CLAIM7','CLAIM7','Claim number: CLAIM7']);return [[{PayNum:18,PatNum:7,PayDate:'2026-10-21',PayAmt:'30.00',...payment}]];}
   const row={PatNum:7,ProcNum:1,ProvNum:2,ClinicNum:0,ProcDate:'2026-10-18',DatePay:'2026-10-21',SplitAmt:'30.00',...split};return [missing?[]:extra?[row,{...row,ProcNum:2,SplitAmt:'1.00'}]:[row]];
  }};
 }

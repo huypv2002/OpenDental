@@ -1,10 +1,11 @@
 import {procedureDay,reviewError} from './insuranceSettlement.js';
-import {procedureAreaKey,procedureAreaMatches,procedureQuadrant} from './procedureIdentity.js';
+import {procedureAreaKey,procedureAreaMatches,procedureQuadrant,procedureArch,procedureCandidates} from './procedureIdentity.js';
 
 const tooth=s=>/^\d+$/.test(String(s||''))?String(Number(s)):String(s||'');
 const sameTooth=(a,b)=>tooth(a)===tooth(b);
 function anatomy(p){
  const value=tooth(p.tooth),surf=p.surface||p.surf||'';
+ if(procedureArch(p))return {ToothNum:'',Surf:procedureArch(p),TreatArea:6};
  if(procedureQuadrant(p))return {ToothNum:'',Surf:procedureQuadrant(p),TreatArea:4};
  if(['UA','LA'].includes(value))return {ToothNum:'',Surf:value==='UA'?'U':'L',TreatArea:6};
  return {ToothNum:value==='FM'?'':value,Surf:surf,TreatArea:!value||value==='FM'?3:surf?1:2};
@@ -20,15 +21,17 @@ export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=fa
   const byDate=procs.filter(r=>r.ProcCode===p.code&&(!p.date||procedureDay(r.ProcDate)===p.date));
   if(new Set(byDate.map(r=>JSON.stringify([procedureDay(r.ProcDate),procedureAreaKey(r)]))).size!==byDate.length)throw reviewError(`${p.code}: có nhiều dịch vụ trùng ngày/răng/vùng hàm; cần đối chiếu trước khi thêm.`);
   if(/^D434[12]$/.test(p.code)&&!procedureQuadrant(p)&&byDate.length!==1)throw reviewError(`${p.code}: chưa đọc rõ vùng hàm UR/UL/LR/LL; cần đối chiếu PDF, không tự phân bổ theo thứ tự.`);
-  const exact=byDate.filter(r=>procedureAreaMatches(p,r,{metlife}));
-  if(exact.length||!procedureQuadrant(p)&&allowUniqueCodeDate&&byDate.length===1&&procedures.filter(r=>r.code===p.code&&r.date===p.date).length===1)continue;
+  const exact=procedureCandidates(byDate,p,procedures,{metlife,allowUniqueCodeDate});
+  if(exact.length)continue;
+  const sourceCount=procedures.filter(r=>r.benefitCents>0&&r.code===p.code&&r.date===p.date).length;
+  if(byDate.length>=sourceCount&&byDate.length)throw reviewError(`${p.code}: đã có dịch vụ cùng mã/ngày nhưng vùng răng/hàm chưa khớp; không tự thêm trùng.`);
   const date=/^\d{4}-\d{2}-\d{2}$/.test(p.date||'')?new Date(p.date+'T12:00:00Z'):null;
   if(!/^D\d{4}$/.test(p.code)||!date||Number.isNaN(+date)||date.toISOString().slice(0,10)!==p.date||!Number.isSafeInteger(p.benefitCents)||p.benefitCents<=0)throw reviewError(`${p.code}: thiếu ngày/mã/số tiền để thêm dịch vụ.`);
   if(p.tooth&&!/^(?:0?[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(p.tooth))throw reviewError(`${p.code}: chưa đọc rõ răng để thêm dịch vụ.`);
   const virtual={ProcNum:-(additions.length+1),ProcCode:p.code,ProcDate:p.date,ToothNum:anatomy(p).ToothNum,Surf:anatomy(p).Surf,ProcFee:(p.benefitCents/100).toFixed(2),Descript:p.description||p.desc||p.code};
   procs.push(virtual);additions.push({source:p,row:virtual});
  }
- return {procs,additions};
+ return {procs,additions,sourceProcedures:procedures};
 }
 
 async function columns(db,table){
@@ -82,6 +85,8 @@ export async function createMissingProcedures(pool,{plan,patient,claimNumber,car
    const matches=existing.filter(r=>procedureAreaMatches(p,r)&&Number(r.ProcStatus)!==6);
    if(matches.length>1||matches.some(r=>Number(r.ProcStatus)!==2))throw reviewError(`${p.code}: đã có dịch vụ cùng ngày/răng chưa xác định duy nhất; không thêm lặp.`);
    if(matches.length===1){Object.assign(row,matches[0]);result.push({oldId,procNum:row.ProcNum,code:p.code,reused:true});continue;}
+   const sourceCount=(plan.sourceProcedures||[p]).filter(r=>r.benefitCents>0&&r.code===p.code&&r.date===p.date).length;
+   if(existing.filter(r=>Number(r.ProcStatus)!==6).length>=sourceCount)throw reviewError(`${p.code}: đã có dịch vụ cùng mã/ngày nhưng chưa khớp vùng hàm khi ghi; không thêm trùng.`);
    const [codes]=await conn.execute('SELECT CodeNum,ProcCode,Descript,TreatArea FROM procedurecode WHERE ProcCode=?',[p.code]);
    if(codes.length>1)throw reviewError(`${p.code}: danh mục có nhiều mã trùng nhau.`);
    let code=codes[0],newCode=false;

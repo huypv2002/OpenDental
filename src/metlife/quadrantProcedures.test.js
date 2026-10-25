@@ -29,7 +29,8 @@ test('MetLife preserves each D4341 quadrant, rather than treating blank teeth as
  assert.equal(planMissingProcedures(procs,p.procedures,{metlife:true}).additions.length,0);
  assert.deepEqual([...matchLibertyProcedures(procs,{procedures:p.procedures}).values()].map(p=>p.ProcNum),[1,2]);
  const other={...p.procedures[0],surface:'LR'};
- assert.equal(planMissingProcedures(procs,[other],{metlife:true}).additions.length,1);
+ assert.throws(()=>planMissingProcedures(procs,[other],{metlife:true}),/không tự thêm trùng/);
+ assert.equal(planMissingProcedures(procs.slice(0,1),p.procedures,{metlife:true}).additions.length,1);
  assert.throws(()=>planMissingProcedures(procs,[{...other,surface:''}],{metlife:true}),/vùng hàm/);
  assert.equal(planMissingProcedures(procs.slice(0,1),[{...other,surface:''}],{metlife:true}).additions.length,0);
  assert.throws(()=>planMissingProcedures([...procs,{...procs[0],ProcNum:3}],p.procedures,{metlife:true}),/trùng/);

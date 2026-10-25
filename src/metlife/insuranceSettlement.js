@@ -57,7 +57,7 @@ function splitMap(splits,date){
  return values;
 }
 export async function verifiedInsurancePayment(db,{patNum,claimNumber,date,amountCents,splits}){
- const [payments]=await db.execute('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment WHERE PatNum = ? AND (ExternalId = ? OR CheckNum = ?)',[patNum,claimNumber,claimNumber]);
+ const [payments]=await db.execute('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment WHERE PatNum = ? AND (ExternalId = ? OR CheckNum = ? OR PayNote = ?)',[patNum,claimNumber,claimNumber,`Claim number: ${claimNumber}`]);
  if(!payments.length)return null;
  if(payments.length!==1)throw reviewError('Có nhiều khoản thanh toán cùng claim; cần đối chiếu, không ghi đè.');
  const payment=payments[0];

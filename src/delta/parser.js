@@ -1,4 +1,5 @@
 import {cents,isoDate,money} from '../metlife/parser.js';
+import {normalizeTooth} from '../metlife/procedureIdentity.js';
 
 const amounts=text=>[...text.matchAll(/\$([\d,]+\.\d{2})/g)].map(m=>cents(m[1]));
 const signature=p=>JSON.stringify([p.date,p.code,p.tooth,p.feeCents,p.allowedCents,p.maximumCents,p.deductibleCents,p.percent,p.benefitCents,p.patientDueCents,p.explanationCode]);
@@ -34,7 +35,7 @@ export function parseDelta(extracted){
    const match=/^(?:\S+\s+)?(\d{2}\/\d{2}\/\d{4})\s+(D\d{4})\s+(\S+)/.exec(line);
    if(match){
     if(!current)throw fail('Có dịch vụ Delta nhưng thiếu thông tin claim.');
-    const a=amounts(line),percent=Number(/(\d+(?:\.\d+)?)%/.exec(line)?.[1]),date=isoDate(match[1]),tooth=match[3]==='-'?'':match[3];
+    const a=amounts(line),percent=Number(/(\d+(?:\.\d+)?)%/.exec(line)?.[1]),date=isoDate(match[1]),tooth=match[3]==='-'?'':normalizeTooth(match[3]);
     if(a.length!==6||!date||!Number.isFinite(percent)||percent<0||percent>100||!/^(?:|[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(tooth))throw fail('Dòng Delta thiếu ngày, răng, tỷ lệ hoặc cột tiền.');
     const [feeCents,allowedCents,maximumCents,deductibleCents,benefitCents,patientDueCents]=a;
     if(Math.round(Math.max(0,maximumCents-deductibleCents)*percent/100)!==benefitCents)throw fail('Tiền Delta trả không khớp mức hưởng và tỷ lệ trên dòng dịch vụ.');

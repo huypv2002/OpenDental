@@ -6,7 +6,7 @@ import {prepareInsuranceSettlement,applyInsuranceSettlement,verifyInsuranceSettl
 import { extractPdf, parseMetlife } from './parser.js';
 import { nativeSplitHashes } from './nativeSplitHashes.js';
 import {planMissingProcedures,createMissingProcedures} from './missingProcedures.js';
-import {procedureAreaMatches} from './procedureIdentity.js';
+import {procedureCandidates} from './procedureIdentity.js';
 import { odSecurityLogHash } from './directPayment.js';
 import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
 import {documentInsert} from './documentImport.js';
@@ -56,7 +56,8 @@ export async function ensureMetlifeHistoryTable(pool) {
 
 export async function resolvePatient(pool, { fileName, parsed }) {
   // 1. Try matching PatNum directly from filename (e.g. 1307.pdf, 1307_eob.pdf)
-  const numMatch = fileName.match(/^(\d+)/) || fileName.match(/[^\d](\d{3,7})[^\d]/) || fileName.match(/(\d{3,7})\.pdf$/i);
+  const patientFile = fileName.replace(/^\d{13}_(?=\d+(?:[_.]|$))/, '');
+  const numMatch = patientFile.match(/^(\d+)/) || fileName.match(/[^\d](\d{3,7})[^\d]/) || fileName.match(/(\d{3,7})\.pdf$/i);
   if (numMatch) {
     const patNum = Number.parseInt(numMatch[1], 10);
     const [rows] = await pool.execute(
@@ -309,7 +310,8 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     if (!eobProc.benefitCents || eobProc.benefitCents <= 0) continue;
     const splitAmount = (eobProc.benefitCents / 100).toFixed(2);
 
-    const matches=dbProcs.filter(p=>p.ProcCode===eobProc.code&&(!eobProc.date||procedureDay(p.ProcDate)===eobProc.date)&&procedureAreaMatches(eobProc,p,{metlife:true}));
+    const byDate=dbProcs.filter(p=>p.ProcCode===eobProc.code&&(!eobProc.date||procedureDay(p.ProcDate)===eobProc.date));
+    const matches=procedureCandidates(byDate,eobProc,parsed.procedures,{metlife:true});
     if(matches.length!==1)throw reviewError(`${eobProc.code}: chưa khớp duy nhất dịch vụ hoàn tất theo ngày; cần đối chiếu.`);
     const match=matches[0];
     if([...matchedProcedures.values()].some(p=>String(p.ProcNum)===String(match.ProcNum)))throw reviewError(`${eobProc.code}: nhiều dòng đang khớp cùng một dịch vụ; cần đối chiếu vùng hàm.`);

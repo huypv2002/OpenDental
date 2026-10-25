@@ -1,5 +1,5 @@
 import {procedureDay,reviewError} from '../metlife/insuranceSettlement.js';
-import {procedureAreaMatches,procedureQuadrant} from '../metlife/procedureIdentity.js';
+import {procedureAreaMatches,procedureCandidates} from '../metlife/procedureIdentity.js';
 export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\d+$/,requireMember=true,verifyLibertyOcr=true}={}){
  const errors=[...parsed.errors];
  const safe=n=>Number.isSafeInteger(n)&&n>=0;
@@ -31,8 +31,9 @@ export function matchLibertyProcedures(procs,claim,{allowUniqueCodeDate=false}={
  for(const p of claim.procedures.filter(p=>p.benefitCents>0)){
   const byCodeDate=procs.filter(r=>r.ProcCode===p.code&&procedureDay(r.ProcDate)===p.date);
   let candidates=byCodeDate.filter(r=>procedureAreaMatches(p,r));
-  if(!candidates.length&&!procedureQuadrant(p)&&allowUniqueCodeDate&&byCodeDate.length===1&&claim.procedures.filter(r=>r.code===p.code&&r.date===p.date).length===1){
-   candidates=byCodeDate;p.matchWarning=`${p.code} ${p.date}: PDF răng ${p.tooth||'-'}, OD răng ${byCodeDate[0].ToothNum||'-'}; khớp duy nhất mã/ngày theo quy tắc MetLife.`;
+  if(!candidates.length){
+   candidates=procedureCandidates(byCodeDate,p,claim.procedures,{allowUniqueCodeDate});
+   if(candidates.length===1)p.matchWarning=`${p.code} ${p.date}: PDF răng ${p.tooth||'-'}, OD răng ${byCodeDate[0].ToothNum||'-'}; khớp duy nhất mã/ngày theo quy tắc MetLife.`;
   }
   if(candidates.length!==1||ids.has(String(candidates[0]?.ProcNum)))throw reviewError(`${p.code}: chưa khớp duy nhất dịch vụ hoàn tất theo ngày/răng (ngày ${p.date}, răng ${p.tooth||'-'}, ${byCodeDate.length} dịch vụ cùng mã/ngày); cần đối chiếu.`);
   ids.add(String(candidates[0].ProcNum));result.set(p,candidates[0]);

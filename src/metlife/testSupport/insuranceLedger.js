@@ -45,7 +45,7 @@ export async function insuranceLedger(root,claims){
    assert.ok(locked);for(const r of byIds(claimprocs,args[0],args.slice(1)))for(const k of insuranceZeroFields)r[k]=0;return [{affectedRows:1}];
   }
   if(sql.includes('COALESCE(SUM(InsPayEst)')){const selected=claimprocs.filter(r=>String(r.ClaimNum)===String(args[0])&&r.PatNum===args[1]);return [[{InsPayEst:selected.reduce((n,r)=>n+r.InsPayEst,0),WriteOff:selected.reduce((n,r)=>n+r.WriteOff,0)}]];}
-  if(sql.includes('FROM payment WHERE PatNum ='))return [payments.filter(p=>p.PatNum===args[0]&&(p.ExternalId===args[1]||p.CheckNum===args[2]))];
+  if(sql.includes('FROM payment WHERE PatNum ='))return [payments.filter(p=>p.PatNum===args[0]&&(p.ExternalId===args[1]||p.CheckNum===args[2]||p.PayNote===args[3]))];
   if(sql.includes('FROM paysplit WHERE PayNum='))return [splits.filter(s=>s.PayNum===args[0])];
   if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:imageRoot},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];
   if(sql.includes('Category = 18'))return [[{DefNum:18}]];
