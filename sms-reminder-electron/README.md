@@ -2,7 +2,23 @@
 
 Independent Electron port of `../sms-reminder-tool`. **R5 (Windows) is the first rollout target.** FD2 is also Windows; its manual workflow is implemented in source but requires its own workstation acceptance pass later. This is the primary SMS client. Daily Recall uses the Bridge daily Recall calendar-6-month-v2 contract from 82bc316; update SERVER before using this version.
 
-## Run on R5
+## R5 source checkout — v1.0.7
+
+The primary deployment can run directly from Git source. From the repository root on R5:
+
+```bat
+git pull
+cd sms-reminder-electron
+npm ci
+```
+
+The two BAT files are in `sms-reminder-electron/windows/`. Run scheduler-off.bat, then scheduler-on.bat as Administrator. Keep Sysinternals Autologon64.exe in that windows folder or its parent sms-reminder-electron folder. Select Y for Appointment + 6M Recall monitoring.
+
+The task runs the local node_modules/electron/dist/electron.exe with the absolute source app path (quoted for spaces). It does not need a packaged LUK Dental SMS Electron.exe or a ZIP. npm ci is only required when dependencies have not been installed or the lockfile changes. Keep the checkout in its installed location; rerun BAT on after moving it. Machine runtime JSON/flags/logs stay beside the BAT, outside node_modules. Existing AppData credentials and ledgers are reused.
+
+The same BAT supports packaged folders too. A local PowerShell harness checks launch planning, but registration/login/Phone Link on real R5 still need workstation verification.
+
+## Packaged alternative on R5
 
 1. Extract the **entire** `LUK-Dental-SMS-Electron-v1.0.6-win-x64.zip` folder to a permanent location, for example `C:\LUK\SMS-Electron`. Keep `resources`, DLLs and other files beside the EXE.
 2. Open `LUK Dental SMS Electron.exe`.

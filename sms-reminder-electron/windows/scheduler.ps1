@@ -1,6 +1,7 @@
 ﻿param([Parameter(Mandatory=$true)][string]$ConfigPath)
 $ErrorActionPreference='Stop'
 $prefix='LUK Dental SMS Electron'
+. (Join-Path $PSScriptRoot 'scheduler-target.ps1')
 $taskRegistrationStarted=$false
 $autologonChanged=$false
 $bstr=[IntPtr]::Zero
@@ -14,7 +15,8 @@ try {
     }
     Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' AutoAdminLogon '0'
     if (Test-Path -LiteralPath $config.exe) {
-      Start-Process -FilePath $config.exe -ArgumentList @('--stop-reminder-monitoring','--stop-recall-monitoring') -WorkingDirectory (Split-Path -Parent $config.exe)
+      $stopLaunch=Get-LukSmsLaunch $config @('--stop-reminder-monitoring','--stop-recall-monitoring')
+      Start-Process @stopLaunch | Out-Null
     }
     Write-Host 'Daily Appointment + 6M Recall scheduler disabled.'
     exit 0
@@ -24,7 +26,7 @@ try {
     if ([string]$config.$key -notmatch '^([01]\d|2[0-3]):[0-5]\d$') {throw 'Scheduler times must use HH:MM.'}
   }
   if (-not (Test-Path -LiteralPath $config.autologon)) {throw 'Select Microsoft Sysinternals Autologon64.exe first.'}
-  if (-not (Test-Path -LiteralPath $config.exe)) {throw 'Packaged Electron EXE was not found.'}
+  if (-not (Test-Path -LiteralPath $config.exe)) {throw 'Electron runtime missing. In the source checkout, run npm ci inside sms-reminder-electron first.'}
   $runtime=Join-Path $PSScriptRoot 'scheduler-runtime.ps1'
   if (-not (Test-Path -LiteralPath $runtime)) {throw 'Scheduler runtime script missing.'}
   $requestedUser="$env:COMPUTERNAME\$env:USERNAME"
@@ -41,17 +43,19 @@ try {
   . (Join-Path $PSScriptRoot 'autologon-process.ps1')
   Write-Host 'Waiting for Sysinternals Autologon. Accept its license dialog if shown.'
   Invoke-LukAutologon $config.autologon $user $domain $plain
-  $runtimePath=Join-Path (Split-Path -Parent $config.exe) 'scheduler-runtime.json'
-  @{exe=$config.exe;autoStartReminder=($config.autoStartReminder -ne $false)} | ConvertTo-Json | Set-Content -LiteralPath $runtimePath -Encoding UTF8
-  $(if ($config.autoStartReminder -eq $false) {'0'} else {'1'}) | Set-Content -LiteralPath (Join-Path (Split-Path -Parent $config.exe) 'scheduler-start-reminder.flag') -Encoding ASCII
+  $workingDirectory=if($config.workingDirectory){$config.workingDirectory}else{Split-Path -Parent $config.exe}
+  $runtimeDir=Get-LukSmsRuntimeDir $config
+  $runtimePath=Join-Path $runtimeDir 'scheduler-runtime.json'
+  @{exe=$config.exe;appPath=$config.appPath;workingDirectory=$workingDirectory;runtimeDir=$runtimeDir;autoStartReminder=($config.autoStartReminder -ne $false)} | ConvertTo-Json | Set-Content -LiteralPath $runtimePath -Encoding UTF8
+  $(if ($config.autoStartReminder -eq $false) {'0'} else {'1'}) | Set-Content -LiteralPath (Join-Path $runtimeDir 'scheduler-start-reminder.flag') -Encoding ASCII
   foreach ($obsolete in @('scheduler-start-holiday.flag','scheduler-start-treatment.flag')) {
-    Remove-Item -LiteralPath (Join-Path (Split-Path -Parent $config.exe) $obsolete) -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $runtimeDir $obsolete) -ErrorAction SilentlyContinue
   }
   $systemPrincipal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
   $interactivePrincipal=New-ScheduledTaskPrincipal -UserId "$domain\$user" -LogonType Interactive -RunLevel Highest
   $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
   . (Join-Path $PSScriptRoot 'scheduler-plan.ps1')
-  $plan=@(Get-LukSmsTaskPlan $config $runtime $runtimePath (Split-Path -Parent $config.exe))
+  $plan=@(Get-LukSmsTaskPlan $config $runtime $runtimePath $workingDirectory)
   $taskRegistrationStarted=$true
   Unregister-ScheduledTask -TaskName "$prefix - Daily Recall" -Confirm:$false -ErrorAction SilentlyContinue
   Unregister-ScheduledTask -TaskName "$prefix - Screen Off" -Confirm:$false -ErrorAction SilentlyContinue

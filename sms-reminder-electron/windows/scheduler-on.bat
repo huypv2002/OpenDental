@@ -1,6 +1,8 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+set "SCHEDULER_RUNTIME=%~dp0resources\windows\scheduler-runtime.ps1"
+if exist "%~dp0scheduler-runtime.ps1" set "SCHEDULER_RUNTIME=%~dp0scheduler-runtime.ps1"
 if /i "%~1"=="run" goto run
 if /i "%~1"=="enable-login" goto enable_login
 if /i "%~1"=="lock" goto lock
@@ -14,7 +16,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist "Autologon64.exe" (
+if not exist "Autologon64.exe" if not exist "..\Autologon64.exe" (
   echo Place Microsoft Sysinternals Autologon64.exe in this folder.
   pause
   exit /b 1
@@ -33,11 +35,11 @@ set "RESULT=%errorlevel%"
 pause
 exit /b %RESULT%
 :run
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0resources\windows\scheduler-runtime.ps1" -Mode run -ConfigPath "%~dp0scheduler-runtime.json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCHEDULER_RUNTIME%" -Mode run -ConfigPath "%~dp0scheduler-runtime.json"
 exit /b %errorlevel%
 :enable_login
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0resources\windows\scheduler-runtime.ps1" -Mode enable-login -ConfigPath "%~dp0scheduler-runtime.json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCHEDULER_RUNTIME%" -Mode enable-login -ConfigPath "%~dp0scheduler-runtime.json"
 exit /b %errorlevel%
 :lock
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0resources\windows\scheduler-runtime.ps1" -Mode lock -ConfigPath "%~dp0scheduler-runtime.json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCHEDULER_RUNTIME%" -Mode lock -ConfigPath "%~dp0scheduler-runtime.json"
 exit /b %errorlevel%

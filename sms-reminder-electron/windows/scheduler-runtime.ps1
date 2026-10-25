@@ -1,7 +1,9 @@
 ﻿param([Parameter(Mandatory=$true)][ValidateSet('run','enable-login','lock')][string]$Mode,[Parameter(Mandatory=$true)][string]$ConfigPath)
 $ErrorActionPreference='Stop'
 $config=Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$log=Join-Path (Split-Path -Parent $config.exe) 'scheduler-run.log'
+. (Join-Path $PSScriptRoot 'scheduler-target.ps1')
+$runtimeDir=Get-LukSmsRuntimeDir $config
+$log=Join-Path $runtimeDir 'scheduler-run.log'
 function Log([string]$Message) {
   $line="[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
   try { Add-Content -LiteralPath $log -Value $line -Encoding UTF8 } catch { Write-Host $line }
@@ -25,12 +27,11 @@ try {
       Start-Sleep -Seconds 15
       $arguments=@()
       $autoStart=$config.autoStartReminder -ne $false
-      $flag=Join-Path (Split-Path -Parent $config.exe) 'scheduler-start-reminder.flag'
+      $flag=Join-Path $runtimeDir 'scheduler-start-reminder.flag'
       if (Test-Path -LiteralPath $flag) { $autoStart=(Get-Content -LiteralPath $flag -Raw).Trim() -ne '0' }
       if ($autoStart) { $arguments=@('--start-reminder-monitoring') }
       Log "Starting Electron; automatic monitoring=$($config.autoStartReminder)."
-      $start=@{FilePath=$config.exe;WorkingDirectory=(Split-Path -Parent $config.exe);PassThru=$true}
-      if ($arguments.Count -gt 0) {$start.ArgumentList=$arguments}
+      $start=Get-LukSmsLaunch $config $arguments
       $process=Start-Process @start
       Log "Electron launched (PID $($process.Id)); app enforces one instance and preserves an active job."
     }

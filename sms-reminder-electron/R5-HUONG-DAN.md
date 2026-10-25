@@ -1,3 +1,11 @@
+# Chạy mã nguồn trên R5 — v1.0.7
+
+Không cần ZIP. Từ thư mục repo chạy git pull; vào sms-reminder-electron và chạy npm ci nếu chưa cài dependencies.
+
+Hai BAT ở sms-reminder-electron/windows/: scheduler-off.bat và scheduler-on.bat. Chạy off rồi on bằng Run as administrator. Autologon64.exe có thể đặt cùng thư mục windows hoặc thư mục cha sms-reminder-electron. Chọn Y để tự bật Appointment + 6M Recall.
+
+BAT tự nhận mã nguồn, gọi electron.exe trong node_modules và truyền đường dẫn app, hỗ trợ cả đường dẫn có dấu cách. Cấu hình AppData cũ được giữ lại. Không di chuyển repo sau khi cài lịch; nếu di chuyển thì chạy BAT on lại.
+
 # SMS Electron v1.0.6 — một lịch chung
 
 Chỉ dùng hai file scheduler-on.bat và scheduler-off.bat.

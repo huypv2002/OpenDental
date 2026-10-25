@@ -6,3 +6,6 @@ sms_config.json
 
 **/bin/
 **/obj/
+
+windows/scheduler-runtime.json
+windows/scheduler-start-*.flag
