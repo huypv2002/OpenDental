@@ -210,7 +210,7 @@ function saveConfig(input) {
     url.password
   )
     throw new Error("Use an HTTP/HTTPS Bridge URL.");
-  if (![next.scheduled_send_time,next.recall_send_time].every(t => /^([01]\d|2[0-3]):[0-5]\d$/.test(t)))
+  if (![next.scheduled_send_time].every(t => /^([01]\d|2[0-3]):[0-5]\d$/.test(t)))
     throw new Error("Send time must be HH:MM.");
   new Intl.DateTimeFormat("en", { timeZone: next.time_zone });
   if (!["auto", "r5", "fd2"].includes(next.workstation_mode))

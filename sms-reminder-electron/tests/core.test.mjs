@@ -59,6 +59,7 @@ function fixture(options = {}) {
     templates: {
       appointment: {
         US: "Hello {first_name}, {relative_day} at {time_lower}.",
+        "6M RECALL - EN": "6M Recall {first_name}",
       },
       recall: { US: "Recall {first_name}" },
       treatment: { US: "Treatment {first_name}" },
@@ -326,7 +327,7 @@ test("monitoring runs configured and 8-day dates once, and ignores late startup"
     await f.service.tick(new Date("2026-10-11T16:00:00Z"));
     await f.service.tick(new Date("2026-10-11T16:10:00Z"));
     assert.deepEqual(dates, ["2026-10-12", "2026-10-19"]);
-    assert.deepEqual(recallDates,[]);
+    assert.deepEqual(recallDates,["2026-10-11"]);
     assert.equal(f.store.state.lastSchedule,"2026-10-11 11:00");
     f.store.state.lastSchedule = "";
     await f.service.tick(new Date("2026-10-11T16:31:00Z"));
@@ -411,9 +412,10 @@ test("daily Recall loads exact-date contract, all pages, and language templates 
     ]:Array.from({length:500},(_,i)=>row(i+1,{PatNum:i+1,Language:i%2?"Spanish":"English",AptDateTime:"",LastProcDate:"2026-04-23"}))};
   }
 },async f=>{
-  f.service.library.templates.recall={US:"EN {first_name}",ES:"ES {first_name}",VI:"VI {first_name}"};
+  Object.assign(f.service.library.templates.appointment,{"6M RECALL - EN":"EN {first_name}","6M RECALL - ES":"ES {first_name}","6M RECALL - VI":"VI {first_name}"});
   const rows=await f.service.loadDailyRecall("2026-10-23");assert.equal(rows.length,501);
-  assert.deepEqual([rows[0]._TemplateKey,rows[1]._TemplateKey,rows.at(-1)._TemplateKey],["US","ES","VI"]);
+  assert.deepEqual([rows[0]._TemplateKey,rows[1]._TemplateKey,rows.at(-1)._TemplateKey],["6M RECALL - EN","6M RECALL - ES","6M RECALL - VI"]);
+  assert.ok(rows.every(r=>r._TemplateCategory==="appointment"));
   assert.deepEqual(f.requests.map(r=>r.params.afterPatNum),[0,500]);
   assert.ok(rows.every(r=>r._Kind==="recall"&&r._DailyRecallDate==="2026-10-23"));
 }));
@@ -421,7 +423,7 @@ test("old Bridge and missing-language Recall templates block automatic sending",
   await assert.rejects(f.service.loadDailyRecall("2026-10-23"),/Update SERVER/);assert.equal(f.native.length,0);
   f.service.bridge.request=async()=>({contract:"calendar-6-month-v2",date:"2026-10-23",patients:[row(1,{Language:"Spanish",LastProcDate:"2026-04-23"})]});
   await assert.rejects(f.service.loadDailyRecall("2026-10-23"),/Missing ES/);assert.equal(f.native.length,0);
-  f.service.library.templates.recall.ES="Cita {date_full}";
+  f.service.library.templates.appointment["6M RECALL - ES"]="Cita {date_full}";
   await assert.rejects(f.service.loadDailyRecall("2026-10-23"),/appointment fields/);
 }));
 test("daily Recall reserves before Phone Link, logs Recall token and reuses local/server duplicate guards",()=>using({
@@ -450,7 +452,7 @@ test("uncertain daily Recall stays blocked and failed log sync retries only the 
  assert.equal((await f.service.send([target],true)).skipped,1);assert.equal(f.native.length,1);
  f.service.bridge.request=async()=>({});await f.service.syncOutbox();assert.equal(f.store.state.outbox.length,0);assert.equal(f.native.length,1);
 }));
-test("Appointment and Recall run only when separately enabled and persist independent completion",()=>using({
+test("One Start runs Appointment and Recall using the existing appointment-category 6M DB template",()=>using({
  request:async(method,route,params)=>{
   if(route.endsWith("recall-candidates"))return {contract:"calendar-6-month-v2",date:params.date,patients:[row(1,{AptDateTime:"",LastProcDate:"2026-04-23"})]};
   if(route.endsWith("recall-claim"))return {claimed:true,token:"dispatch-test"};
@@ -458,29 +460,27 @@ test("Appointment and Recall run only when separately enabled and persist indepe
  }
 },async f=>{
  await f.service.startMonitoring();await f.service.tick(new Date("2026-10-23T16:00:00Z"));
- assert.equal(f.store.state.lastSchedule,"2026-10-23 11:00");assert.equal(f.native.length,0);
- assert.equal(f.requests.some(r=>r.route.endsWith("recall-candidates")),false);
- await f.service.startMonitoring("recall");
- await f.service.tick(new Date("2026-10-23T16:05:00Z"));
- assert.equal(f.store.state.lastRecallSchedule,"2026-10-23 11:00");assert.equal(f.native.length,1);
+ assert.equal(f.store.state.lastSchedule,"2026-10-23 11:00");assert.equal(f.native.length,1);
+ assert.equal(f.requests.some(r=>r.route.endsWith("recall-candidates")),true);
+ assert.equal(f.store.state.lastRecallSchedule,"2026-10-23 11:00");
+ assert.equal(f.native[0].message,"6M Recall Alex");
+ assert.equal(f.requests.find(r=>r.route.endsWith("recall-log")).body.message,"6M Recall Alex");
  assert.deepEqual(f.requests.filter(r=>r.route.endsWith("appointments")).map(r=>r.params.date),["2026-10-24","2026-10-31"]);
  await f.service.tick(new Date("2026-10-23T16:10:00Z"));assert.equal(f.native.length,1);
 }));
-test("Recall-only monitoring never loads appointments and respects its own send time",()=>using({config:{recall_send_time:"12:00"}},async f=>{
- const calls=[];f.service.load=async()=>{throw Error("Appointment must not run");};
+test("One monitoring time drives both batches, ignoring the deprecated Recall-only time",()=>using({config:{recall_send_time:"12:00"}},async f=>{
+ const calls=[];f.service.load=async()=>({rows:[]});
  f.service.loadDailyRecall=async date=>{calls.push(date);return [];};
- await f.service.startMonitoring("recall");
- await f.service.tick(new Date("2026-10-23T16:00:00Z"));assert.deepEqual(calls,[]);
- await f.service.tick(new Date("2026-10-23T17:00:00Z"));
- assert.deepEqual(calls,["2026-10-23"]);assert.equal(f.store.state.lastSchedule,"");
- assert.equal(f.store.state.lastRecallSchedule,"2026-10-23 12:00");
- await f.service.tick(new Date("2026-10-23T17:01:00Z"));assert.equal(calls.length,1);
+ await f.service.startMonitoring();
+ await f.service.tick(new Date("2026-10-23T16:00:00Z"));
+ assert.deepEqual(calls,["2026-10-23"]);assert.equal(f.store.state.lastSchedule,"2026-10-23 11:00");
+ assert.equal(f.store.state.lastRecallSchedule,"2026-10-23 11:00");
+ await f.service.tick(new Date("2026-10-23T17:00:00Z"));assert.equal(calls.length,1);
 }));
-test("Stopping one monitoring stream leaves the other enabled",()=>using({},async f=>{
- await f.service.startMonitoring();await f.service.startMonitoring("recall");
- f.service.stopMonitoring("appointment");assert.equal(f.service.monitoring,false);assert.equal(f.service.recallMonitoring,true);
- await f.service.startMonitoring();f.service.stopMonitoring("recall");assert.equal(f.service.monitoring,true);assert.equal(f.service.recallMonitoring,false);
- f.service.stop();assert.equal(f.service.monitoring,false);assert.equal(f.service.recallMonitoring,false);
+test("One Stop disables both batches, including legacy per-stream stop entrypoints",()=>using({},async f=>{
+ await f.service.startMonitoring();assert.equal(f.service.monitoring,true);assert.equal(f.service.recallMonitoring,true);
+ f.service.stopMonitoring("appointment");assert.equal(f.service.monitoring,false);assert.equal(f.service.recallMonitoring,false);
+ await f.service.startMonitoring();f.service.stopMonitoring("recall");assert.equal(f.service.monitoring,false);assert.equal(f.service.recallMonitoring,false);
 }));
 test("Appointment failure does not block Recall or its completion state",()=>using({},async f=>{
  f.service.load=async()=>{throw Error("appointment feed down");};
@@ -490,12 +490,39 @@ test("Appointment failure does not block Recall or its completion state",()=>usi
  assert.equal(recall,1);assert.equal(f.store.state.lastSchedule,"");assert.equal(f.store.state.lastRecallSchedule,"2026-10-23 11:00");
  assert.ok(f.service.scheduleRetry.appointment);assert.equal(f.service.scheduleRetry.recall,undefined);
 }));
-test("Stop Recall during an active send finishes only that patient and leaves Appointment running",()=>using({},async f=>{
+test("Stop Monitoring during an active send finishes that patient and disables both batches",()=>using({},async f=>{
  await f.service.startMonitoring();await f.service.startMonitoring("recall");
  f.service.demo=true;f.service.library.templates.recall={US:"Hello {first_name}"};
  f.service.windows.run=async payload=>{f.native.push(payload);f.service.stopMonitoring("recall");return {};};
  const rows=[1,2].map(n=>row(n,{_DailyRecall:true,_Kind:"recall",_TemplateKey:"US",LastProcDate:"2026-04-23",AptDateTime:""}));
  const result=await f.service.send(rows,true);
- assert.equal(result.completed,1);assert.equal(f.native.length,1);assert.equal(f.service.monitoring,true);assert.equal(f.service.recallMonitoring,false);
+ assert.equal(result.completed,1);assert.equal(f.native.length,1);assert.equal(f.service.monitoring,false);assert.equal(f.service.recallMonitoring,false);
+}));
+test("6M template selection uses named DB messages by language and never substitutes generic Recall or appointment",()=>{
+ const library={templates:{appointment:{US:"appointment", "6M RECALL - EN":"EN", "6M RECALL - ES":"ES", "6M RECALL - VI":"VI"},recall:{US:"wrong generic",ES:"wrong generic"}}};
+ for(const [language,key] of [["English","EN"],["Spanish","ES"],["Vietnamese","VI"]]) {
+   const choice=model.pickDailyRecallTemplate(library,{Language:language});assert.equal(choice.key,`6M RECALL - ${key}`);assert.equal(choice.category,"appointment");
+ }
+ assert.equal(model.pickTemplate(library.templates,{Language:"English"},"appointment"),"US");
+ delete library.templates.appointment["6M RECALL - ES"];
+ assert.throws(()=>model.pickDailyRecallTemplate(library,{Language:"Spanish"}),/Missing ES/);
+ library.templates.appointment["6M_RECALL_EN"]="duplicate";
+ assert.throws(()=>model.pickDailyRecallTemplate(library,{Language:"English"}),/Multiple US/);
+ assert.equal(model.pickTemplate({appointment:{"6M RECALL - EN":"recall"}},{Language:"English"},"appointment"),"");
+});
+test("Unified daily Recall sends the DB 6M messages in English, Spanish and Vietnamese and records only Recall logs",()=>using({
+ request:async(method,route,params)=>{
+  if(route.endsWith("recall-candidates"))return {contract:"calendar-6-month-v2",date:params.date,patients:["English","Spanish","Vietnamese"].map((Language,i)=>row(i+1,{Language,AptDateTime:"",LastProcDate:"2026-04-23"}))};
+  if(route.endsWith("recall-claim"))return {claimed:true,token:"dispatch-test"};
+  return {};
+ }
+},async f=>{
+ Object.assign(f.service.library.templates.appointment,{"6M RECALL - EN":"EN 6M {first_name}","6M RECALL - ES":"ES 6M {first_name}","6M RECALL - VI":"VI 6M {first_name}"});
+ await f.service.startMonitoring();const rows=await f.service.loadDailyRecall("2026-10-23");
+ await f.service.send(rows,true);
+ assert.deepEqual(f.native.map(r=>r.message),["EN 6M Alex","ES 6M Alex","VI 6M Alex"]);
+ assert.equal(f.requests.filter(r=>r.route.endsWith("recall-log")).length,3);
+ assert.equal(f.requests.some(r=>r.route==="/api/sms-reminders/log"),false);
+ await f.service.send(rows,true);assert.equal(f.native.length,3);
 }));
 export default cases;

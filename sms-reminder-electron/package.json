@@ -1,6 +1,6 @@
 {
   "name": "luk-dental-sms-electron",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "description": "LUK Dental SMS Reminder Tool for R5 and FD2",
   "main": "main.cjs",
@@ -65,14 +65,6 @@
         {
           "from": "windows/r5-check.bat",
           "to": "r5-check.bat"
-        },
-        {
-          "from": "windows/recall-scheduler-on.bat",
-          "to": "recall-scheduler-on.bat"
-        },
-        {
-          "from": "windows/recall-scheduler-off.bat",
-          "to": "recall-scheduler-off.bat"
         }
       ]
     },

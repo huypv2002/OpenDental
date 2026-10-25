@@ -4,13 +4,13 @@ Independent Electron port of `../sms-reminder-tool`. **R5 (Windows) is the first
 
 ## Run on R5
 
-1. Extract the **entire** `LUK-Dental-SMS-Electron-v1.0.5-win-x64.zip` folder to a permanent location, for example `C:\LUK\SMS-Electron`. Keep `resources`, DLLs and other files beside the EXE.
+1. Extract the **entire** `LUK-Dental-SMS-Electron-v1.0.6-win-x64.zip` folder to a permanent location, for example `C:\LUK\SMS-Electron`. Keep `resources`, DLLs and other files beside the EXE.
 2. Open `LUK Dental SMS Electron.exe`.
 3. Open **Settings → Import Python config** and select R5's existing `sms_config.json`. This explicitly copies known workstation settings and the token into Electron's own settings directory. It does not overwrite the Python file. Templates and review settings come from the same Bridge database.
 4. Verify the Bridge URL points to **SERVER**, not R5's loopback address. Click **Test bridge connection**.
 5. Choose **R5 — automated reminders**, clinic time zone `America/Chicago`, and the existing daily send time (normally `11:00`). Save settings.
 6. Keep Phone Link paired, logged in, and the desktop unlocked. Select a test patient and use **Test selected (no send)**. Verify the recipient and full template in Phone Link before any real sending.
-7. Use **Send selected** or **Start Appointment** or **Start Recall** only after the no-send check passes. Appointment send attempts remain `needs-review`, matching the Python reminder behavior. Inspect Phone Link, then **Mark sent**.
+7. Use **Send selected** or **Start Monitoring** only after the no-send check passes. Appointment send attempts remain `needs-review`, matching the Python reminder behavior. Inspect Phone Link, then **Mark sent**.
 
 The package needs no Python or Node installation. Phone Link/Open Dental integrations use Windows PowerShell 5.1, built-in .NET UI Automation and the Windows clipboard. It is an unsigned local build; no signing certificate is configured.
 
@@ -51,7 +51,7 @@ Tables virtualize rows and preserve per-patient selection/template choices while
 - Native automation requires verifying the recipient input and the complete compose message. If Phone Link's UIA tree does not expose those fields, it stops rather than declaring an unverified paste successful. Use Settings → Phone Link UI snapshot when adapting a new Phone Link build.
 - FD2 blocks automated reminder sending/Monitoring. Manual categories remain available.
 
-Settings and ledger live in `%APPDATA%\LUK Dental SMS Electron\workstation`; the app shows the exact path. The API token is workstation-local; protect the Windows user account and configuration folder. Do not share this folder. The application archive contains no patient data or credentials. The generic v1.0.5 ZIP contains no workstation credentials; retain or import your existing settings.
+Settings and ledger live in `%APPDATA%\LUK Dental SMS Electron\workstation`; the app shows the exact path. The API token is workstation-local; protect the Windows user account and configuration folder. Do not share this folder. The application archive contains no patient data or credentials. The generic v1.0.6 ZIP contains no workstation credentials; retain or import your existing settings.
 
 ## Development and validation
 
@@ -84,17 +84,16 @@ Electron renderer isolation follows the [official IPC/context-isolation guidance
 
 Detailed source comparison and pending R5 acceptance: [DOI-CHIEU-PYTHON.md](DOI-CHIEU-PYTHON.md).
 
-## Independent daily schedules — v1.0.5
+## Unified daily Monitoring — v1.0.6
 
-Appointment and six-month Recall are separate. Starting Appointment never enables Recall. Each has its own Start/Stop buttons, send time, retry state and daily completion marker. Stopping one leaves the other enabled. When both are due, Phone Link operations run sequentially.
+Use only `scheduler-on.bat` / `scheduler-off.bat` for daily automation. One Start Monitoring and one configured send time run the existing Appointment reminders followed by the exact-date six-month Recall batch for D1110, D4341 or D4342. Stop Monitoring stops both after the current native SMS operation. Each batch keeps its own progress and retry state so an error does not replay the completed batch.
 
-- `scheduler-on.bat` / `scheduler-off.bat`: existing Appointment schedule only. These also manage the existing R5 auto-login/restart/lock tasks.
-- `recall-scheduler-on.bat` / `recall-scheduler-off.bat`: separate Windows task `LUK Dental SMS Electron - Daily Recall`. These do not change Appointment tasks, auto-login, restart or locking. Run as Administrator under the intended R5 Windows account. The off file also stops Recall monitoring in the running Electron instance.
-- Both task launch times default to 10:55 Windows time. Change `RECALL_START_TOOL_TIME` in the Recall on BAT if needed. Set Recall send time separately in Electron Settings (default 11:00 clinic time). Open the app before that send time. Ensure Windows and the configured clinic time zone agree when choosing task times.
-- On BAT files register future daily launches; use Start Appointment / Start Recall in the UI to enable a stream immediately. Each stream sends only within its own 30-minute daily window.
+Recall uses the existing DB templates named `6M RECALL - EN`, `6M RECALL - ES`, `6M RECALL - VI` in category `appointment` (or named equivalents in `recall` when absent from appointment). English/blank language maps to EN, Spanish to ES, Vietnamese to VI. Missing/ambiguous 6M templates stop Recall with an explicit error; ordinary appointment/generic Recall templates are never substituted. Automatic Appointment template selection excludes the 6M keys. Templates remain in the DB; no copy/recreation is required.
 
-Recall selects active patients with any completed D1110, D4341 or D4342 on the exact date six calendar months earlier (October 23 selects April 23). Existing appointments and newer treatment do not exclude them. Multiple qualifying codes yield one SMS per patient/service date. Recall language templates follow OD Language; missing Spanish/Vietnamese templates block the Recall batch instead of substituting English. Wireless phone only. Bridge dispatch reservations and the local ledger prevent retrying uncertain attempts.
+The target service date is exactly six calendar months earlier: October 23 selects April 23. Each patient/service date gets at most one Recall attempt even with multiple qualifying codes. Existing appointments and newer services do not exclude the patient. Bridge reservation, local ledger and pending log sync preserve duplicate protection.
 
-Upgrade: close the old app, extract the entire v1.0.5 package and rerun the Appointment BAT from the new folder to replace the old EXE path. Enable Recall using its separate BAT only when wanted. Existing workstation settings/logs are preserved. Bridge must support `calendar-6-month-v2` (82bc316 or later).
+Upgrade: close the old app, extract the full v1.0.6 ZIP into a permanent folder, run the new scheduler-off.bat then scheduler-on.bat as Administrator under the R5 account. Both remove the obsolete separate Daily Recall task from v1.0.5. Old AppData settings and dispatch ledgers are preserved; the deprecated Recall-only send time is ignored. The package contains no Recall-only scheduler BAT files. Bridge needs calendar-6-month-v2 (82bc316 or later).
 
-Recall requires an already signed-in, unlocked R5 with Phone Link ready. If Appointment off disables the existing auto-login/restart infrastructure, arrange Windows availability separately for Recall. Recall never wakes, unlocks or signs into Windows by itself. FD2 remains manual draft only. Package/unit/demo UI validation does not prove actual Windows task execution or SMS delivery.
+Default Windows tasks open the app at 10:55 for the configured 11:00 clinic send time. Windows task times follow the workstation zone; sending follows America/Chicago by default. The app sends within 30 minutes of the send time, with no late catch-up. R5 must be signed in/unlocked with Phone Link ready. The existing auto-login/restart/lock tasks stay shared. FD2 stays manual.
+
+Source/unit/demo UI and package validation do not prove native Windows task execution or actual SMS delivery on R5.

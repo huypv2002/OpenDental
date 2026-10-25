@@ -14,6 +14,11 @@ class DemoBridge {
       US_TODAY:
         "Hello {first_name}, your appointment today is at {time_lower}. Thank you!",
     };
+    Object.assign(appointment, {
+      "6M RECALL - EN":"Hello {first_name}, it is time for your six-month dental cleaning. Call {clinic_phone}.",
+      "6M RECALL - ES":"Hola {first_name}, es hora de su limpieza dental. Llame al {clinic_phone}.",
+      "6M RECALL - VI":"Chào {first_name}, đã đến kỳ tái khám sáu tháng. Vui lòng gọi {clinic_phone}.",
+    });
     this.templates = {
       appointment,
       recall: {
@@ -36,7 +41,7 @@ class DemoBridge {
     this.countries = Object.fromEntries(
       Object.entries(this.templates).map(([c, list]) => [
         c,
-        Object.fromEntries(Object.keys(list).map((k) => [k, k.slice(0, 2)])),
+        Object.fromEntries(Object.keys(list).map((k) => [k, this.model.sixMonthRecallLanguage(k) || k.slice(0, 2)])),
       ]),
     );
   }

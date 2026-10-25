@@ -1,9 +1,9 @@
-# Independent Electron daily SMS schedules — v1.0.5
+# Unified Electron daily SMS — v1.0.6
 
-The primary client is sms-reminder-electron. Appointment and Recall now have separate enable flags, controls, send times, completion markers and error backoff. The shared Phone Link worker only serializes native operations. A failure or stop in one stream leaves the other enabled.
+The user now wants one schedule and only scheduler-on/off.bat. The primary Electron client starts/stops Appointment and 6-month Recall together at the Appointment send time. Per-batch completion/backoff and existing Bridge reservations/ledger are retained internally to prevent replay on failure.
 
-Appointment keeps the existing 1-/8-day feed and scheduler-on/off.bat Windows infrastructure. Recall has a separate Daily Recall task and recall-scheduler-on/off.bat. Recall BAT files never register or remove Appointment, restart, auto-login or lock tasks. Existing Appointment off removes its system infrastructure; Recall needs a signed-in/unlocked R5 independently.
+The existing DB templates are named 6M RECALL - EN/ES/VI under appointment. Daily Recall chooses these by patient language, records Recall logs and uses recall-claim even though template storage category is appointment. Missing or duplicate language templates block Recall instead of substituting a generic template. Automatic appointment selection excludes the 6M keys.
 
-Recall uses the calendar-6-month-v2 Bridge feed from 82bc316: completed D1110/D4341/D4342 on the target date, one message per patient/service date, patient-language Recall templates. Newer services and existing appointments are not extra exclusion rules. FD2 remains manual.
+Both on/off installers remove the obsolete v1.0.5 Daily Recall Windows task. Recall-only BAT/scripts are removed from the package. The common Windows restart/login/launch/lock schedule is unchanged. AppData progress is preserved; old Recall-only send time is ignored. Old CLI entrypoints now control the unified monitoring flow for compatibility.
 
-Existing AppData configuration, appointment completion state, Recall completion state and dispatch deduplication are preserved during upgrade. Recall does not auto-enable through Appointment entrypoints. Windows native task registration and real SMS delivery still require R5 verification.
+Exact-date target and codes remain calendar-6-month-v2: any completed D1110/D4341/D4342 on the target date, one attempt per patient/service date, no extra exclusions for newer service or existing appointments. FD2 is manual only. Native R5 task execution and actual SMS delivery remain unverified locally.

@@ -41,7 +41,6 @@ export const DEFAULTS = {
   clinic_phone: "281-760-1357",
   reminder_days_ahead: 1,
   scheduled_send_time: "11:00",
-  recall_send_time: "11:00",
   appointment_statuses: [1],
   fallback_duration_minutes: 30,
   recall_months: 6,
@@ -158,8 +157,27 @@ export function expandAppointments(rows, logs, today) {
       };
     });
 }
+export function sixMonthRecallLanguage(key) {
+  const suffix = /^6MRECALL(EN|US|ES|VI)$/.exec(String(key).toUpperCase().replace(/[\s_-]+/g, ""))?.[1];
+  return suffix === "EN" ? "US" : suffix || "";
+}
+export function pickDailyRecallTemplate(library, row) {
+  const language = pickTemplate({recall:{US:"",ES:"",VI:""}},row,"recall");
+  // These are existing DB template keys, including the appointment category
+  // used by the clinic. Never substitute an ordinary appointment/Recall message.
+  for (const category of ["appointment", "recall"]) {
+    const keys = Object.keys(library.templates?.[category] || {}).filter(k => sixMonthRecallLanguage(k) === language);
+    if (keys.length > 1) throw new Error(`Multiple ${language} 6M RECALL templates in ${category}; select one unique DB template.`);
+    if (keys.length === 1) {
+      const key=keys[0];
+      if (!library.templates[category][key]?.trim()) throw new Error(`Empty ${language} 6M RECALL template.`);
+      return {category,key,language};
+    }
+  }
+  throw new Error(`Missing ${language} 6M RECALL template in DB; daily Recall has not sent.`);
+}
 export function pickTemplate(templates, row, category = "appointment") {
-  const keys = Object.keys(templates[category] || {});
+  const keys = Object.keys(templates[category] || {}).filter(k => category !== "appointment" || !sixMonthRecallLanguage(k));
   const language = String(row.Language || "").toLowerCase();
   const prefix = /vietnam|tiếng việt|tieng viet|^(vi|vn|vie)$/.test(language)
     ? "VI"

@@ -86,7 +86,7 @@ class SmsService {
       _TemplateKey: key,
       _TemplateText: text,
       _TemplateCountry:
-        this.library.countries?.[category]?.[key] || key.slice(0, 2),
+        this.library.countries?.[category]?.[key] || this.model.sixMonthRecallLanguage(key) || key.slice(0, 2),
     };
   }
   async loadDailyRecall(date) {
@@ -112,11 +112,9 @@ class SmsService {
       if (seen.has(key)) return false;
       seen.add(key); return true;
     }).map(row => {
-      const preferred = this.model.pickTemplate({recall: {US: "", ES: "", VI: ""}}, row, "recall");
-      const key = this.model.pickTemplate(this.library.templates, row, "recall");
-      if (!(key.toUpperCase() === preferred || key.toUpperCase().startsWith(preferred + "_") || key.toUpperCase().startsWith(preferred + "-")))
-        throw new Error(`Missing ${preferred} Recall template; daily Recall has not sent.`);
-      const prepared = this.rowWithTemplate({...row, _TemplateKey: key, _Kind: "recall", _DailyRecall: true, _DailyRecallDate: date}, "recall");
+      const {category,key,language} = this.model.pickDailyRecallTemplate(this.library, row);
+      const prepared = this.rowWithTemplate({...row, _TemplateKey:key, _TemplateCategory:category, _Kind:"recall", _DailyRecall:true, _DailyRecallDate:date}, category);
+      prepared._TemplateCountry = language;
       if (this.model.hasAppointmentFields(prepared._TemplateText))
         throw new Error("Recall template requires appointment fields; choose a Recall message without appointment date/time.");
       return prepared;
@@ -414,7 +412,7 @@ class SmsService {
       for (const original of rows) {
         if (this.stopping || (scheduled && !(original._DailyRecall ? this.recallMonitoring : this.monitoring))) break;
         const dailyRecall = scheduled && original._DailyRecall === true;
-        const row = this.rowWithTemplate(original, dailyRecall ? "recall" : "appointment");
+        const row = this.rowWithTemplate(original, dailyRecall ? (original._TemplateCategory || "recall") : "appointment");
         const key = dailyRecall
           ? `daily-recall|${row.PatNum}|${this.model.digits(this.model.phoneFor(row))}|${row.LastProcDate}`
           : this.model.reminderKey(row, this.today);
@@ -504,34 +502,30 @@ class SmsService {
     );
     return this.status();
   }
-  stopMonitoring(kind = "appointment") {
-    if (!["appointment", "recall"].includes(kind)) throw new Error("Unknown monitoring kind.");
-    this[kind === "recall" ? "recallMonitoring" : "monitoring"] = false;
-    this.activity(`${kind} monitoring stopped. The current SMS may finish.`);
-    this.notify();
-    return this.status();
+  stopMonitoring() {
+    return this.stop();
   }
-  async startMonitoring(kind = "appointment") {
-    if (!["appointment", "recall"].includes(kind)) throw new Error("Unknown monitoring kind.");
+  async startMonitoring() {
     if (this.model.isFD2(this.config, this.machine))
       throw new Error("Monitoring runs on R5. FD2 remains in manual draft mode.");
     if (!this.config.api_token && !this.demo)
       throw new Error("Set the Bridge URL and API token first.");
     if (this.store.state.pendingDraft) throw new Error("Finish the open draft first.");
-    this[kind === "recall" ? "recallMonitoring" : "monitoring"] = true;
+    this.monitoring = true;
+    this.recallMonitoring = true;
     this.stopping = false;
     this.notify();
-    this.activity(`${kind} monitoring started independently.`);
+    this.activity("Monitoring started: daily Appointment + 6-month Recall (D1110 / D4341 / D4342), using patient-language DB templates.");
     return this.status();
   }
   async tick(now = new Date()) {
     if (this.busy || this.monitorBusy || this.store.state.pendingDraft) return;
     const clock = this.model.clinicClock(now, this.config.time_zone);
-    // Separate schedules and completion/retry state; Phone Link operations stay serialized.
+    // One schedule and Start/Stop; retain per-batch progress to avoid replay after a failure.
     for (const kind of ["appointment", "recall"]) {
       const enabled = kind === "recall" ? "recallMonitoring" : "monitoring";
       const stateKey = kind === "recall" ? "lastRecallSchedule" : "lastSchedule";
-      const time = kind === "recall" ? (this.config.recall_send_time || "11:00") : this.config.scheduled_send_time;
+      const time = this.config.scheduled_send_time;
       const [hour, minute] = time.split(":").map(Number);
       const target = hour * 60 + minute, key = `${clock.date} ${time}`;
       if (!this[enabled] || Date.now() < (this.scheduleRetry[kind] || 0) ||

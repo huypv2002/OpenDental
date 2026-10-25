@@ -25,7 +25,7 @@ set /p "AUTO_USER=Windows username for auto-login [Enter for %USERNAME%]: "
 if "%AUTO_USER%"=="" set "AUTO_USER=%USERNAME%"
 set /p "AUTO_DOMAIN=Computer/domain name [Enter for %COMPUTERNAME%]: "
 if "%AUTO_DOMAIN%"=="" set "AUTO_DOMAIN=%COMPUTERNAME%"
-set /p "REMINDER_CHOICE=Auto start Appointment Reminder monitoring? [Y/n]: "
+set /p "REMINDER_CHOICE=Auto start Appointment + 6M Recall monitoring? [Y/n]: "
 set "MONITOR_OPTION="
 if /i "%REMINDER_CHOICE%"=="n" set "MONITOR_OPTION=-NoMonitoring"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0setup-scheduler-tasks.ps1" -AppDir "%~dp0." -EnableLogin "%ENABLE_LOGIN_TIME%" -Restart "%RESTART_TIME%" -StartTool "%START_TOOL_TIME%" -Lock "%LOCK_TIME%" -AutoUser "%AUTO_USER%" -AutoDomain "%AUTO_DOMAIN%" %MONITOR_OPTION%

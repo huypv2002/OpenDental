@@ -9,14 +9,14 @@ try {
   $admin=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
   if (-not $admin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {throw 'Run scheduler setup as Administrator.'}
   if ($config.mode -eq 'off') {
-    @('Enable Auto Login','Daily Restart','Start Monitoring','Lock Screen','Screen Off') | ForEach-Object {
+    @('Enable Auto Login','Daily Restart','Start Monitoring','Lock Screen','Screen Off','Daily Recall') | ForEach-Object {
       Unregister-ScheduledTask -TaskName "$prefix - $_" -Confirm:$false -ErrorAction SilentlyContinue
     }
     Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' AutoAdminLogon '0'
     if (Test-Path -LiteralPath $config.exe) {
-      Start-Process -FilePath $config.exe -ArgumentList '--stop-reminder-monitoring' -WorkingDirectory (Split-Path -Parent $config.exe)
+      Start-Process -FilePath $config.exe -ArgumentList @('--stop-reminder-monitoring','--stop-recall-monitoring') -WorkingDirectory (Split-Path -Parent $config.exe)
     }
-    Write-Host 'Appointment scheduler disabled. Recall task was not changed.'
+    Write-Host 'Daily Appointment + 6M Recall scheduler disabled.'
     exit 0
   }
   if ($config.mode -ne 'on') {throw 'Invalid scheduler mode.'}
@@ -53,6 +53,7 @@ try {
   . (Join-Path $PSScriptRoot 'scheduler-plan.ps1')
   $plan=@(Get-LukSmsTaskPlan $config $runtime $runtimePath (Split-Path -Parent $config.exe))
   $taskRegistrationStarted=$true
+  Unregister-ScheduledTask -TaskName "$prefix - Daily Recall" -Confirm:$false -ErrorAction SilentlyContinue
   Unregister-ScheduledTask -TaskName "$prefix - Screen Off" -Confirm:$false -ErrorAction SilentlyContinue
   foreach ($task in $plan) {
     $principal=if($task.principal -eq 'SYSTEM'){$systemPrincipal}else{$interactivePrincipal}
