@@ -1,11 +1,25 @@
 import {parseDelta} from './parser.js';
 import {processLibertyPdf} from '../liberty/processor.js';
 
+export function deltaPatientFileNumber(fileName){
+ // A downloaded attachment can add a millisecond timestamp before PatNum.
+ // Never treat an arbitrary embedded number or the timestamp as a patient hint.
+ const number=/^(?:\d{13}_)?(\d{1,12})\.(?:pdf|jpe?g|png)$/i.exec(fileName||'')?.[1];
+ return number&&Number.isSafeInteger(Number(number))&&Number(number)>0?number:null;
+}
+
 export async function resolveDeltaPatient(pool,{claim,fileName,claimsCount}){
- const fromFile=claimsCount===1?/^(\d+)\.(?:pdf|jpe?g|png)$/i.exec(fileName||'')?.[1]:null;
- const args=[claim.patient.firstName,claim.patient.lastName,claim.patient.birthdate];if(fromFile)args.push(fromFile);args.push(claim.patient.memberId);
+ const fromFile=claimsCount===1?deltaPatientFileNumber(fileName):null;
+ const firstName=claim.patient.firstName.trim().replace(/\s+/g,' ');
+ const names=[firstName];
+ // OD can retain only the given name (TOAN) while the EOB prints QUOC TOAN.
+ // Permit that exact final token only when a single-claim filename also binds
+ // the same PatNum; surname, DOB, Delta carrier and Subscriber ID remain mandatory.
+ if(fromFile&&firstName.includes(' '))names.push(firstName.split(' ').at(-1));
+ const nameCondition=names.map(()=>`LOWER(TRIM(p.FName))=LOWER(?)`).join(' OR ');
+ const args=[...names,claim.patient.lastName,claim.patient.birthdate];if(fromFile)args.push(fromFile);args.push(claim.patient.memberId);
  const [rows]=await pool.execute(`SELECT p.PatNum,p.FName,p.LName,p.Birthdate,p.ClinicNum,p.PriProv,p.ImageFolder,p.ChartNumber
- FROM patient p WHERE LOWER(TRIM(p.FName))=LOWER(?) AND LOWER(TRIM(p.LName))=LOWER(?) AND DATE(p.Birthdate)=?
+ FROM patient p WHERE (${nameCondition}) AND LOWER(TRIM(p.LName))=LOWER(?) AND DATE(p.Birthdate)=?
  ${fromFile?'AND p.PatNum=?':''}
  AND EXISTS (SELECT 1 FROM patplan pp JOIN inssub s ON s.InsSubNum=pp.InsSubNum
  JOIN insplan ip ON ip.PlanNum=s.PlanNum JOIN carrier c ON c.CarrierNum=ip.CarrierNum
