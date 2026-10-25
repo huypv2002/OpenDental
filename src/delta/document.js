@@ -1,5 +1,18 @@
 import {readInsuranceDocument,tsvLines} from '../liberty/document.js';
 
+// A complete high-confidence whole-page word is a second reading, independent
+// of the cell crops. Never reconstruct digits or outvote a conflicting valid crop.
+export function agreeDeltaMoneyCell(reads,words,width,left,right){
+ const valid=reads.filter(s=>/^\$?\d[\d,]*\.\d{2}$/.test(s));
+ if(!valid.length||new Set(valid.map(s=>s.replace(/^\$/,''))).size!==1)return null;
+ const overlapping=words.filter(w=>w.x+w.width>left*width&&w.x<right*width);
+ if(overlapping.length!==1)return null;
+ const word=overlapping[0];
+ if(word.x<left*width||word.x+word.width>right*width||!Number.isFinite(word.confidence)||word.confidence<90)return null;
+ if(!/^\$?\d[\d,]*\.\d{2}$/.test(word.text)||word.text.replace(/^\$/,'')!==valid[0].replace(/^\$/,''))return null;
+ return valid[0];
+}
+
 // This reader supports the Delta Provider Tools table, not arbitrary EOB layouts.
 // Cell boundaries are tied to verified headings; changed layouts require review.
 export async function recognizeDeltaPage(worker,image){
@@ -19,12 +32,19 @@ export async function recognizeDeltaPage(worker,image){
  async function cell(l,left,right,whitelist){
   const h=Math.max(...l.words.map(w=>w.height)),top=Math.max(0,l.cy-h/2-5*scale),bottom=Math.min(c.height,l.cy+h/2+5*scale);
   const reads=[];let lastCrop;
-  for(const [mode,up] of [['7',2],['7',3],['13',2]]){
+  // Money glyphs need 3x crops: 2x can merge thin 1s; 4x can lose decimal dots.
+  // Keep date/code recognition unchanged and cross-check complete monetary reads.
+  const attempts=whitelist.startsWith('$')?[['7',3],['6',3],['13',3]]:[['7',2],['7',3],['13',2]];
+  for(const [mode,up] of attempts){
    const crop=createCanvas(Math.ceil((right-left)*c.width*up),Math.ceil((bottom-top)*up));const ctx=crop.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,crop.width,crop.height);ctx.drawImage(c,left*c.width,top,(right-left)*c.width,bottom-top,0,0,crop.width,crop.height);
    lastCrop=crop;await worker.setParameters({tessedit_pageseg_mode:mode,tessedit_char_whitelist:whitelist,preserve_interword_spaces:'0'});reads.push((await worker.recognize(crop.toBuffer('image/png'))).data.text.replace(/\s/g,''));
   }
   const valid=reads.filter(s=>whitelist.includes('/')?/^\d{2}\/\d{2}\/\d{4}$/.test(s):whitelist.startsWith('D')?/^D\d{4}$/.test(s):/^\$?\d[\d,]*\.\d{2}$/.test(s));
   if(valid.length>=2&&new Set(valid.map(s=>s.replace(/^\$/,''))).size===1)return valid[0];
+  if(whitelist.startsWith('$')){
+   const agreed=agreeDeltaMoneyCell(reads,l.words,c.width,left,right);
+   if(agreed!==null)return agreed;
+  }
   if(whitelist.startsWith('D')){
    // Thin printed 1s are merged as M/I by whole-word OCR. Segment the five
    // separated glyphs, keeping the financial cells on the strict money path.
@@ -46,7 +66,7 @@ export async function recognizeDeltaPage(worker,image){
     if(/^D\d{4}$/.test(code)&&valid.every(s=>s===code))return code;
    }
   }
-  throw new Error('Các lần đọc ô bảng Delta không khớp; cần đối chiếu tài liệu gốc.');
+  throw Object.assign(new Error('Các lần đọc ô bảng Delta không khớp; cần đối chiếu tài liệu gốc.'),{ocrCell:{left,right,reads,row:l.text}});
  }
  const result=[];
  for(const l of lines){
