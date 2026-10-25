@@ -281,7 +281,7 @@ async function dispatch(action, p, resources) {
     case "load-scheduler-times": return readSchedulerTimes();
     case "import-config": {
       const result = await dialog.showOpenDialog(window, {
-        title: "Import existing Python sms_config.json",
+        title: "Import existing sms_config.json",
         properties: ["openFile"],
         filters: [{ name: "JSON config", extensions: ["json"] }],
       });

@@ -2,6 +2,8 @@
 
 Ngày rà soát: 11/10/2026. Bản 1.0.0 trước đó chưa được đối chiếu đủ; không dùng kết quả build của bản đó làm bằng chứng nghiệm thu.
 
+> Tài liệu lịch sử. Hai bản Python đã được xóa khỏi repo ngày 25/10/2026; các đường dẫn dưới đây chỉ ghi lại nguồn đã đối chiếu trước đây. Có thể tra cứu mã cũ trong lịch sử Git. Hiện chỉ duy trì Electron.
+
 ## Nguồn đối chiếu
 
 - `../sms-reminder-tool/sms_reminder_app.py`: giao diện, nghiệp vụ, Phone Link và Open Dental.

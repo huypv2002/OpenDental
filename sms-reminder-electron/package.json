@@ -14,7 +14,6 @@
     "dist:win": "electron-builder --win --x64",
     "pack:win": "electron-builder --win dir --x64 --config.win.signAndEditExecutable=false",
     "dist:mac": "electron-builder --mac --arm64",
-    "test:parity": "node scripts/python-parity.mjs",
     "test:scheduler": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-scheduler.ps1"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 # LUK Dental SMS Electron
 
-Independent Electron port of `../sms-reminder-tool`. **R5 (Windows) is the first rollout target.** FD2 is also Windows; its manual workflow is implemented in source but requires its own workstation acceptance pass later. This is the primary SMS client. Daily Recall uses the Bridge daily Recall calendar-6-month-v2 contract from 82bc316; update SERVER before using this version.
+Electron is the only maintained SMS client in this repository. **R5 (Windows) is the first rollout target.** FD2 is also Windows; its manual workflow is implemented in source but requires its own workstation acceptance pass later. This is the primary SMS client. Daily Recall uses the Bridge daily Recall calendar-6-month-v2 contract from 82bc316; update SERVER before using this version.
 
 ## R5 source checkout — v1.0.7
 
@@ -22,11 +22,11 @@ The same BAT supports packaged folders too. A local PowerShell harness checks la
 
 1. Extract the **entire** `LUK-Dental-SMS-Electron-v1.0.6-win-x64.zip` folder to a permanent location, for example `C:\LUK\SMS-Electron`. Keep `resources`, DLLs and other files beside the EXE.
 2. Open `LUK Dental SMS Electron.exe`.
-3. Open **Settings → Import Python config** and select R5's existing `sms_config.json`. This explicitly copies known workstation settings and the token into Electron's own settings directory. It does not overwrite the Python file. Templates and review settings come from the same Bridge database.
+3. Open **Settings → Import config** and select R5's existing `sms_config.json`. This explicitly copies known workstation settings and the token into Electron's own settings directory. It does not overwrite the imported file. Templates and review settings come from the same Bridge database.
 4. Verify the Bridge URL points to **SERVER**, not R5's loopback address. Click **Test bridge connection**.
 5. Choose **R5 — automated reminders**, clinic time zone `America/Chicago`, and the existing daily send time (normally `11:00`). Save settings.
 6. Keep Phone Link paired, logged in, and the desktop unlocked. Select a test patient and use **Test selected (no send)**. Verify the recipient and full template in Phone Link before any real sending.
-7. Use **Send selected** or **Start Monitoring** only after the no-send check passes. Appointment send attempts remain `needs-review`, matching the Python reminder behavior. Inspect Phone Link, then **Mark sent**.
+7. Use **Send selected** or **Start Monitoring** only after the no-send check passes. Appointment send attempts remain `needs-review`. Inspect Phone Link, then **Mark sent**.
 
 The package needs no Python or Node installation. Phone Link/Open Dental integrations use Windows PowerShell 5.1, built-in .NET UI Automation and the Windows clipboard. It is an unsigned local build; no signing certificate is configured.
 
@@ -42,7 +42,7 @@ Scheduler task diagnostics persist to `scheduler-run.log` beside the EXE. App ac
 
 ## Functionality ported
 
-| Python tab/function | Electron implementation                                                                                                                                                         |
+| Feature | Electron implementation                                                                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Dashboard           | Appointment date, counts, search, per-row templates, multiselection, preview, no-send test, real test SMS, send selected/all, mark sent, reset, clear dry-run, Open Dental View |
 | Patient             | Debounced paged search, exact `#PatNum`, templates, preview, no-send test, sequential manual drafts, per-patient combined SMS history                                           |
@@ -78,20 +78,19 @@ npm run demo       # synthetic data, separate config folder, no real Bridge/SMS
 npm run check
 npm test
 npm run test:ui
-npm run test:parity # execute original Python pure helpers; development only
 npm run pack:win   # Windows x64 folder without code-sign/edit dependency
 npm run dist:win   # Windows NSIS + portable EXE; preferably build on Windows
 ```
 
 Demo mode uses synthetic `example.com` patients and a separate data store. It cannot change the real Bridge or send through Phone Link.
 
-Local validation covers JavaScript syntax, domain/service tests and the running Electron UI in demo mode. A Windows package build is **not** proof of live Phone Link delivery. Before replacing Python on R5, verify its actual Phone Link layout, no-send test, one approved test send, Bridge log sync, daily scheduler startup and locking. FD2 remains a later acceptance target.
+Local validation covers JavaScript syntax, domain/service tests and the running Electron UI in demo mode. A Windows package build is **not** proof of live Phone Link delivery. Before enabling real sending on R5, verify its actual Phone Link layout, no-send test, one approved test send, Bridge log sync, daily scheduler startup and locking. FD2 remains a later acceptance target.
 
 ## Files
 
 - `main.cjs` / `preload.cjs`: Electron lifecycle, restricted IPC, settings import, scheduler entrypoint.
 - `renderer/`: ten-tab interface and virtual tables.
-- `shared/model.mjs`: Python-equivalent dates, templates, phone targets and log payloads.
+- `shared/model.mjs`: Dates, templates, phone targets and log payloads.
 - `lib/service.cjs`: sequential SMS, manual confirmation, local ledger/outbox, monitoring.
 - `windows/automation.ps1`: Phone Link/Open Dental native UIA worker.
 - `windows/scheduler.ps1`: R5 Windows task setup/removal.
