@@ -4,6 +4,8 @@ Electron is the only maintained SMS client in this repository. **R5 (Windows) is
 
 ## R5 source checkout — v1.0.7
 
+For a one-click update and launch, close the running SMS Electron app and double-click `sms-reminder-electron/update-and-start.bat`. It runs `git pull --ff-only`, `npm ci`, then `npm start` from its own folder. Git and Node.js must be installed. A failed step stops the sequence and keeps the error visible. This launcher does not enable or disable Windows scheduler tasks.
+
 The primary deployment can run directly from Git source. From the repository root on R5:
 
 ```bat
