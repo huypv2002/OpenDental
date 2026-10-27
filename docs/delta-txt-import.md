@@ -23,3 +23,5 @@ node scripts/inspect-delta-patient.mjs "D:\SHARE\INSURANCE CLAIM\DELTA DENTAL\ER
 ```
 
 Use the current path if the TXT is elsewhere. This command only reads the TXT and performs SELECT queries. Its output contains match flags, patient number and claim number; it does not print Subscriber IDs or connection settings. A false flag identifies the mismatch to verify in Open Dental and the source document. This diagnostic does not modify patient records or retry payment.
+
+The authenticated administrative API also supports `GET /api/admin/patients/:patNum/insurance` with the existing Bridge API token. It performs SELECT-only queries and returns the selected patient's name/DOB and linked plans (carrier, group, subscriber and Subscriber ID). It returns no-store responses, rejects invalid IDs, returns 404 for a missing patient, and caps the lookup at 50 insurance records. This route requires updating and restarting SERVER; the SMS API token does not grant access to the separately authenticated MetLife desktop routes. Do not put tokens or full clinical responses in diagnostics logs.

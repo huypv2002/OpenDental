@@ -6,6 +6,7 @@ import multer from 'multer';
 import { config } from './config.js';
 import { pool, closePool } from './db.js';
 import { requireApiToken } from './auth.js';
+import { readPatientInsurance } from './patientInsurance.js';
 import { getChatbotModels, proxyChatbotCompletion } from './chatbotProxy.js';
 import {
   listAuditPatients,
@@ -935,6 +936,15 @@ app.post('/api/admin/appointments/delete', requireApiToken, async (req, res, nex
 app.get('/api/admin/patients', requireApiToken, async (req, res, next) => {
   try {
     res.json({ ok: true, data: await listAdminPatients(req.query) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/patients/:patNum/insurance', requireApiToken, async (req, res, next) => {
+  res.set('Cache-Control','no-store');
+  try {
+    res.json({ok:true,data:await readPatientInsurance(pool,req.params.patNum)});
   } catch (error) {
     next(error);
   }
