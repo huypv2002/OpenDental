@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {deltaPatientFileNumber,resolveDeltaPatient} from './processor.js';
+import {deltaPatientFileNumber,resolveDeltaPatient,diagnoseDeltaPatient} from './processor.js';
 
 function fixture(){
  const db=new DatabaseSync(':memory:');
@@ -51,5 +51,28 @@ test('Delta requires full given-name matching without a reliable single-patient 
   await assert.rejects(f.resolve('423.pdf',2),/duy nhất/);
   f.add(425,{first:'QUOC TOAN'});f.add(426,{first:'QUOC TOAN'});
   await assert.rejects(f.resolve('unlabelled.pdf'),/duy nhất/);
+ }finally{f.db.close();}
+});
+
+test('Delta identity diagnostics identify each mismatch without exposing subscriber values or writing',async()=>{
+ const variants=[[{first:'WRONG'},'firstNameMatches','tên'],[{last:'OTHER'},'lastNameMatches','họ'],[{birth:'1960-04-04'},'birthdateMatches','ngày sinh'],[{member:'other-member'},'subscriberMatches','Subscriber ID'],[{plan:2},'deltaPlanExists','bảo hiểm Delta']];
+ for(const [change,key,label] of variants){
+  const f=fixture();try{
+   f.add(423,change);const before=f.db.prepare('SELECT total_changes() AS n').get().n;
+   const result=await diagnoseDeltaPatient(f.pool,{claim:f.claim,fileName:'423.txt',claimsCount:1});
+   assert.equal(result[key],false);assert.equal(result.patientExists,true);
+   await assert.rejects(f.resolve('423.txt'),e=>e.message.includes(label)&&!e.message.includes('test-member-423')&&!e.message.includes('other-member'));
+   assert.equal(f.db.prepare('SELECT total_changes() AS n').get().n,before);
+  }finally{f.db.close();}
+ }
+});
+
+test('Delta identity diagnostics distinguish absent patient and a fully matching identity',async()=>{
+ const f=fixture();try{
+  assert.deepEqual(await diagnoseDeltaPatient(f.pool,{claim:f.claim,fileName:'423.txt',claimsCount:1}),{patNum:423,patientExists:false});
+  await assert.rejects(f.resolve('423.txt'),/mã bệnh nhân/);
+  f.add(423);
+  const result=await diagnoseDeltaPatient(f.pool,{claim:f.claim,fileName:'423.txt',claimsCount:1});
+  assert.ok(Object.entries(result).every(([key,value])=>key==='patNum'||value===true));
  }finally{f.db.close();}
 });

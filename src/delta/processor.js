@@ -24,7 +24,38 @@ export async function resolveDeltaPatient(pool,{claim,fileName,claimsCount}){
  AND EXISTS (SELECT 1 FROM patplan pp JOIN inssub s ON s.InsSubNum=pp.InsSubNum
  JOIN insplan ip ON ip.PlanNum=s.PlanNum JOIN carrier c ON c.CarrierNum=ip.CarrierNum
  WHERE pp.PatNum=p.PatNum AND UPPER(c.CarrierName) LIKE '%DELTA%' AND s.SubscriberID=?) LIMIT 2`,args);
- if(rows.length!==1)throw new Error('Chưa đối chiếu duy nhất bệnh nhân, ngày sinh và Subscriber ID Delta Dental; chưa lưu thanh toán.');return rows[0];
+ if(rows.length!==1){
+  let detail='';
+  if(rows.length===0&&fromFile){
+   const checks=await diagnoseDeltaPatient(pool,{claim,fileName,claimsCount});
+   const missing=Object.entries(checks).filter(([key,value])=>key!=='patNum'&&value===false).map(([key])=>({patientExists:'mã bệnh nhân',firstNameMatches:'tên',lastNameMatches:'họ',birthdateMatches:'ngày sinh',deltaPlanExists:'bảo hiểm Delta',subscriberMatches:'Subscriber ID thuộc Delta'}[key]));
+   if(missing.length)detail=` Hồ sơ #${fromFile} không khớp: ${missing.join(', ')}.`;
+  }
+  throw Object.assign(new Error('Chưa đối chiếu duy nhất bệnh nhân, ngày sinh và Subscriber ID Delta Dental; chưa lưu thanh toán.'+detail),{code:'EOB_REVIEW_REQUIRED'});
+ }
+ return rows[0];
+}
+
+// Read-only diagnostics use the same SQL comparisons as the actual resolver.
+// Report flags only; never put subscriber IDs or connection settings in logs.
+export async function diagnoseDeltaPatient(pool,{claim,fileName,claimsCount}){
+ const patNum=claimsCount===1?deltaPatientFileNumber(fileName):null;
+ if(!patNum)throw new Error('Cần tên file là mã bệnh nhân và đúng một claim để kiểm tra.');
+ const first=claim.patient.firstName.trim().replace(/\s+/g,' '),names=[first];
+ if(first.includes(' '))names.push(first.split(' ').at(-1));
+ const [rows]=await pool.execute(`SELECT p.PatNum,
+ (${names.map(()=>`LOWER(TRIM(p.FName))=LOWER(?)`).join(' OR ')}) AS firstNameMatches,
+ (LOWER(TRIM(p.LName))=LOWER(?)) AS lastNameMatches,
+ (DATE(p.Birthdate)=?) AS birthdateMatches,
+ EXISTS (SELECT 1 FROM patplan pp JOIN inssub s ON s.InsSubNum=pp.InsSubNum
+ JOIN insplan ip ON ip.PlanNum=s.PlanNum JOIN carrier c ON c.CarrierNum=ip.CarrierNum
+ WHERE pp.PatNum=p.PatNum AND UPPER(c.CarrierName) LIKE '%DELTA%') AS deltaPlanExists,
+ EXISTS (SELECT 1 FROM patplan pp JOIN inssub s ON s.InsSubNum=pp.InsSubNum
+ JOIN insplan ip ON ip.PlanNum=s.PlanNum JOIN carrier c ON c.CarrierNum=ip.CarrierNum
+ WHERE pp.PatNum=p.PatNum AND UPPER(c.CarrierName) LIKE '%DELTA%' AND s.SubscriberID=?) AS subscriberMatches
+ FROM patient p WHERE p.PatNum=? LIMIT 1`,[...names,claim.patient.lastName,claim.patient.birthdate,claim.patient.memberId,patNum]);
+ if(!rows.length)return {patNum:Number(patNum),patientExists:false};
+ return {patNum:Number(patNum),patientExists:true,...Object.fromEntries(['firstNameMatches','lastNameMatches','birthdateMatches','deltaPlanExists','subscriberMatches'].map(k=>[k,Number(rows[0][k])===1]))};
 }
 
 export async function processDeltaPdf(pool,args,options={}){
