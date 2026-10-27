@@ -526,3 +526,16 @@ test("Unified daily Recall sends the DB 6M messages in English, Spanish and Viet
  await f.service.send(rows,true);assert.equal(f.native.length,3);
 }));
 export default cases;
+
+test("Exact #patient search reaches Bridge before pagination and excludes partial matches",()=>
+ using({request:async(_method,route,params)=>{
+  if(route!=="/api/admin/patients")throw Error("unexpected route");
+  assert.equal(params.q,"#70");assert.equal(params.offset,0);
+  return {patients:[row(1,{PatNum:70}),row(2,{PatNum:170}),row(3,{PatNum:700})]};
+ }},async f=>{
+  const data=await f.service.load("patient",{query:"  #70  ",offset:100});
+  assert.deepEqual(data.rows.map(r=>r.PatNum),[70]);assert.equal(data.hasMore,false);assert.equal(f.native.length,0);
+  assert.equal(model.matchesSearch({PatNum:70},"#70"),true);
+  assert.equal(model.matchesSearch({PatNum:170},"#70"),false);
+  assert.equal(model.matchesSearch({PatNum:70},"#0070"),true);
+ }));

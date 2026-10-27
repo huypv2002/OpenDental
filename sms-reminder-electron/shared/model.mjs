@@ -339,7 +339,7 @@ export function renderMessage(
 }
 export function matchesSearch(row, query) {
   if (/^#\d+$/.test(query.trim()))
-    return String(row.PatNum) === query.trim().slice(1);
+    return String(row.PatNum) === String(Number(query.trim().slice(1)));
   return Object.entries(row)
     .filter(([k, v]) => !k.startsWith("_") && typeof v !== "object")
     .map(([, v]) => String(v ?? ""))

@@ -210,14 +210,14 @@ class SmsService {
       rows =
         (
           await this.bridge.request("GET", "/api/admin/patients", {
-            q: query.replace(/^#/, ""),
+            q: query,
             limit: 50,
-            offset: Number(options.offset || 0),
+            offset: /^#\d+$/.test(query)?0:Number(options.offset || 0),
             appointmentDate: this.today,
           })
         ).patients || [];
       if (/^#\d+$/.test(query))
-        rows = rows.filter((r) => String(r.PatNum) === query.slice(1));
+        rows = rows.filter((r) => String(r.PatNum) === String(Number(query.slice(1))));
       if (rows.some((r) => !r.AptDateTime)) {
         const data = await this.bridge.request(
           "GET",

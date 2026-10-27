@@ -1,3 +1,4 @@
+import {adminPatientSearchFilter} from './adminPatientSearch.js';
 import { parseDateHours } from './bookingHours.js';
 import { config } from './config.js';
 import { pool } from './db.js';
@@ -158,19 +159,9 @@ export async function listAdminPatients(query = {}) {
   const appointmentDate = query.appointmentDate ? dateValue(query.appointmentDate, 'appointmentDate') : '';
   const limit = Math.max(1, Math.min(intValue(query.limit, 100), 1000));
   const offset = Math.max(0, intValue(query.offset, 0));
-  const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-  const values = q ? [like, like, like, like, like, like, like, like, like, limit, offset] : [limit, offset];
-  const where = q
-    ? `WHERE p.FName LIKE ? ESCAPE '\\\\'
-        OR p.LName LIKE ? ESCAPE '\\\\'
-        OR CONCAT_WS(' ', p.FName, p.LName) LIKE ? ESCAPE '\\\\'
-        OR CAST(p.PatNum AS CHAR) LIKE ? ESCAPE '\\\\'
-        OR p.WirelessPhone LIKE ? ESCAPE '\\\\'
-        OR p.HmPhone LIKE ? ESCAPE '\\\\'
-        OR p.WkPhone LIKE ? ESCAPE '\\\\'
-        OR p.Email LIKE ? ESCAPE '\\\\'
-        OR pa.Username LIKE ? ESCAPE '\\\\'`
-    : '';
+  const search=adminPatientSearchFilter(q);
+  const where=search.where;
+  const values=[...search.values,limit,search.exact?0:offset];
   const [rows] = await pool.execute(
     `
       SELECT
