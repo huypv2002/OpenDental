@@ -1,6 +1,12 @@
 import {parseDelta} from './parser.js';
 import {processLibertyPdf} from '../liberty/processor.js';
 
+// Formatting-only given-name equivalence is allowed only with a filename-bound
+// PatNum. Surname, DOB, Delta plan and subscriber still must all match.
+const nameConditionFor=(names,compact)=>names.map(()=>compact
+ ? `LOWER(REPLACE(TRIM(p.FName),' ',''))=LOWER(REPLACE(?,' ',''))`
+ : `LOWER(TRIM(p.FName))=LOWER(?)`).join(' OR ');
+
 export function deltaPatientFileNumber(fileName){
  // A downloaded attachment can add a millisecond timestamp before PatNum.
  // Never treat an arbitrary embedded number or the timestamp as a patient hint.
@@ -16,7 +22,7 @@ export async function resolveDeltaPatient(pool,{claim,fileName,claimsCount}){
  // Permit that exact final token only when a single-claim filename also binds
  // the same PatNum; surname, DOB, Delta carrier and Subscriber ID remain mandatory.
  if(fromFile&&firstName.includes(' '))names.push(firstName.split(' ').at(-1));
- const nameCondition=names.map(()=>`LOWER(TRIM(p.FName))=LOWER(?)`).join(' OR ');
+ const nameCondition=nameConditionFor(names,!!fromFile);
  const args=[...names,claim.patient.lastName,claim.patient.birthdate];if(fromFile)args.push(fromFile);args.push(claim.patient.memberId);
  const [rows]=await pool.execute(`SELECT p.PatNum,p.FName,p.LName,p.Birthdate,p.ClinicNum,p.PriProv,p.ImageFolder,p.ChartNumber
  FROM patient p WHERE (${nameCondition}) AND LOWER(TRIM(p.LName))=LOWER(?) AND DATE(p.Birthdate)=?
@@ -44,7 +50,7 @@ export async function diagnoseDeltaPatient(pool,{claim,fileName,claimsCount}){
  const first=claim.patient.firstName.trim().replace(/\s+/g,' '),names=[first];
  if(first.includes(' '))names.push(first.split(' ').at(-1));
  const [rows]=await pool.execute(`SELECT p.PatNum,
- (${names.map(()=>`LOWER(TRIM(p.FName))=LOWER(?)`).join(' OR ')}) AS firstNameMatches,
+ (${nameConditionFor(names,true)}) AS firstNameMatches,
  (LOWER(TRIM(p.LName))=LOWER(?)) AS lastNameMatches,
  (DATE(p.Birthdate)=?) AS birthdateMatches,
  EXISTS (SELECT 1 FROM patplan pp JOIN inssub s ON s.InsSubNum=pp.InsSubNum

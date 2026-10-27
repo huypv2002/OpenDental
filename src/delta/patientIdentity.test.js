@@ -76,3 +76,24 @@ test('Delta identity diagnostics distinguish absent patient and a fully matching
   assert.ok(Object.entries(result).every(([key,value])=>key==='patNum'||value===true));
  }finally{f.db.close();}
 });
+
+test('Delta joins given-name spaces only for the exact filename-bound patient with every other identity matched',async()=>{
+ for(const first of ['VANANH','VAN ANH','Van  Anh']){
+  const f=fixture();try{
+   f.claim.patient.firstName='Van Anh';f.claim.patient.lastName='Mai';
+   f.add(1279,{first,last:'MAI'});
+   assert.equal((await f.resolve('1279.txt')).PatNum,1279);
+   assert.equal((await f.resolve('1793111377468_1279.pdf')).PatNum,1279);
+   const checks=await diagnoseDeltaPatient(f.pool,{claim:f.claim,fileName:'1279.txt',claimsCount:1});
+   assert.equal(checks.firstNameMatches,true);
+   if(first==='VANANH')await assert.rejects(f.resolve('unlabelled.txt'),/duy nhất/);
+  }finally{f.db.close();}
+ }
+ for(const change of [{first:'VANANN'},{member:'other-member'},{birth:'1960-04-04'},{last:'OTHER'},{plan:2}]){
+  const f=fixture();try{
+   f.claim.patient.firstName='Van Anh';f.claim.patient.lastName='Mai';
+   f.add(1279,{first:'VANANH',last:'MAI',...change});
+   await assert.rejects(f.resolve('1279.txt'),/duy nhất/);
+  }finally{f.db.close();}
+ }
+});

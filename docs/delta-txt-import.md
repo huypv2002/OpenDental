@@ -14,6 +14,8 @@ Run `DELTA_TEXT_TEST_FILE=/private/path/1279.txt node --test src/delta/textDocum
 
 When the single-claim filename identifies a patient, a failed identity lookup now lists the fields that did not match: patient number, given name, surname, DOB, Delta insurance, or Subscriber ID on that Delta plan. Matching rules remain unchanged. Missing or conflicting identity still stops payment.
 
+For a single claim whose filename binds the exact PatNum, given-name spaces are ignored (`Van Anh` and `VANANH`). All letters must still agree, and surname, DOB, Delta plan and Subscriber ID remain mandatory. Without that filename binding, this compact-name fallback is not used. Diagnostics apply the same rule.
+
 On SERVER, from the Bridge repository with its existing `.env`, run:
 
 ```bat
