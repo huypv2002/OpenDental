@@ -2,7 +2,7 @@ import {parseCigna} from './parser.js';
 import {processLibertyPdf} from '../liberty/processor.js';
 
 export async function resolveCignaPatient(pool,{claim,fileName,claimsCount}){
-  const fromFile=claimsCount===1?/^(\d+)\.(?:pdf)$/i.exec(fileName||'')?.[1]:null;
+  const fromFile=claimsCount===1?/^(?:\d{13}_)?(\d{1,12})\.(?:pdf|txt)$/i.exec(fileName||'')?.[1]:null;
   const args=[claim.patient.firstName,claim.patient.lastName];
   if(fromFile)args.push(fromFile);
   const [rows]=await pool.execute(

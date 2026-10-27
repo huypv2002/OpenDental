@@ -79,7 +79,7 @@ export function parseMetlife(extracted) {
   const { pages, sha256 } = extracted;
   const text = pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n\f\n');
   const errors = [],
-    warnings = [];
+    warnings = [...(extracted.warnings||[])];
   const template =
     /Claim Summary/.test(text) &&
     /Relationship to Subscriber:/.test(text) &&

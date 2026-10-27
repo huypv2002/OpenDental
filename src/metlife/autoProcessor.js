@@ -248,8 +248,8 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   let document;
   try{
     if(/\.txt$/i.test(fileName)){
-      const {readDeltaTextDocument}=await import('../delta/textDocument.js');
-      document=readDeltaTextDocument(sourceBytes);
+      const {readInsuranceTextDocument}=await import('./textDocument.js');
+      document=readInsuranceTextDocument(sourceBytes);
     }else if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
       const {readDeltaDocument}=await import('../delta/document.js');
       document=await readDeltaDocument(sourceBytes,fileName,{extract});
@@ -259,12 +259,12 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   const {extracted,pdfBytes:fileBytes}=document;
   const fullText = extracted.pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n');
 
-  if(extracted.sourceFormat==='text'||path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
+  if(extracted.textCarrier==='DELTA DENTAL'||(!extracted.textCarrier&&path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL')){
     const {processDeltaPdf}=await import('../delta/processor.js');
     return processDeltaPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits});
   }
 
-  if(path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA'||(/Claim\/Reference Number:/.test(fullText)&&/Claim Amount Paid:/.test(fullText)&&/Date Processed:/.test(fullText))){
+  if(extracted.textCarrier==='CIGNA'||(!extracted.textCarrier&&path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA')||(/Claim\/Reference Number:/.test(fullText)&&/Claim Amount Paid:/.test(fullText)&&/Date Processed:/.test(fullText))){
     const {processCignaPdf}=await import('../cigna/processor.js');
     return processCignaPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits});
   }
@@ -783,9 +783,9 @@ export function startAutoProcessor({ pool, incomingDir, intervalMs = 30000 }) {
 
   console.log(`[Insurance Auto-Processor] Khởi chạy bộ quét EOB tự động (MetLife / Liberty / CIGNA / Delta Dental)`);
   console.log(`[Insurance Auto-Processor] Thư mục theo dõi:`);
-  console.log(`  - MetLife: ${dir}`);
-  console.log(`  - Liberty: ${libertyDir} (PDF, JPG, JPEG, PNG)`);
-  console.log(`  - CIGNA: ${cignaDir} (PDF)`);
+  console.log(`  - MetLife: ${dir} (PDF, TXT)`);
+  console.log(`  - Liberty: ${libertyDir} (PDF, JPG, JPEG, PNG, TXT)`);
+  console.log(`  - CIGNA: ${cignaDir} (PDF, TXT)`);
   console.log(`  - Delta Dental: ${deltaDir} (PDF, JPG, JPEG, PNG, TXT)`);
   console.log(`  - Chu kỳ quét: ${intervalMs / 1000}s/lần`);
 

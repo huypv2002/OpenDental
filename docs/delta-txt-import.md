@@ -1,6 +1,6 @@
 # User-converted Delta TXT import
 
-Put a user-created `.txt` file into `D:\SHARE\INSURANCE CLAIM\DELTA DENTAL`. Supported layout: Delta Dental Provider Tools as in the supplied 1279 TXT, with patient name/DOB/Subscriber ID, claim number, sent date, six monetary columns per service and Claim total. Other insurer TXT layouts are not supported yet.
+Put a user-created `.txt` file into `D:\SHARE\INSURANCE CLAIM\DELTA DENTAL`. Supported layout: Delta Dental Provider Tools as in the supplied 1279 TXT, with patient name/DOB/Subscriber ID, claim number, sent date, six monetary columns per service and Claim total. TXT support is now extended to all four carriers; see [insurance-txt-import.md](insurance-txt-import.md) for the current workflow and requirements.
 
 The tool does not convert PDF or run OCR for TXT. It reads UTF-8 (with or without BOM) or UTF-16 with BOM. `$34 00` is read as `$34.00`; only explicit dollar amounts with exactly two separated cents digits are normalized. The warning records that formatting change. Digits are never guessed, and all existing benefit and six-column claim-total reconciliation checks remain active.
 

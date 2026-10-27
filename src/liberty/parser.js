@@ -34,7 +34,7 @@ export function parseLiberty(extracted) {
   const fullText = pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n\f\n');
 
   const errors = [];
-  const warnings = [];
+  const warnings = [...(extracted.warnings||[])];
 
   const isLiberty =
     /LIBERTY Dental Plan/i.test(fullText) &&

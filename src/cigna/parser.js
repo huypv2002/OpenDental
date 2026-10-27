@@ -5,7 +5,7 @@ const value=s=>cents(s.replace(/\$/g,''));
 const unique=values=>[...new Set(values)];
 
 export function parseCigna(extracted){
-  const errors=[],warnings=[],claims=[],byId=new Map();let current;
+  const errors=[],warnings=[...(extracted.warnings||[])],claims=[],byId=new Map();let current;
   const fail=text=>errors.push(text);
   for(const page of extracted.pages){
     const text=page.lines.map(l=>l.text).join('\n');

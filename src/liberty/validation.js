@@ -13,7 +13,7 @@ export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\
   const amount=claim.totals.planPaidCents,rows=claim.procedures;
   if(!safe(amount)||amount<=0||rows.reduce((n,p)=>n+p.benefitCents,0)!==amount)errors.push(`Claim ${claim.claimNumber}: tổng dịch vụ không khớp tổng claim.`);
   if(rows.some((p,i)=>p.line!==i+1||!p.date||!/^D\d{4}$/.test(p.code)||!['benefitCents','feeCents','allowedCents','copayCents','deductibleCents','coinsuranceCents','patientDueCents'].every(k=>safe(p[k]))))errors.push(`Claim ${claim.claimNumber}: dòng dịch vụ thiếu hoặc không hợp lệ.`);
-  if(extracted.ocr&&verifyLibertyOcr){
+  if((extracted.ocr||extracted.sourceFormat==='text')&&verifyLibertyOcr){
    for(const key of ['submittedCents','allowedCents','copayCents','deductibleCents','coinsuranceCents','patientDueCents']){
     if(rows.reduce((n,p)=>n+p[key],0)!==claim.totals[key])errors.push(`Claim ${claim.claimNumber}: tổng cột ${key} không khớp.`);
    }
