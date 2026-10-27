@@ -211,13 +211,16 @@ class SmsService {
         (
           await this.bridge.request("GET", "/api/admin/patients", {
             q: query,
+            ...(/^#\d+$/.test(query)?{patNum:query.slice(1)}:{}),
             limit: 50,
             offset: /^#\d+$/.test(query)?0:Number(options.offset || 0),
             appointmentDate: this.today,
           })
         ).patients || [];
-      if (/^#\d+$/.test(query))
+      if (/^#\d+$/.test(query)){
         rows = rows.filter((r) => String(r.PatNum) === String(Number(query.slice(1))));
+        this.activity(`Patient search ${query}: SERVER returned ${rows.length} exact match(es).`);
+      }
       if (rows.some((r) => !r.AptDateTime)) {
         const data = await this.bridge.request(
           "GET",

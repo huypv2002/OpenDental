@@ -48,6 +48,8 @@ const S = {
   batchCategory: "",
   batchIndex: 0,
   loading: {},
+  loadErrors: {},
+  loadedQueries: {},
 };
 const kinds = [
   "dashboard",
@@ -394,7 +396,7 @@ function renderTable(kind) {
     )}${end < rows.length ? `<tr class="viewport-spacer"><td colspan="${cols.length + 1}" style="height:${(rows.length - end) * 38}px"></td></tr>` : ""}</tbody>`;
   if (!rows.length)
     table.querySelector("tbody").innerHTML =
-      `<tr><td colspan="${cols.length + 1}" class="empty">${S.loading[kind] ? "Loading…" : kind === "patient" ? "Search for a patient to load results." : "No records loaded. Refresh the list or check Bridge settings."}</td></tr>`;
+      `<tr><td colspan="${cols.length + 1}" class="empty">${S.loading[kind] ? "Loading…" : S.loadErrors[kind] ? `Search failed: ${escape(S.loadErrors[kind])}` : kind === "patient" ? S.loadedQueries[kind] ? `SERVER returned no patient matching ${escape(S.loadedQueries[kind])}. Check the Patient Number and Bridge connection in Settings.` : "Search for a patient to load results." : "No records loaded. Refresh the list or check Bridge settings."}</td></tr>`;
   $(`count-${kind}`).textContent =
     `${rows.length} row${rows.length === 1 ? "" : "s"} · ${selected(kind).length} selected${S.loading[kind] ? " · Loading…" : ""}`;
   if (kind === "dashboard") {
@@ -478,6 +480,7 @@ async function load(kind, append = false) {
     return;
   const seq = (S.seq[kind] = (S.seq[kind] || 0) + 1);
   S.loading[kind] = true;
+  S.loadErrors[kind] = "";
   $(`loading-${kind}`).hidden = false;
   renderTable(kind);
   const options = {};
@@ -515,6 +518,7 @@ async function load(kind, append = false) {
     if (seq !== S.seq[kind]) return;
     const custom =
       kind === "holiday" ? S.rows.holiday.filter((r) => r._CustomId).map(r => ({ ...r, _CampaignType:options.type, _CampaignName:options.type === "birthday" ? formatDate(options.date) : options.event, _HolidayName:options.type === "birthday" ? formatDate(options.date) : options.event })) : [];
+    S.loadedQueries[kind] = String(options.query || "").trim();
     S.rows[kind] = append
       ? [...S.rows[kind], ...result.rows]
       : [...result.rows, ...custom];
@@ -523,6 +527,9 @@ async function load(kind, append = false) {
     if (more) more.hidden = !result.hasMore;
     $("status-text").textContent =
       `Loaded ${S.rows[kind].length} ${kind} records.`;
+  } catch(error){
+    if(seq === S.seq[kind]){S.loadErrors[kind]=error.message;S.rows[kind]=[];}
+    throw error;
   } finally {
     if (seq === S.seq[kind]) {
       S.loading[kind] = false;

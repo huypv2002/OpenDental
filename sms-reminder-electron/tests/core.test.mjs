@@ -539,3 +539,26 @@ test("Exact #patient search reaches Bridge before pagination and excludes partia
   assert.equal(model.matchesSearch({PatNum:170},"#70"),false);
   assert.equal(model.matchesSearch({PatNum:70},"#0070"),true);
  }));
+
+test("Patient #70 travels through real HTTP encoding and returns only PatNum 70",async()=>{
+ const {createServer}=await import('node:http');
+ const {adminPatientSearchFilter}=await import('../../src/adminPatientSearch.js');
+ const requests=[];
+ const server=createServer((req,res)=>{
+  const url=new URL(req.url,'http://localhost');requests.push(url);
+  if(url.pathname!=="/api/admin/patients"){res.writeHead(404);res.end();return;}
+  const s=adminPatientSearchFilter(url.searchParams.get('q'),url.searchParams.get('patNum'));
+  const candidates=[row(1,{PatNum:70}),...Array.from({length:70},(_,i)=>row(i,{PatNum:1000+i*100+70}))];
+  const patients=candidates.filter(p=>s.exact&&p.PatNum===s.values[0]);
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,data:{patients}}));
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const bridge=new Bridge(()=>({bridge_url:`http://127.0.0.1:${server.address().port}`,api_token:'synthetic-test-only'}));
+  await using({request:(...args)=>bridge.request(...args)},async f=>{
+   const result=await f.service.load('patient',{query:'#70',offset:50});
+   assert.deepEqual(result.rows.map(r=>r.PatNum),[70]);assert.equal(f.native.length,0);
+  });
+  assert.equal(requests[0].searchParams.get('q'),'#70');assert.equal(requests[0].searchParams.get('patNum'),'70');
+ }finally{await new Promise(resolve=>server.close(resolve));}
+});

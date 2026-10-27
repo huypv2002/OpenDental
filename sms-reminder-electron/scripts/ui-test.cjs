@@ -76,6 +76,25 @@ async function run() {
       .getByRole("button", { name: "Patient", exact: true })
       .first()
       .click();
+    // Exercise renderer -> IPC -> service search with synthetic PatNum 70.
+    await application.evaluate(async()=>{
+      const require=process.mainModule.require.bind(process.mainModule);
+      const {DemoBridge}=require('./lib/demo.cjs');
+      const original=DemoBridge.prototype.request;
+      DemoBridge.prototype.request=async function(method,route,params,...rest){
+        if(route==='/api/admin/patients'&&params.q==='#70')return {patients:[{PatNum:70,FName:'Exact',LName:'Patient',WirelessPhone:'2815550070',Language:'English',AptDateTime:'2026-10-12 09:30:00'}]};
+        if(route==='/api/admin/patients'&&params.q==='#77777')throw Error('Synthetic Bridge search failure');
+        return original.call(this,method,route,params,...rest);
+      };
+    });
+    await page.fill('#search-patient','#70');
+    await page.click('#refresh-patient');
+    await page.waitForFunction(()=>document.querySelectorAll('#table-patient tr[data-row]').length===1&&document.getElementById('table-patient').textContent.includes('Exact'));
+    assert.match(await page.locator('#table-patient').innerText(),/70/);
+    await page.fill('#search-patient','#77777');await page.press('#search-patient','Enter');
+    await page.waitForFunction(()=>document.getElementById('table-patient').textContent.includes('Search failed: Synthetic Bridge search failure'));
+    await page.fill('#search-patient','#0');await page.click('#refresh-patient');
+    await page.waitForFunction(()=>document.getElementById('table-patient').textContent.includes('SERVER returned no patient matching #0'));
     await page.fill("#search-patient", "#1007");
     await page.waitForFunction(
       () =>

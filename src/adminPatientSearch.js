@@ -1,10 +1,10 @@
 // Exact #PatNum search is applied before SQL LIMIT, not after pagination.
-export function adminPatientSearchFilter(query){
+export function adminPatientSearchFilter(query,patNum){
  const q=String(query??'').trim();
- const exact=/^#(\d+)$/.exec(q);
+ const exact=patNum!==undefined&&String(patNum).trim()!==''?['',String(patNum).trim()]:/^#(\d+)$/.exec(q);
  if(exact){
   const id=Number(exact[1]);
-  if(!Number.isSafeInteger(id)||id<=0)return {where:'WHERE 1=0',values:[],exact:true};
+  if(!/^\d+$/.test(exact[1])||!Number.isSafeInteger(id)||id<=0)return {where:'WHERE 1=0',values:[],exact:true};
   return {where:'WHERE p.PatNum = ?',values:[id],exact:true};
  }
   const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;

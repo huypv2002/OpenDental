@@ -27,3 +27,8 @@ test('ordinary name/phone/number search keeps escaped fuzzy matching',()=>{
  assert.equal(adminPatientSearchFilter('50%_').values[0],'%50\\%\\_%');
  assert.deepEqual(adminPatientSearchFilter('#0070').values,[70]);
 });
+
+test('explicit patNum parameter is an exact lookup independent of query text',()=>{
+ assert.deepEqual(adminPatientSearchFilter('ignored','70'),{where:'WHERE p.PatNum = ?',values:[70],exact:true});
+ for(const id of ['70 OR 1=1','abc','-1','0'])assert.equal(adminPatientSearchFilter('',id).where,'WHERE 1=0');
+});
