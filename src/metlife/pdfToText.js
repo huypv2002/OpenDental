@@ -70,8 +70,8 @@ export function selectConvertedText({candidates,native=false}){
    if(claimIds.length&&claimIds.every(Boolean))ids.push(JSON.stringify(claimIds));
    if(p.errors.length){error=p.errors.join('; ');continue;}
    if(extracted.textCarrier==='LIBERTY')validateLibertyForPosting(p,extracted);
-   const signature=JSON.stringify(p.claims?.map(c=>[c.claimNumber,c.patient.memberId,c.patient.birthdate,c.date,c.paymentPayload.amountCents,c.paymentPayload.splits.map(s=>[s.code,s.date,procedureAreaKey(s),s.amountCents]),c.procedures.map(r=>[r.code,r.date,procedureAreaKey(r),r.feeCents,r.benefitCents,r.allowedCents,r.maximumCents,r.deductibleCents,r.patientDueCents,r.percent])])||[p.claimRaw,p.processed,p.benefitCents,p.procedures.map(r=>[r.code,r.date,procedureAreaKey(r),r.feeCents,r.benefitCents])]);
-   const names=JSON.stringify(p.claims?.map(c=>[c.patient.firstName,c.patient.lastName])||p.patient);
+   const signature=JSON.stringify(p.claims?.map(c=>[c.claimNumber,c.patient.memberId,c.patient.birthdate,c.patient.relationship,c.subscriber?.birthdate,c.subscriber?.memberId,c.plan?.group,c.date,c.paymentPayload.amountCents,c.paymentPayload.splits.map(s=>[s.code,s.date,procedureAreaKey(s),s.amountCents]),c.procedures.map(r=>[r.code,r.date,procedureAreaKey(r),r.feeCents,r.benefitCents,r.allowedCents,r.maximumCents,r.deductibleCents,r.patientDueCents,r.percent])])||[p.claimRaw,p.processed,p.benefitCents,p.procedures.map(r=>[r.code,r.date,procedureAreaKey(r),r.feeCents,r.benefitCents])]);
+   const names=JSON.stringify(p.claims?.map(c=>[c.patient.firstName,c.patient.lastName,c.patient.relationship==='Dependent'?c.subscriber?.firstName:null,c.patient.relationship==='Dependent'?c.subscriber?.lastName:null])||p.patient);
    good.push({text,signature,names,ids:JSON.stringify(claimIds)});
   }catch(e){error=e.message;}
  }

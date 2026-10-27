@@ -143,7 +143,7 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
   };
 }
 
-export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, hashSplits=nativeSplitHashes, log = console.log, normalized=null, carrier='LIBERTY Dental Plan', patientResolver=resolveLibertyPatient } = {}) {
+export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, hashSplits=nativeSplitHashes, log = console.log, normalized=null, carrier='LIBERTY Dental Plan', patientResolver=resolveLibertyPatient,applyPatientCoverage=async()=>{} } = {}) {
   const label=carrier==='DELTA DENTAL'?'Delta Dental':carrier==='CIGNA'?'Cigna':'Liberty';
   const parsed = validateLibertyForPosting(normalized||parseLiberty(extracted),extracted,carrier==='DELTA DENTAL'?{verifyLibertyOcr:false}:carrier==='CIGNA'?{claimPattern:/^[A-Z0-9-]{1,64}$/,requireMember:false,verifyLibertyOcr:false}:{});
   const preflight=new Map();
@@ -162,6 +162,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
   }
 
   // All patients, allocations and existing payments passed read-only preflight.
+  // Dependent coverage is applied only after the entire document validates.
+  for(const claim of parsed.claims)await applyPatientCoverage(pool,{claim,patient:preflight.get(claim.claimNumber).patient,log});
   // Missing services are now created once, before PDF/fee/payment writes.
   for(const claim of parsed.claims){
     const checked=preflight.get(claim.claimNumber);

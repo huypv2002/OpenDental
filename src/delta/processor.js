@@ -1,5 +1,6 @@
 import {parseDelta} from './parser.js';
 import {processLibertyPdf} from '../liberty/processor.js';
+import {prepareDeltaDependent,applyDeltaDependent} from './dependent.js';
 
 // Formatting-only given-name equivalence is allowed only with a filename-bound
 // PatNum. Surname, DOB, Delta plan and subscriber still must all match.
@@ -16,6 +17,10 @@ export function deltaPatientFileNumber(fileName){
 
 export async function resolveDeltaPatient(pool,{claim,fileName,claimsCount}){
  const fromFile=claimsCount===1?deltaPatientFileNumber(fileName):null;
+ if(claim.patient.relationship==='Dependent'){
+  const plan=await prepareDeltaDependent(pool,{claim,patNum:fromFile});
+  return {...plan.patient,deltaDependentPlan:plan};
+ }
  const firstName=claim.patient.firstName.trim().replace(/\s+/g,' ');
  const names=[firstName];
  // OD can retain only the given name (TOAN) while the EOB prints QUOC TOAN.
@@ -67,5 +72,5 @@ export async function diagnoseDeltaPatient(pool,{claim,fileName,claimsCount}){
 export async function processDeltaPdf(pool,args,options={}){
  const normalized=parseDelta(args.extracted);
  if(normalized.errors.length)throw Object.assign(new Error(normalized.errors.join('; ')),{code:'EOB_REVIEW_REQUIRED'});
- return processLibertyPdf(pool,args,{...options,normalized,carrier:'DELTA DENTAL',patientResolver:resolveDeltaPatient});
+ return processLibertyPdf(pool,args,{...options,normalized,carrier:'DELTA DENTAL',patientResolver:resolveDeltaPatient,applyPatientCoverage:applyDeltaDependent});
 }

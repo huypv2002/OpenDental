@@ -17,9 +17,9 @@ const delta=`DELTA DENTAL Provider Tools | Fee for service
 Claim 20262965110923
 TEST PERSON
 Patient date of birth Relationship to policy holder/subscriber
-06/06/1981 Dependent
+06/06/1981 Self (Subscriber)
 Policy holder/subscriber name Subscriber ID Employer or group name
-OTHER PERSON 115084523301 GROUP
+TEST PERSON 115084523301 GROUP
 Payment status
 Outstanding Paid to
 Amount Payment status updated Payee address
@@ -91,7 +91,12 @@ for(const [file,parse,expected] of fixtures)test(`Scribe library converts real $
  assert.deepEqual(p.errors,[]);assert.equal(p.benefitCents??p.check.netPaymentCents,expected);
  const expectedIds={'1793111377468_1279.pdf':'20262965110923','1793110627097_423.pdf':'20262965111086','1283.pdf':'20262635105590','280.pdf':'20261625116008','1792771310824_1012.pdf':'20261165105694'};
  if(expectedIds[file])assert.equal(p.claims[0].claimNumber,expectedIds[file]);
- if(file.includes('1279'))assert.deepEqual(p.claims[0].paymentPayload.splits.map(s=>[s.code,s.tooth,s.amount]),[['D2393','4','96.00'],['D2393','19','136.00']]);
+ if(file.includes('1279')){
+  const c=p.claims[0];
+  assert.deepEqual(c.paymentPayload.splits.map(s=>[s.code,s.tooth,s.amount]),[['D2393','4','96.00'],['D2393','19','136.00']]);
+  assert.equal(c.patient.relationship,'Dependent');assert.equal(c.subscriber.raw,'Joseph Nichols');
+  assert.equal(c.subscriber.birthdate,'1971-02-08');assert.equal(c.plan.group,'21767');
+ }
 });
 
 

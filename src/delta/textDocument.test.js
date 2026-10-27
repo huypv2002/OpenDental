@@ -13,9 +13,9 @@ const source=`DELTA DENTAL Provider Tools I Fee for service
 Claim 20262965110923
 TEST PERSON
 Patient date of birth Relationship to policy holder/subscriber
-06/06/1981 Dependent
+06/06/1981 Self (Subscriber)
 Policy holder/subscriber name Subscriber ID Employer or group name
-OTHER PERSON 115084523301 GROUP
+TEST PERSON 115084523301 GROUP
 Payment status
 Outstanding Paid to
 Amount Payment status updated Payee address
