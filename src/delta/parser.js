@@ -38,7 +38,14 @@ export function parseDelta(extracted){
     const a=amounts(line),percent=Number(/(\d+(?:\.\d+)?)%/.exec(line)?.[1]),date=isoDate(match[1]),tooth=match[3]==='-'?'':normalizeTooth(match[3]);
     if(a.length!==6||!date||!Number.isFinite(percent)||percent<0||percent>100||!/^(?:|[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(tooth))throw fail('Dòng Delta thiếu ngày, răng, tỷ lệ hoặc cột tiền.');
     const [feeCents,allowedCents,maximumCents,deductibleCents,benefitCents,patientDueCents]=a;
-    if(Math.round(Math.max(0,maximumCents-deductibleCents)*percent/100)!==benefitCents)throw fail('Tiền Delta trả không khớp mức hưởng và tỷ lệ trên dòng dịch vụ.');
+    const calculatedBenefit=Math.round(Math.max(0,maximumCents-deductibleCents)*percent/100);
+    if(calculatedBenefit!==benefitCents){
+     // The printed benefit can be reduced below the contract percentage.
+     // Accept it only when the patient's printed share reconciles the accepted
+     // fee; all six claim-total columns must still reconcile below.
+     if(benefitCents>calculatedBenefit||benefitCents+patientDueCents!==allowedCents)throw fail('Tiền Delta trả không khớp mức hưởng và tỷ lệ trên dòng dịch vụ.');
+     warnings.push(`Claim ${current.claimNumber}, ${match[2]} ngày ${date}: dùng Delta Dental pays ${money(benefitCents)} thấp hơn mức tính theo tỷ lệ ${money(calculatedBenefit)}; đã khớp phần bệnh nhân trả với Accepted fee.`);
+    }
     const explanationCode=/^([A-Z]+)\s+\d{2}\//.exec(line)?.[1]||'';
     rows.push({date,code:match[2],tooth,feeCents,allowedCents,maximumCents,deductibleCents,benefitCents,patientDueCents,percent,explanationCode});
    }else if(/\bD\d{4}\b/.test(line)&&line.includes('$'))throw fail('Có dòng dịch vụ Delta chưa đọc đầy đủ.');

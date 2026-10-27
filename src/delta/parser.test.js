@@ -146,3 +146,31 @@ test('Delta multi-patient documents keep each claim payment and date separate',(
  const a=sample(),b=sample();b.pages[0].lines[1].text='Claim 20261625116009';b.pages[0].lines[2].text='SECOND PERSON';b.pages[0].lines[12].text='06/18/2026';
  const p=parseDelta({...a,pages:[...a.pages,...b.pages]});assert.deepEqual(p.errors,[]);assert.equal(p.claimsCount,2);assert.equal(p.check.netPaymentCents,30800);assert.deepEqual(p.claims.map(c=>c.paymentPayload.payDate),['2026-06-17','2026-06-18']);
 });
+
+function reducedBenefit(){
+ const s=sample();s.pages[0].lines=s.pages[0].lines.slice(0,14);
+ s.pages[0].lines.push({text:'10/18/2026 D5214 - $1,000.00 $1,000.00 $1,000.00 $0.00 50% $310.40 $689.60'});
+ s.pages[1].lines=[{text:'Claim total $1,000.00 $1,000.00 $1,000.00 $0.00 $310.40 $689.60'}];return s;
+}
+
+test('Delta uses a reduced printed benefit only with reconciled patient share and all claim totals',()=>{
+ const p=parseDelta(reducedBenefit());assert.deepEqual(p.errors,[]);
+ assert.equal(p.claims[0].paymentPayload.amount,'310.40');
+ assert.deepEqual(p.claims[0].paymentPayload.splits.map(p=>[p.code,p.amount]),[['D5214','310.40']]);
+ assert.ok(p.warnings.some(w=>w.includes('310.40')&&w.includes('500.00')));
+ for(const change of [
+  s=>{s.pages[0].lines.at(-1).text=s.pages[0].lines.at(-1).text.replace('$689.60','$689.61');},
+  s=>{s.pages[0].lines.at(-1).text=s.pages[0].lines.at(-1).text.replace('$310.40','$510.40').replace('$689.60','$489.60');},
+  s=>{s.pages[1].lines[0].text=s.pages[1].lines[0].text.replace('$310.40','$310.41');}
+ ]){const s=reducedBenefit();change(s);assert.ok(parseDelta(s).errors.length);}
+});
+
+test('supplied new Delta 423 reduced benefit reconciles to 310.40 (optional private fixture)',{skip:!process.env.DELTA_REDUCED_TEST_PDF},async()=>{
+ const {extracted}=await readDeltaDocument(await fs.readFile(process.env.DELTA_REDUCED_TEST_PDF),'423.pdf');
+ const p=parseDelta(extracted);assert.deepEqual(p.errors,[]);
+ assert.equal(p.claimsCount,1);const c=p.claims[0];
+ assert.equal(c.claimNumber,'20262965111086');assert.equal(c.date,'2026-10-28');
+ assert.equal(c.headerPaidCents,54240);assert.deepEqual(c.printedTotals,[100000,100000,100000,0,31040,68960]);
+ assert.deepEqual(c.paymentPayload.splits.map(s=>[s.code,s.date,s.amount]),[['D5214','2026-10-18','310.40']]);
+ assert.equal(c.paymentPayload.amount,'310.40');
+});
