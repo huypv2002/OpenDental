@@ -1,6 +1,6 @@
 const quads={UR:'UR',UL:'UL',LR:'LR',LL:'LL',Q01:'UR',Q02:'UL',Q03:'LL',Q04:'LR'};
 const text=value=>String(value??'').trim().toUpperCase();
-const archCodes={D5110:'U',D5120:'L'};
+const archCodes={D5110:'U',D5120:'L',D5214:'L'};
 export const normalizeTooth=value=>/^\d+$/.test(text(value))?String(Number(text(value))):text(value);
 export function procedureArch(p){
  const expected=archCodes[text(p.code??p.ProcCode)];

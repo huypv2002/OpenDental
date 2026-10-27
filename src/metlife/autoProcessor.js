@@ -238,7 +238,7 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
   return updatedFees;
 }
 
-export async function processSinglePdf(pool, filePath, {extract = extractPdf, hashSplits = nativeSplitHashes} = {}) {
+export async function processSinglePdf(pool, filePath, {extract = extractPdf, hashSplits = nativeSplitHashes, convertPdf} = {}) {
   const fileName = path.basename(filePath);
   console.log(`\n[Auto-Processor] Bắt đầu xử lý: ${fileName}...`);
   if(path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA'&&isImageFile(fileName))throw Object.assign(new Error('CIGNA hiện cần PDF có chữ theo mẫu đã hỗ trợ; chưa xử lý ảnh CIGNA.'),{code:'EOB_REVIEW_REQUIRED'});
@@ -250,6 +250,9 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     if(/\.txt$/i.test(fileName)){
       const {readInsuranceTextDocument}=await import('./textDocument.js');
       document=readInsuranceTextDocument(sourceBytes);
+    }else if(/\.pdf$/i.test(fileName)&&(convertPdf||extract===extractPdf)){
+      const {readPdfAsText}=await import('./pdfToText.js');
+      document=await readPdfAsText(sourceBytes,filePath,convertPdf?{convert:convertPdf}:{});
     }else if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
       const {readDeltaDocument}=await import('../delta/document.js');
       document=await readDeltaDocument(sourceBytes,fileName,{extract});
@@ -474,6 +477,9 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     paymentDate: eobDate,
     paymentNote: paymentFields.note,
     paymentCheckNum: paymentFields.checkNum,
+    sourceFormat:extracted.sourceFormat||'pdf',
+    generatedTextPath:extracted.generatedTextPath,
+    converter:extracted.converter,
     documentDescription: aToZResult.description,
     documentDate: aToZResult.dateCreated,
     eobPayment: parsed.payment || null,

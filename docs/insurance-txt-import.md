@@ -1,6 +1,6 @@
 # Direct user TXT imports — all four carriers
 
-Users convert their documents themselves. The tool reads TXT directly; it performs no OCR, PDF-to-TXT conversion, or TXT-to-PDF conversion on this path. The original bytes and `.txt` extension are retained in Finished Claims/AtoZ and PROCESSED. Electron history displays TXT as text.
+Users may still import their own TXT directly. PDF inputs now automatically use the Scribe.js converter described in [pdf-to-text-import.md](pdf-to-text-import.md). Direct TXT input bypasses conversion; no TXT-to-PDF conversion is performed. The original bytes and `.txt` extension are retained in Finished Claims/AtoZ and PROCESSED. Electron history displays TXT as text.
 
 Place a TXT in the insurer's usual SERVER folder under `D:\SHARE\INSURANCE CLAIM`:
 

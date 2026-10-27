@@ -34,13 +34,13 @@ function layoutPage(raw,page,carrier){
  const lines=raw.split(/\r\n|\n|\r/).map(l=>{let out='';for(const ch of l)out+=ch==='\t'?' '.repeat(8-out.length%8):ch;return out;}).filter(l=>l.trim());
  let detailAnchors,paymentAnchors;
  if(carrier==='METLIFE'){
-  const start=lines.findIndex(l=>l.trim()==='Claim Detail'),first=lines.findIndex(l=>/\bD\d{4}\b/.test(l));
+  const start=lines.findIndex(l=>l.trim().replace(/\s+/g,' ')==='Claim Detail'),first=lines.findIndex(l=>/\bD\d{4}\b/.test(l));
   if(start>=0&&first>start){
    const h=lines.slice(start+1,first);
    detailAnchors=anchors(h,[['(Code)',245],['Tooth',405],['Charged',490],['Negotiated',590],['Expense',680],['Applied',770],['Plan',850]]);
    if(!detailAnchors)throw review('TXT MetLife chưa giữ rõ cột Charged / Negotiated / Expense / Applied / Plan; cần xuất TXT giữ bố cục bảng.');
   }
-  const payment=lines.findIndex(l=>l.trim()==='Payment Detail');
+  const payment=lines.findIndex(l=>l.trim().replace(/\s+/g,' ')==='Payment Detail');
   if(payment>=0){
    const end=lines.findIndex((l,i)=>i>payment&&(/\d{2}\/\d{2}\/\d{4}/.test(l)||/^\s*Paid\s*\//.test(l)));
    const h=lines.slice(payment+1,end<0?undefined:end);
@@ -50,7 +50,7 @@ function layoutPage(raw,page,carrier){
  }
  let paymentSection=false;
  const output=lines.map((line,i)=>{
-  if(line.trim()==='Payment Detail')paymentSection=true;
+  if(line.trim().replace(/\s+/g,' ')==='Payment Detail')paymentSection=true;
   const a=paymentSection?paymentAnchors:detailAnchors;
   const items=tokens(line).map(t=>{
    const x=a?mapX(t.x,a):carrier==='CIGNA'?t.x*3:t.x;
@@ -66,10 +66,11 @@ function layoutPage(raw,page,carrier){
 export function readInsuranceTextDocument(bytes){
  if(bytes.length>30*1024*1024)throw review('Tài liệu EOB vượt quá 30 MB.');
  const text=decodeClaimText(bytes),carriers=[];
- if(/DELTA\s+DENTAL/i.test(text)&&/Provider Tools/i.test(text))carriers.push('DELTA DENTAL');
- if(/LIBERTY Dental Plan/i.test(text)&&/PAYMENT DETAILS/i.test(text))carriers.push('LIBERTY');
- if(/Claim\/Reference Number:/.test(text)&&/Date Processed:/.test(text)&&/Claim Amount Paid:/.test(text))carriers.push('CIGNA');
- if(/Claim Summary/.test(text)&&/Relationship to Subscriber:/.test(text)&&/Claim Detail/.test(text))carriers.push('METLIFE');
+ const signature=text.replace(/\s+/g,' ');
+ if(/DELTA\s+DENTAL/i.test(signature)&&/Provider Tools/i.test(signature))carriers.push('DELTA DENTAL');
+ if(/LIBERTY Dental Plan/i.test(signature)&&/PAYMENT DETAILS/i.test(signature))carriers.push('LIBERTY');
+ if(/Claim\/Reference Number:/.test(signature)&&/Date Processed:/.test(signature)&&/Claim Amount Paid:/.test(signature))carriers.push('CIGNA');
+ if(/Claim Summary/.test(signature)&&/Relationship to Subscriber:/.test(signature)&&/Claim Detail/.test(signature))carriers.push('METLIFE');
  if(carriers.length!==1)throw review('TXT chưa nhận diện duy nhất mẫu MetLife / Liberty / CIGNA / Delta Dental đã hỗ trợ.');
  const carrier=carriers[0],warnings=[];
  const normalized=text.replace(/\$(\d[\d,]*)[ \t]+(\d{2})(?=\s|$)/g,(all,whole,cents)=>{

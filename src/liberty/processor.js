@@ -150,7 +150,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
   {
     // Resolve every patient/procedure before importing or changing fees for the first claim.
     try{for(const claim of parsed.claims){
-      const patient=await patientResolver(pool,{claim,strictMember:!!extracted.ocr||extracted.sourceFormat==='text',fileName,claimsCount:parsed.claimsCount});
+      const patient=await patientResolver(pool,{claim,strictMember:!!extracted.ocr||!!extracted.textCarrier,fileName,claimsCount:parsed.claimsCount});
       const missingPlan=planMissingProcedures(await libertyProcedures(pool,patient.PatNum),claim.procedures,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
       const dbProcs=missingPlan.procs;
       const matches=matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
@@ -335,6 +335,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       sourceProcedures:claim.rawProcedures,
       depositAmountCents:claim.headerPaidCents,
       sourceFormat: extracted.sourceFormat||'pdf',
+      generatedTextPath:extracted.generatedTextPath,
+      converter:extracted.converter,
       extractedText: extracted.ocr?parsed.text:undefined,
       archivePath,
       patient: `${patient.LName}, ${patient.FName}`,

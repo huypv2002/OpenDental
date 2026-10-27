@@ -9,7 +9,11 @@ export function parseDelta(extracted){
  const errors=[],warnings=[...(extracted.warnings||[])],claims=[],claimTexts=new Map();let current;
  try{
  for(const page of extracted.pages){
-  const lines=page.lines.map(l=>l.text.trim()).filter(Boolean),text=lines.join('\n');
+  const lines=page.lines.map(l=>{const t=l.text.trim();return /^claimtotal$/i.test(t.replace(/\s/g,''))?'Claim total':t;}).filter(Boolean);
+  // Export libraries may put a larger 'Claim total' label on its own line.
+  // Join only its immediately following six explicit currency values.
+  for(let i=0;i<lines.length-1;i++)if(/^Claim total$/i.test(lines[i])&&amounts(lines[i+1]).length===6&&/^[-$\d,.\s]+$/.test(lines[i+1]))lines.splice(i,2,lines[i]+' '+lines[i+1]);
+  const text=lines.join('\n');
   const ids=[...text.matchAll(/^Claim\s+(\d{8,20})$/gm)].map(m=>m[1]);
   if(ids.length>1)throw fail('Trang Delta có nhiều claim; cần tách rõ thông tin bệnh nhân.');
   if(ids.length){
@@ -35,7 +39,7 @@ export function parseDelta(extracted){
    const match=/^(?:\S+\s+)?(\d{2}\/\d{2}\/\d{4})\s+(D\d{4})\s+(\S+)/.exec(line);
    if(match){
     if(!current)throw fail('Có dịch vụ Delta nhưng thiếu thông tin claim.');
-    const a=amounts(line),percent=Number(/(\d+(?:\.\d+)?)%/.exec(line)?.[1]),date=isoDate(match[1]),tooth=match[3]==='-'?'':normalizeTooth(match[3]);
+    const a=amounts(line),percent=Number(/(\d+(?:\.\d+)?)%/.exec(line)?.[1]),date=isoDate(match[1]),tooth=match[3]==='-'||/^\$/.test(match[3])?'':match[2]==='D5214'&&match[3]==='LW'?'LA':normalizeTooth(match[3]);
     if(a.length!==6||!date||!Number.isFinite(percent)||percent<0||percent>100||!/^(?:|[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(tooth))throw fail('Dòng Delta thiếu ngày, răng, tỷ lệ hoặc cột tiền.');
     const [feeCents,allowedCents,maximumCents,deductibleCents,benefitCents,patientDueCents]=a;
     const calculatedBenefit=Math.round(Math.max(0,maximumCents-deductibleCents)*percent/100);
