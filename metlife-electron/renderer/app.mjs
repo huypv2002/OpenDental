@@ -539,7 +539,7 @@ async function openPdfModal(item) {
   const viewer = $('#pdf-modal-viewer');
   if (!modal || !viewer) return;
 
-  title.textContent = `EOB PDF: ${item.FileName} (${item.PatientName})`;
+  title.textContent = `EOB: ${item.FileName} (${item.PatientName})`;
   viewer.innerHTML = '<div style="padding:40px;text-align:center;">⏳ Đang tải trang PDF...</div>';
   modal.hidden = false;
 
@@ -549,6 +549,14 @@ async function openPdfModal(item) {
     const bytes = await request('history-pdf', item.Id);
     if (currentToken !== pdfToken) return;
 
+    if(/\.txt$/i.test(item.FileName)){
+      const data=new Uint8Array(bytes);
+      const encoding=data[0]===255&&data[1]===254?'utf-16le':data[0]===254&&data[1]===255?'utf-16be':'utf-8';
+      const pre=document.createElement('pre');
+      pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;background:white;padding:20px;width:100%;box-sizing:border-box';
+      pre.textContent=new TextDecoder(encoding).decode(data);
+      viewer.replaceChildren(pre);return;
+    }
     const pdfjs = await import('../node_modules/pdfjs-dist/build/pdf.mjs');
     pdfjs.GlobalWorkerOptions.workerSrc = new URL('../node_modules/pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 

@@ -198,7 +198,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     const paymentFields = claimPaymentFields(claimNumber,checkDate);
     const totalBenefit = (claim.totals.planPaidCents / 100).toFixed(2);
 
-    log(`[${label} Auto-Processor] Claim #${claimNumber}: lưu PDF vào Finished Claims...`);
+    log(`[${label} Auto-Processor] Claim #${claimNumber}: lưu ${/\.txt$/i.test(fileName)?'TXT':'PDF'} vào Finished Claims...`);
     // Import PDF to AtoZ
     const aToZResult = await importPdfToAtoZ(pool, {
       patient,

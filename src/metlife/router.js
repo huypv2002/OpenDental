@@ -89,7 +89,7 @@ export function createMetlifeRouter({repository=createRepository(pool),getToken=
    const {getHistoryPdf}=await import('./autoProcessor.js');
    const dir=process.env.METLIFE_INCOMING_DIR||'D:\\SHARE\\INSURANCE CLAIM\\METLIFE';
    const file=await getHistoryPdf(pool,req.params.id,dir);
-   res.set({'Content-Type':'application/pdf','Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,'X-Content-Type-Options':'nosniff'});
+   res.set({'Content-Type':/\.txt$/i.test(file.filename)?`text/plain; charset=${file.bytes[0]===255&&file.bytes[1]===254?'utf-16le':file.bytes[0]===254&&file.bytes[1]===255?'utf-16be':'utf-8'}`:'application/pdf','Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,'X-Content-Type-Options':'nosniff'});
    res.send(file.bytes);
   }catch(e){
    res.status(400).json({ok:false,error:e.message});

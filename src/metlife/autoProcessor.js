@@ -140,6 +140,7 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
   await fs.mkdir(destDir,{recursive:true});
   const resolvedDir=await fs.realpath(destDir),relative=path.relative(base,resolvedDir);
   if(relative.startsWith('..')||path.isAbsolute(relative))throw new Error('Thư mục ảnh bệnh nhân nằm ngoài AtoZ.');
+  const sourceExtension=/\.txt$/i.test(fileName)?'txt':'pdf';
   const safeClaim=claimNumber.replace(/[^a-zA-Z0-9]/g,'_');
   const prefix=carrier==='DELTA DENTAL'?'DELTA':carrier==='CIGNA'?'CIGNA':carrier==='LIBERTY Dental Plan'?'LIBERTY':'METLIFE';
   const [existingDocs]=await pool.execute('SELECT DocNum,FileName FROM document WHERE PatNum=? AND DocCategory=? AND Description=? AND DateCreated=? AND FileName LIKE ? ORDER BY DocNum DESC LIMIT 5',[patient.PatNum,cats[0].DefNum,description,dateCreated,`${prefix}_%`]);
@@ -151,7 +152,7 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
       if((await fs.readFile(real)).equals(fileBytes))return {docNum:doc.DocNum,savedPath:real,description,dateCreated,reused:true};
     }catch(e){if(e.code!=='ENOENT')throw e;}
   }
-  const destFileName=`${prefix}_${safeClaim}_${paymentDate}_${randomUUID()}.pdf`;
+  const destFileName=`${prefix}_${safeClaim}_${paymentDate}_${randomUUID()}.${sourceExtension}`;
   const fullDestPath=path.join(resolvedDir,destFileName);
   await fs.writeFile(fullDestPath,fileBytes,{flag:'wx'});
   const statement=documentInsert({DocCategory:cats[0].DefNum,PatNum:patient.PatNum,FileName:destFileName,Description:description,DateCreated:dateCreated},columns);
@@ -246,7 +247,10 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   const sourceBytes = await fs.readFile(filePath);
   let document;
   try{
-    if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
+    if(/\.txt$/i.test(fileName)){
+      const {readDeltaTextDocument}=await import('../delta/textDocument.js');
+      document=readDeltaTextDocument(sourceBytes);
+    }else if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
       const {readDeltaDocument}=await import('../delta/document.js');
       document=await readDeltaDocument(sourceBytes,fileName,{extract});
     }else document=await readInsuranceDocument(sourceBytes,fileName,{extract});
@@ -255,7 +259,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   const {extracted,pdfBytes:fileBytes}=document;
   const fullText = extracted.pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n');
 
-  if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
+  if(extracted.sourceFormat==='text'||path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
     const {processDeltaPdf}=await import('../delta/processor.js');
     return processDeltaPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits});
   }
@@ -782,7 +786,7 @@ export function startAutoProcessor({ pool, incomingDir, intervalMs = 30000 }) {
   console.log(`  - MetLife: ${dir}`);
   console.log(`  - Liberty: ${libertyDir} (PDF, JPG, JPEG, PNG)`);
   console.log(`  - CIGNA: ${cignaDir} (PDF)`);
-  console.log(`  - Delta Dental: ${deltaDir} (PDF, JPG, JPEG, PNG)`);
+  console.log(`  - Delta Dental: ${deltaDir} (PDF, JPG, JPEG, PNG, TXT)`);
   console.log(`  - Chu kỳ quét: ${intervalMs / 1000}s/lần`);
 
   // Ensure folders exist so staff can easily see them in Explorer

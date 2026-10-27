@@ -4,7 +4,7 @@ import {processLibertyPdf} from '../liberty/processor.js';
 export function deltaPatientFileNumber(fileName){
  // A downloaded attachment can add a millisecond timestamp before PatNum.
  // Never treat an arbitrary embedded number or the timestamp as a patient hint.
- const number=/^(?:\d{13}_)?(\d{1,12})\.(?:pdf|jpe?g|png)$/i.exec(fileName||'')?.[1];
+ const number=/^(?:\d{13}_)?(\d{1,12})\.(?:pdf|jpe?g|png|txt)$/i.exec(fileName||'')?.[1];
  return number&&Number.isSafeInteger(Number(number))&&Number(number)>0?number:null;
 }
 

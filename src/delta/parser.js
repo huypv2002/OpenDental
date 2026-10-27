@@ -6,7 +6,7 @@ const signature=p=>JSON.stringify([p.date,p.code,p.tooth,p.feeCents,p.allowedCen
 const fail=(message)=>Object.assign(new Error(message),{code:'EOB_REVIEW_REQUIRED'});
 
 export function parseDelta(extracted){
- const errors=[],warnings=[],claims=[],claimTexts=new Map();let current;
+ const errors=[],warnings=[...(extracted.warnings||[])],claims=[],claimTexts=new Map();let current;
  try{
  for(const page of extracted.pages){
   const lines=page.lines.map(l=>l.text.trim()).filter(Boolean),text=lines.join('\n');

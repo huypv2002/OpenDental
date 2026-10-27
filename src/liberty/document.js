@@ -4,7 +4,7 @@ import path from 'node:path';
 import {extractPdf} from '../metlife/parser.js';
 
 const require=createRequire(import.meta.url);
-export const isInsuranceFile=name=>/\.(pdf|jpe?g|png)$/i.test(name);
+export const isInsuranceFile=name=>/\.(pdf|jpe?g|png|txt)$/i.test(name);
 export const isImageFile=name=>/\.(jpe?g|png)$/i.test(name);
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 
