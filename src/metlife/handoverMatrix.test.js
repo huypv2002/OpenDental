@@ -118,3 +118,47 @@ test('HANDOVER CIGNA: unsupported JPEG stops before database access',async()=>{
   await assert.rejects(processSinglePdf({execute:async()=>{queries++;}},file),e=>e.code==='EOB_REVIEW_REQUIRED'&&/chưa xử lý ảnh CIGNA/.test(e.message));assert.equal(queries,0);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('HANDOVER METLIFE: multiple patients/claim summaries are refused before database access',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-multi-review-'));try{
+  const file=path.join(root,'1279.txt');await fs.writeFile(file,metlifeText+'\f'+metlifeText.replaceAll('1234567890','1234567891'));
+  let queries=0;await assert.rejects(processSinglePdf({execute:async()=>{queries++;}},file),/một Claim Number/);assert.equal(queries,0);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+for(const carrier of ['CIGNA','DELTA DENTAL']){
+ const first=carrier==='CIGNA'?cignaText:delta;
+ const second=first.replaceAll('TEST PERSON','OTHER PERSON').replaceAll('E262868007800','E262868007801').replaceAll('20262965110923','20262965110924').replaceAll('115084523301','123456789012').replaceAll('10/15/2026','10/16/2026');
+ const parse=carrier==='CIGNA'?parseCigna:parseDelta;
+ async function batchFixture(){
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'insurance-multi-')),text=first+'\f'+second;
+  const extracted=readInsuranceTextDocument(Buffer.from(text)).extracted,parsed=parse(extracted);assert.deepEqual(parsed.errors,[]);assert.equal(parsed.claims.length,2);
+  const f=await insuranceLedger(root,parsed.claims.map((c,i)=>({patNum:500+i,firstName:c.patient.firstName,lastName:c.patient.lastName,memberId:c.patient.memberId,claimNumber:c.claimNumber,procedures:c.procedures,serviceDate:c.procedures[0].date})));
+  const file=path.join(root,'batch.txt');await fs.writeFile(file,text);return {root,text,file,parsed,f};
+ }
+ test(`HANDOVER ${carrier}: two patients keep separate payments, dates, services and IDs across a renamed TXT retry`,async()=>{
+  const x=await batchFixture(),{f}=x;try{
+   for(const file of [x.file,path.join(x.root,'batch-copy.txt')]){await fs.writeFile(file,x.text);await processSinglePdf(f.pool,file,{hashSplits:f.hashes});}
+   assert.equal(f.payments.length,2);assert.equal(f.documents.length,2);assert.equal(f.history.length,2);assert.equal(f.addedAudit.length,0);
+   for(const [i,c] of x.parsed.claims.entries()){
+    const payment=f.payments.find(p=>p.PatNum===500+i);assert.equal(payment.PayDate,c.date);assert.equal(Math.round(Number(payment.PayAmt)*100),c.totals.planPaidCents);
+    const splits=f.splits.filter(s=>s.PayNum===payment.PayNum);assert.ok(splits.every(s=>s.PatNum===500+i));assert.equal(splits.reduce((n,s)=>n+Math.round(Number(s.SplitAmt)*100),0),c.totals.planPaidCents);
+   }
+  }finally{await fs.rm(x.root,{recursive:true,force:true});}
+ });
+ test(`HANDOVER ${carrier}: second-patient ambiguity stops the entire batch before the first payment or document`,async()=>{
+  const x=await batchFixture(),{f}=x;try{
+   const row=f.procs.find(p=>p.PatNum===501);f.procs.push({...row,ProcNum:99000});
+   await assert.rejects(processSinglePdf(f.pool,x.file,{hashSplits:f.hashes}),e=>e.code==='EOB_REVIEW_REQUIRED');
+   assert.equal(f.payments.length,0);assert.equal(f.documents.length,0);assert.equal(f.addedAudit.length,0);assert.equal(f.fees.length,0);
+  }finally{await fs.rm(x.root,{recursive:true,force:true});}
+ });
+}
+
+test('HANDOVER COMMON: a simultaneous scan returns busy and never starts a second file processor',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'insurance-scan-busy-')),dir=path.join(root,'METLIFE');await fs.mkdir(dir);const file=path.join(dir,'123.txt');await fs.writeFile(file,'synthetic');await fs.utimes(file,new Date(0),new Date(0));
+ let release,start;const gate=new Promise(r=>release=r),started=new Promise(r=>start=r);let calls=0;
+ const pool={execute:async()=>[[]]},options={processFile:async()=>{calls++;start();await gate;return {success:true};},exportReports:async()=>({status:'ok'})};
+ const pending=scanIncomingFolder(pool,dir,options);
+ try{await started;assert.equal((await scanIncomingFolder(pool,dir,options)).status,'busy');assert.equal(calls,1);release();assert.equal((await pending).count,1);}finally{release();await pending;await fs.rm(root,{recursive:true,force:true});}
+});

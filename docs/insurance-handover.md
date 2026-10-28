@@ -29,6 +29,8 @@ Delta có mã bệnh nhân rõ trong tên file và một claim: chọn đúng Pa
 
 MetLife cũng kiểm tra tên trên EOB khi chọn theo mã file. Mẫu chỉ ghi tên gọi (Ryan/Dien) cần khớp trọn tên gọi trong OD; mẫu ghi đủ họ tên chấp nhận thứ tự họ/tên hoặc tên/họ. Mã file có trong OD nhưng tên khác phải dừng; mã file rõ nhưng không tồn tại không tự chuyển sang bệnh nhân khác theo tên.
 
+Nhiều bệnh nhân: Liberty có mẫu PDF/JPEG thực hai bệnh nhân trong cùng check. CIGNA và Delta có batch TXT mô phỏng với một claim trên mỗi trang, giữ riêng patient/date/payment và kiểm tra toàn bộ batch trước khi ghi. MetLife hiện yêu cầu đúng một Claim Number mỗi file; file gộp nhiều claim bị chặn trước DB, cần tách file.
+
 Mỗi hãng có case riêng cho: thanh toán TXT đầy đủ, note/check/date, ước tính/write-off = 0 đúng phạm vi, Excel một lần, chạy lại đổi tên, ExternalId rỗng nhưng claim note khớp, khoản cũ khác tiền/ngày/phân bổ, nhiều khoản cùng claim, dịch vụ trùng mơ hồ, native hash lỗi, lịch sử lỗi sau khi đã ghi tiền, lỗi ghi split và việc bỏ qua các folder con. Các test nguồn và fixture thực bổ sung kiểm tra parser/scan/PDF/ảnh/nhiều bệnh nhân theo từng hãng.
 
 ## Kịch bản demo 15–20 phút

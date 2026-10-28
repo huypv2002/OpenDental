@@ -477,8 +477,13 @@ async function triggerServerScan() {
   btn.textContent = '⏳ Đang quét server...';
   try {
     const res = await request('scan-server');
-    toast(`Đã quét xong: ${res?.count ?? 0} file được xử lý.`);
-    addEvent(`Đã quét thư mục server: ${res?.count ?? 0} file.`);
+    if(res?.status==='busy'){
+      toast('SERVER đang xử lý lượt quét trước. Vui lòng chờ kết quả trong lịch sử.');
+      addEvent('SERVER đang bận quét; chưa khởi chạy thêm lượt mới.');
+    }else{
+      toast(`Đã quét xong: ${res?.count ?? 0} file được xử lý.`);
+      addEvent(`Đã quét thư mục server: ${res?.count ?? 0} file.`);
+    }
     await loadServerHistory();
   } catch (err) {
     toast(`Lỗi khi quét server: ${err.message}`);
