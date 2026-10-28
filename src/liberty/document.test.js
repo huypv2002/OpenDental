@@ -82,8 +82,8 @@ test('matched procedure IDs keep repeated codes on different teeth separate duri
   if(sql.includes('SUM('))return [[{TotalCharges:26,TotalPaid:0}]];
   return [{affectedRows:1}];
  }};
- await autoPopulateProcedureFees(pool,{patNum:99,dbProcs:[{ProcNum:1,ProcCode:'D0220',ProcDate:'2026-09-17'},{ProcNum:2,ProcCode:'D0220',ProcDate:'2026-09-17'}],eobProcedures:[{procNum:2,code:'D0220',date:'2026-09-17',benefitCents:1400},{procNum:1,code:'D0220',date:'2026-09-17',benefitCents:1200}]});
- assert.deepEqual(updates,[['14.00',2],['12.00',1]]);
+ await autoPopulateProcedureFees(pool,{patNum:99,dbProcs:[{ProcNum:1,ProcCode:'D0220',ProcDate:'2026-09-17'},{ProcNum:2,ProcCode:'D0220',ProcDate:'2026-09-17'}],eobProcedures:[{procNum:2,code:'D0220',date:'2026-09-17',feeCents:2500,benefitCents:1400},{procNum:1,code:'D0220',date:'2026-09-17',feeCents:3800,benefitCents:1200}]});
+ assert.deepEqual(updates,[['25.00',2],['38.00',1]]);
 });
 
 test('OCR preflights every claim before the first import or payment',async()=>{

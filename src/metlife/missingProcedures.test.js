@@ -9,7 +9,7 @@ import {insuranceLedger} from './testSupport/insuranceLedger.js';
 const paid={code:'D0210',date:'2026-04-26',tooth:'',benefitCents:7300,feeCents:14300};
 const denied={...paid,code:'D0220',benefitCents:0};
 test('only paid missing services are planned; existing/ambiguous rows are not replaced',()=>{
- const p=planMissingProcedures([], [paid,denied]);assert.equal(p.additions.length,1);assert.equal(p.procs[0].ProcFee,'73.00');assert.ok(p.procs[0].ProcNum<0);
+ const p=planMissingProcedures([], [paid,denied]);assert.equal(p.additions.length,1);assert.equal(p.procs[0].ProcFee,'143.00');assert.ok(p.procs[0].ProcNum<0);
  const existing={...p.procs[0],ProcNum:123};assert.equal(planMissingProcedures([existing],[paid]).additions.length,0);
  assert.throws(()=>planMissingProcedures([existing,{...existing,ProcNum:124}],[paid]),/trùng ngày/);
  assert.throws(()=>planMissingProcedures([],[paid,{...paid}]),/nhiều dòng/);
@@ -23,7 +23,7 @@ test('missing service uses existing catalog code, creates a completed paid proce
  try{
   const plan=planMissingProcedures(f.procs,[paid,denied]);const saved=await createMissingProcedures(f.pool,{plan,patient:f.patients[0],claimNumber:'TEST1',carrier:'DELTA DENTAL'});
   assert.equal(saved.length,1);assert.equal(saved[0].newCode,false);assert.equal(f.addedAudit.length,1);
-  const row=f.procs.find(p=>p.ProcNum===saved[0].procNum);assert.equal(row.ProcFee,'73.00');assert.equal(row.ProcStatus,2);assert.equal(row.PatNum,99);assert.equal(row.ProvNum,1);assert.equal(row.UnitQty,1);
+  const row=f.procs.find(p=>p.ProcNum===saved[0].procNum);assert.equal(row.ProcFee,'143.00');assert.equal(row.ProcStatus,2);assert.equal(row.PatNum,99);assert.equal(row.ProvNum,1);assert.equal(row.UnitQty,1);
   const again=planMissingProcedures([], [paid]);const reused=await createMissingProcedures(f.pool,{plan:again,patient:f.patients[0],claimNumber:'TEST1',carrier:'DELTA DENTAL'});
   assert.equal(reused[0].procNum,row.ProcNum);assert.equal(reused[0].reused,true);assert.equal(f.addedAudit.length,1);assert.ok(!f.procs.some(p=>p.ProcCode==='D0220'));
  }finally{await fs.rm(root,{recursive:true,force:true});}

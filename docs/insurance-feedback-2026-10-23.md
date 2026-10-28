@@ -43,7 +43,7 @@ After this fix, the full four-carrier suite with the original private fixtures a
 
 ## Add missing paid services (all four carriers)
 
-Per the subsequent clinic instruction, retain every positive insurance-benefit allocation in the validated claim. When the patient's completed service is absent, create a completed procedure for that patient with the EOB service date/tooth/surface, primary provider and clinic, and fee equal to that line's insurance benefit (the existing settlement convention). Zero-benefit rows do not create procedures. Missing dates, unreadable anatomy, ambiguous duplicate rows and pending matching procedures require review.
+Per the subsequent clinic instruction, retain every positive insurance-benefit allocation in the validated claim. When the patient's completed service is absent, create a completed procedure for that patient with the EOB service date/tooth/surface, primary provider and clinic, and a procedure fee selected from the carrier-specific column confirmed on 28/10/2026; see [procedure fee rules](insurance-procedure-fees-2026-10-28.md). This supersedes the earlier benefit-as-fee convention. Zero-benefit rows do not create procedures. Missing dates, unreadable anatomy, ambiguous duplicate rows and pending matching procedures require review.
 
 Use an existing procedurecode when present. A missing catalog code is added with its source description (or the code itself), source treatment area, and first visible procedure category. These are minimal source-based catalog entries, not a replacement CDT catalog. Refresh/reopen OD to load newly added catalog entries.
 

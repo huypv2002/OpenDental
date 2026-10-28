@@ -11,6 +11,7 @@ import { odSecurityLogHash } from './directPayment.js';
 import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
 import {documentInsert} from './documentImport.js';
 import {readInsuranceDocument,isInsuranceFile,isImageFile,imagePdf} from '../liberty/document.js';
+import {procedureFeeCents} from './procedureFee.js';
 import {resolveFilePatient} from './patientFileIdentity.js';
 import {exportDailyReports} from './dailyExcel.js';
 
@@ -105,7 +106,7 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
   return {docNum:docRes.insertId,savedPath:fullDestPath,description,dateCreated};
 }
 
-export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbProcs, settlement }) {
+export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbProcs, settlement, carrier='MetLife', onlyChanged=false }) {
   const procs = dbProcs || (await db.execute(
     `SELECT procedurelog.ProcNum, procedurelog.ProcDate, procedurelog.ProcFee, procedurecode.ProcCode, procedurelog.CodeNum
      FROM procedurelog
@@ -118,7 +119,7 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
 
   for (const item of eobProcedures) {
     if (!item.code || !item.benefitCents || item.benefitCents <= 0) continue;
-    const splitFee = (item.benefitCents / 100).toFixed(2);
+    const procedureFee = (procedureFeeCents(item,carrier) / 100).toFixed(2);
 
     // Find matching completed procedure
     let match = item.procNum ? procs.find(p=>p.ProcNum===item.procNum) : procs.find(
@@ -128,21 +129,22 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
       match = procs.find((p) => p.ProcCode === item.code);
     }
 
-    if (match) {
-      await db.execute('UPDATE procedurelog SET ProcFee = ? WHERE ProcNum = ?', [splitFee, match.ProcNum]);
+    const billingRows=match&&settlement?settlement.rows.filter(r=>String(r.ProcNum)===String(match.ProcNum)):[];
+    if (match && (!onlyChanged || Math.round(Number(match.ProcFee)*100)!==procedureFeeCents(item,carrier) || billingRows.some(r=>Math.round(Number(r.FeeBilled)*100)!==procedureFeeCents(item,carrier)))) {
+      await db.execute('UPDATE procedurelog SET ProcFee = ? WHERE ProcNum = ?', [procedureFee, match.ProcNum]);
       if(settlement){
         const ids=settlement.rows.filter(r=>String(r.ProcNum)===String(match.ProcNum)).map(r=>r.ClaimProcNum);
-        if(ids.length)await db.execute(`UPDATE claimproc SET FeeBilled=? WHERE PatNum=? AND ClaimProcNum IN (${ids.map(()=>'?').join(',')})`,[splitFee,patNum,...ids]);
-      }else await db.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [splitFee, match.ProcNum]);
-      updatedFees.push(`${item.code}: $${splitFee}`);
-      match.ProcFee = splitFee;
+        if(ids.length)await db.execute(`UPDATE claimproc SET FeeBilled=? WHERE PatNum=? AND ClaimProcNum IN (${ids.map(()=>'?').join(',')})`,[procedureFee,patNum,...ids]);
+      }else await db.execute('UPDATE claimproc SET FeeBilled = ? WHERE ProcNum = ?', [procedureFee, match.ProcNum]);
+      updatedFees.push(`${item.code}: $${procedureFee}`);
+      match.ProcFee = procedureFee;
     }
   }
 
   // Any procedure not in EOB (or without benefit, like unsent bitewings/panoramic/periapicals): keep at 0.00
   for (const p of procs) {
     const isEob = eobProcedures.some((ep) => (ep.procNum ? ep.procNum===p.ProcNum : ep.code === p.ProcCode) && ep.benefitCents > 0);
-    if (!isEob) {
+    if (!isEob && (!onlyChanged || Number(p.ProcFee)!==0)) {
       await db.execute('UPDATE procedurelog SET ProcFee = 0.00 WHERE ProcNum = ?', [p.ProcNum]);
       if(settlement){
         const ids=settlement.rows.filter(r=>String(r.ProcNum)===String(p.ProcNum)).map(r=>r.ClaimProcNum);
@@ -298,7 +300,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     amountCents: parsed.benefitCents
   });
 
-  const updatedFees=existing?[]:await autoPopulateProcedureFees(pool,{patNum,eobProcedures:parsed.procedures.map(p=>({...p,procNum:matchedProcedures.get(p)?.ProcNum})),dbProcs:dbProcs.filter(p=>settlement.procIds.includes(String(p.ProcNum))),settlement});
+  const updatedFees=await autoPopulateProcedureFees(pool,{patNum,onlyChanged:!!existing,eobProcedures:parsed.procedures.map(p=>({...p,procNum:matchedProcedures.get(p)?.ProcNum})),dbProcs:dbProcs.filter(p=>settlement.procIds.includes(String(p.ProcNum))),settlement});
 
   // 4. Generate SecurityHash for each split
   const hashPlan = {

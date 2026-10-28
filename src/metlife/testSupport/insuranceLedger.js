@@ -64,8 +64,13 @@ export async function insuranceLedger(root,claims){
   if(sql.includes('SUM(ProcFee)'))return [[{TotalCharges:0}]];
   if(sql.includes('SUM(SplitAmt)'))return [[{TotalPaid:0}]];
   if(sql.includes('SUM(FeeBilled)'))return [[{TotalFee:0}]];
-  if(sql.startsWith('UPDATE procedurelog')){fees.push(args);return [{affectedRows:1}];}
-  if(sql.startsWith('UPDATE claimproc SET FeeBilled'))return [{affectedRows:1}];
+  if(sql.startsWith('UPDATE procedurelog')){fees.push(args);const p=procs.find(p=>String(p.ProcNum)===String(args.at(-1)));if(p)p.ProcFee=args.length>1?args[0]:'0.00';return [{affectedRows:1}];}
+  if(sql.startsWith('UPDATE claimproc SET FeeBilled')){
+   const scoped=sql.includes('ClaimProcNum IN'),zero=/FeeBilled\s*=\s*0/.test(sql),value=zero?0:Number(args[0]),offset=zero?0:1;
+   const rows=scoped?byIds(claimprocs,args[offset],args.slice(offset+1)):claimprocs.filter(r=>String(r.ProcNum)===String(args.at(-1)));
+   for(const r of rows)r.FeeBilled=value;
+   return [{affectedRows:rows.length}];
+  }
   if(sql.startsWith('UPDATE claim SET')){assert.ok(sql.includes('ClaimNum'),'must scope claim updates');return [{affectedRows:1}];}
   if(sql.startsWith('UPDATE patient SET BalTotal'))return [{affectedRows:1}];
   throw Error('Unexpected fixture query '+sql);

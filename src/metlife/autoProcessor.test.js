@@ -84,8 +84,8 @@ test('autoPopulateProcedureFees updates 0.00 ProcFee to submitted fee from EOB',
   });
 
   assert.equal(updatedFees.length, 2);
-  assert.match(updatedFees[0], /D0120: \$86\.40/);
-  assert.match(updatedFees[1], /D1208: \$45\.00/);
+  assert.match(updatedFees[0], /D0120: \$96\.00/);
+  assert.match(updatedFees[1], /D1208: \$50\.00/);
 
   assert.equal(executedUpdates.filter((u) => u.type === 'procedurelog').length, 2);
   assert.equal(executedUpdates.filter((u) => u.type === 'claimproc').length, 2);

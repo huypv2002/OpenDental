@@ -1,3 +1,4 @@
+import {procedureFeeCents} from './procedureFee.js';
 import {procedureDay,reviewError} from './insuranceSettlement.js';
 import {procedureAreaKey,procedureAreaMatches,procedureQuadrant,procedureArch,procedureCandidates} from './procedureIdentity.js';
 
@@ -12,9 +13,10 @@ function anatomy(p){
 }
 
 // Pure preflight: negative IDs reserve missing rows until ALL claims validate.
-export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=false,metlife=false}={}){
+export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=false,metlife=false,carrier='MetLife'}={}){
  const procs=[...dbProcs],additions=[],seen=new Set();
  for(const p of procedures.filter(p=>p.benefitCents>0)){
+  const chargeCents=procedureFeeCents(p,carrier);
   const key=JSON.stringify([p.code,p.date||'',procedureAreaKey(p)]);
   if(seen.has(key))throw reviewError(`${p.code}: nhiều dòng trả tiền cùng ngày/răng; cần đối chiếu trước khi thêm dịch vụ.`);
   seen.add(key);
@@ -28,7 +30,7 @@ export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=fa
   const date=/^\d{4}-\d{2}-\d{2}$/.test(p.date||'')?new Date(p.date+'T12:00:00Z'):null;
   if(!/^D\d{4}$/.test(p.code)||!date||Number.isNaN(+date)||date.toISOString().slice(0,10)!==p.date||!Number.isSafeInteger(p.benefitCents)||p.benefitCents<=0)throw reviewError(`${p.code}: thiếu ngày/mã/số tiền để thêm dịch vụ.`);
   if(p.tooth&&!/^(?:0?[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(p.tooth))throw reviewError(`${p.code}: chưa đọc rõ răng để thêm dịch vụ.`);
-  const virtual={ProcNum:-(additions.length+1),ProcCode:p.code,ProcDate:p.date,ToothNum:anatomy(p).ToothNum,Surf:anatomy(p).Surf,ProcFee:(p.benefitCents/100).toFixed(2),Descript:p.description||p.desc||p.code};
+  const virtual={ProcNum:-(additions.length+1),ProcCode:p.code,ProcDate:p.date,ToothNum:anatomy(p).ToothNum,Surf:anatomy(p).Surf,ProcFee:(chargeCents/100).toFixed(2),Descript:p.description||p.desc||p.code};
   procs.push(virtual);additions.push({source:p,row:virtual});
  }
  return {procs,additions,sourceProcedures:procedures};
@@ -100,9 +102,9 @@ export async function createMissingProcedures(pool,{plan,patient,claimNumber,car
    const procNum=await insertModel(conn,'procedurelog',procColumns,{PatNum:patient.PatNum,CodeNum:code.CodeNum,ProcStatus:2,ProcDate:p.date,DateTP:p.date,DateComplete:p.date,ProcFee:row.ProcFee,ProvNum:patient.PriProv,ClinicNum:patient.ClinicNum||0,ToothNum:area.ToothNum,Surf:area.Surf,UnitQty:1,BaseUnits:0,SecDateEntry:new Date(),SecDateTEdit:new Date(),BillingNote:`EOB ${carrier}; Claim number: ${claimNumber}`});
    const [saved]=await conn.execute('SELECT ProcNum,PatNum,CodeNum,ProcStatus,ProcDate,ToothNum,Surf,ProcFee,ProvNum,ClinicNum FROM procedurelog WHERE ProcNum=?',[procNum]);
    const s=saved[0];
-   if(saved.length!==1||String(s.PatNum)!==String(patient.PatNum)||String(s.CodeNum)!==String(code.CodeNum)||Number(s.ProcStatus)!==2||procedureDay(s.ProcDate)!==p.date||!sameTooth(s.ToothNum,area.ToothNum)||String(s.Surf||'')!==area.Surf||Math.round(Number(s.ProcFee)*100)!==p.benefitCents||String(s.ProvNum)!==String(patient.PriProv)||String(s.ClinicNum||0)!==String(patient.ClinicNum||0))throw reviewError(`${p.code}: chưa xác minh dịch vụ vừa thêm; kiểm tra trước khi chạy lại.`);
+   if(saved.length!==1||String(s.PatNum)!==String(patient.PatNum)||String(s.CodeNum)!==String(code.CodeNum)||Number(s.ProcStatus)!==2||procedureDay(s.ProcDate)!==p.date||!sameTooth(s.ToothNum,area.ToothNum)||String(s.Surf||'')!==area.Surf||Math.round(Number(s.ProcFee)*100)!==Math.round(Number(row.ProcFee)*100)||String(s.ProvNum)!==String(patient.PriProv)||String(s.ClinicNum||0)!==String(patient.ClinicNum||0))throw reviewError(`${p.code}: chưa xác minh dịch vụ vừa thêm; kiểm tra trước khi chạy lại.`);
    Object.assign(row,s,{ProcCode:p.code,Descript:code.Descript});
-   const receipt={oldId,procNum,codeNum:code.CodeNum,code:p.code,date:p.date,tooth:row.ToothNum,amountCents:p.benefitCents,newCode};
+   const receipt={oldId,procNum,codeNum:code.CodeNum,code:p.code,date:p.date,tooth:row.ToothNum,amountCents:Math.round(Number(row.ProcFee)*100),benefitCents:p.benefitCents,newCode};
    await conn.execute('INSERT INTO luk_eob_added_procedures (PatNum,ProcNum,CodeNum,ClaimNumber,Carrier,Details,CreatedAt) VALUES (?,?,?,?,?,?,NOW())',[patient.PatNum,procNum,code.CodeNum,claimNumber,carrier,JSON.stringify(receipt)]);
    result.push(receipt);
   }

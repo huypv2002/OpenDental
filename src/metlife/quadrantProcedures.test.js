@@ -44,7 +44,7 @@ test('MetLife same-code/day quadrants receive separate fees, payment splits and 
   await fs.writeFile(file,bytes);await processSinglePdf(f.pool,file,{extract:async()=>extracted,hashSplits:f.hashes});
   assert.equal(f.payments.length,1);assert.equal(Number(f.payments[0].PayAmt),468.8);
   assert.deepEqual(f.splits.map(s=>[s.ProcNum,s.SplitAmt]),[[1000,'200.00'],[1001,'268.80']]);
-  assert.deepEqual(f.fees,[['200.00',1000],['268.80',1001]]);
+  assert.deepEqual(f.fees,[['400.00',1000],['400.00',1001]]);
   assert.deepEqual(JSON.parse(f.history[0].Details).procedures.map(p=>[p.procNum,p.surface]),[[1000,'UR'],[1001,'UL']]);
   assert.equal(f.addedAudit.length,0);
   await fs.writeFile(file,bytes);await processSinglePdf(f.pool,file,{extract:async()=>extracted,hashSplits:f.hashes});
@@ -65,7 +65,7 @@ test('private MetLife quadrant PDF: six exact allocations, leading-zero tooth an
  try{
   await fs.writeFile(file,bytes);await processSinglePdf(f.pool,file,{hashSplits:f.hashes});
   assert.deepEqual(f.splits.map(s=>s.ProcNum),[1000,1001,1002,1003,1004,1005]);
-  assert.deepEqual(f.fees,[['56.80',1000],['93.60',1001],['65.60',1002],['93.60',1003],['93.60',1004],['65.60',1005]]);
+  assert.deepEqual(f.fees,[['100.00',1000],['150.00',1001],['120.00',1002],['150.00',1003],['150.00',1004],['120.00',1005]]);
   assert.equal(f.payments.length,1);assert.equal(f.payments[0].PayDate,'2026-06-17');assert.equal(Number(f.payments[0].PayAmt),468.8);
   const report=await appendDailyWorkbook(f.pool,f.history,path.join(root,'report.xlsx'),'2026-10-23');assert.equal(report.appended,1);assert.equal(report.reviewCount,0);
   await fs.writeFile(file,bytes);await processSinglePdf(f.pool,file,{hashSplits:f.hashes});

@@ -1,3 +1,4 @@
+import {procedureFeeCents} from '../metlife/procedureFee.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -64,7 +65,7 @@ export function libertySplitPlan(claim,check,patient,matches){
  return splitsPlan;
 }
 
-export async function prepareLibertyClaimPayload(pool, { claim, check, patient, dbProcs: suppliedProcs, settlement, hashSplits=nativeSplitHashes }) {
+export async function prepareLibertyClaimPayload(pool, { claim, check, patient, dbProcs: suppliedProcs, settlement, carrier=claim.plan?.carrier||'LIBERTY Dental Plan', hashSplits=nativeSplitHashes }) {
   const patNum = patient.PatNum;
   const clinicNum = patient.ClinicNum || 0;
   const provNum = patient.PriProv || 1;
@@ -83,12 +84,14 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
     date: p.date,
     benefitCents: p.benefitCents,
     feeCents: p.feeCents,
+    allowedCents: p.allowedCents,
     tooth: p.tooth
   }));
 
   const updatedFees = await autoPopulateProcedureFees(pool, {
     patNum,
     eobProcedures,
+    carrier,
     settlement,
     dbProcs:dbProcs.filter(p=>settlement?settlement.procIds.includes(String(p.ProcNum)):claimDates.has(procedureDay(p.ProcDate)))
   });
@@ -132,7 +135,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     // Resolve every patient/procedure before importing or changing fees for the first claim.
     try{for(const claim of parsed.claims){
       const patient=await patientResolver(pool,{claim,strictMember:!!extracted.ocr||!!extracted.textCarrier,fileName,claimsCount:parsed.claimsCount});
-      const missingPlan=planMissingProcedures(await libertyProcedures(pool,patient.PatNum),claim.procedures,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
+      const missingPlan=planMissingProcedures(await libertyProcedures(pool,patient.PatNum),claim.procedures,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan',carrier});
       const dbProcs=missingPlan.procs;
       const matches=matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
       const check={...parsed.check,...claim.check},splits=libertySplitPlan(claim,check,patient,matches);
@@ -194,7 +197,11 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     // Prepare payload
     log(`[${label} Auto-Processor] Claim #${claimNumber}: đối chiếu dịch vụ, cập nhật phí và chuẩn bị phân bổ...`);
     const checked=preflight.get(claim.claimNumber);
-    const payload=checked.existing?{splits:checked.splits,updatedFees:[]}:await preparePayload(pool, { claim, check: claimCheck, patient, dbProcs:checked.dbProcs,settlement:checked.settlement,hashSplits });
+    const payload=checked.existing?{splits:checked.splits,updatedFees:await autoPopulateProcedureFees(pool,{
+      patNum,carrier,onlyChanged:true,settlement:checked.settlement,
+      eobProcedures:claim.procedures.map(p=>({...p,procNum:checked.matches.get(p)?.ProcNum})),
+      dbProcs:checked.dbProcs.filter(p=>checked.settlement.procIds.includes(String(p.ProcNum)))
+    })}:await preparePayload(pool, { claim, check: claimCheck, patient, carrier, dbProcs:checked.dbProcs,settlement:checked.settlement,hashSplits });
 
     // Select Payment Type
     log(`[${label} Auto-Processor] Claim #${claimNumber}: chọn loại thanh toán...`);
@@ -343,6 +350,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
         tooth: p.tooth,
         status: p.status,
         feeCents: p.feeCents,
+        procedureFeeCents:procedureFeeCents(p,carrier),
         benefitCents: p.benefitCents
       }))
     });

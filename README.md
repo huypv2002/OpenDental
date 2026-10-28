@@ -2,6 +2,8 @@
 
 Small Node.js API for reading available appointment slots and creating website bookings in Open Dental. WordPress should call this API instead of connecting directly to MySQL.
 
+Insurance procedure Amount uses MetLife Fee Charged, Liberty Allowed Amount, CIGNA Amount Charged, or Delta Accepted Fee; insurance payments keep the validated benefit amount. See [procedure fee rules and replay correction](docs/insurance-procedure-fees-2026-10-28.md).
+
 ## Liberty EOB: PDF and images
 
 The insurance scanner accepts `.pdf`, `.jpg`, `.jpeg`, and `.png` in the existing `LIBERTY` folder alongside the configured MetLife incoming folder. PDFs with embedded text retain their existing extraction path. Image-only PDFs (up to 10 pages) and images use local English OCR with language files installed through npm; document contents are not sent to an OCR service. Maximum source size: 30 MB; maximum image/page size: 25 million pixels. Clear, upright images with the complete payment table are required.

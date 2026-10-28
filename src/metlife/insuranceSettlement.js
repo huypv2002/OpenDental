@@ -17,7 +17,7 @@ export async function prepareInsuranceSettlement(db,{patNum,carrier,procedures,d
  }
  if(!ids.size)throw reviewError('Chưa xác định dịch vụ để đặt Insurance Estimate và Write-off về 0.');
  const name=carrier==='LIBERTY Dental Plan'?'LIBERTY':carrier==='DELTA DENTAL'?'DELTA':carrier;
- const [rows]=await db.execute(`SELECT cp.ClaimProcNum,cp.PatNum,cp.ProcNum,cp.ClaimNum,cp.PlanNum,cp.InsSubNum,cp.Status,cp.InsPayAmt,cp.ClaimPaymentNum,${insuranceZeroFields.map(f=>`cp.${f}`).join(',')}
+ const [rows]=await db.execute(`SELECT cp.ClaimProcNum,cp.PatNum,cp.ProcNum,cp.ClaimNum,cp.PlanNum,cp.InsSubNum,cp.Status,cp.InsPayAmt,cp.ClaimPaymentNum,cp.FeeBilled,${insuranceZeroFields.map(f=>`cp.${f}`).join(',')}
  FROM claimproc cp JOIN insplan ip ON ip.PlanNum=cp.PlanNum JOIN carrier ca ON ca.CarrierNum=ip.CarrierNum
  WHERE cp.PatNum=? AND cp.ProcNum IN (${marks([...ids])}) AND cp.Status IN (0,1,4,6) AND UPPER(ca.CarrierName) LIKE ?`,[patNum,...ids,`%${name.toUpperCase()}%`]);
  const claimIds=[...new Set(rows.filter(r=>Number(r.ClaimNum)>0).map(r=>String(r.ClaimNum)))];
@@ -73,6 +73,7 @@ export async function recordInsuranceResult(db,values){
  if(previous.length){
   let details=previous[0].Details||{};if(typeof details==='string')details=JSON.parse(details);
   const next=JSON.parse(values[12]);details={...details,insuranceDefaults:next.insuranceDefaults,lastVerifiedAt:new Date().toISOString()};
+  if(next.updatedFees?.length)details.feeCorrection={updatedFees:next.updatedFees,verifiedAt:details.lastVerifiedAt};
   await db.execute('UPDATE luk_metlife_history SET Details=?,Message=? WHERE Id=?',[JSON.stringify(details),'Đã đối chiếu khoản thanh toán đã lưu; Insurance Estimate và Write-off bằng 0.',previous[0].Id]);
   return {reused:true,id:previous[0].Id};
  }

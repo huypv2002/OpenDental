@@ -211,12 +211,12 @@ export function parseLiberty(extracted) {
           tooth: p.tooth,
           amountCents: p.benefitCents,
           amount: (p.benefitCents / 100).toFixed(2),
-          feeCents: p.benefitCents,
+          feeCents: p.allowedCents,
           description: p.description
         })),
       feesToUpdate: procedures.map((p) => ({
         code: p.code,
-        fee: (p.benefitCents / 100).toFixed(2),
+        fee: (p.allowedCents / 100).toFixed(2),
         isApproved: p.benefitCents > 0
       }))
     };
