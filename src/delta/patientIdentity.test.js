@@ -26,7 +26,7 @@ test('Delta recognizes plain PatNum or a single download timestamp prefix, never
  for(const [file,expected] of [['423.pdf','423'],['1792789329060_423.pdf','423'],['1792789329060_423.JPEG','423'],['1792789329060.pdf',null],['note_423.pdf',null],['423_more.pdf',null],['1792789329060_423_424.pdf',null],['0.pdf',null],['9007199254740992.pdf',null]])assert.equal(deltaPatientFileNumber(file),expected);
 });
 
-test('Delta matches TOAN in OD against QUOC TOAN in EOB only with the same PatNum, DOB, surname and subscriber',async()=>{
+test('Delta matches TOAN in OD against QUOC TOAN in EOB with the same PatNum and surname',async()=>{
  const f=fixture();try{
   f.add(423);f.add(424);f.add(425,{first:'QUOC TOAN'});
   for(const file of ['423.pdf','1792789329060_423.pdf'])assert.equal((await f.resolve(file)).PatNum,423);
@@ -35,7 +35,7 @@ test('Delta matches TOAN in OD against QUOC TOAN in EOB only with the same PatNu
 });
 
 test('Delta abbreviated-name match still rejects every identity mismatch and never writes during lookup',async()=>{
- for(const change of [{first:'TOANN'},{last:'OTHER'},{birth:'1960-04-04'},{member:'other-member'},{plan:2}]){
+ for(const change of [{first:'TOANN'},{last:'OTHER'}]){
   const f=fixture();try{
    f.add(423,change);const before=f.db.prepare('SELECT total_changes() AS n').get().n;
    await assert.rejects(f.resolve(),/duy nhất/);
@@ -61,7 +61,8 @@ test('Delta identity diagnostics identify each mismatch without exposing subscri
    f.add(423,change);const before=f.db.prepare('SELECT total_changes() AS n').get().n;
    const result=await diagnoseDeltaPatient(f.pool,{claim:f.claim,fileName:'423.txt',claimsCount:1});
    assert.equal(result[key],false);assert.equal(result.patientExists,true);
-   await assert.rejects(f.resolve('423.txt'),e=>e.message.includes(label)&&!e.message.includes('test-member-423')&&!e.message.includes('other-member'));
+   if(['firstNameMatches','lastNameMatches'].includes(key))await assert.rejects(f.resolve('423.txt'),e=>e.message.includes(label));
+   else assert.equal((await f.resolve('423.txt')).PatNum,423);
    assert.equal(f.db.prepare('SELECT total_changes() AS n').get().n,before);
   }finally{f.db.close();}
  }
@@ -77,7 +78,7 @@ test('Delta identity diagnostics distinguish absent patient and a fully matching
  }finally{f.db.close();}
 });
 
-test('Delta joins given-name spaces only for the exact filename-bound patient with every other identity matched',async()=>{
+test('Delta joins given-name spaces only for the exact filename-bound patient with the exact surname',async()=>{
  for(const first of ['VANANH','VAN ANH','Van  Anh']){
   const f=fixture();try{
    f.claim.patient.firstName='Van Anh';f.claim.patient.lastName='Mai';
@@ -89,11 +90,25 @@ test('Delta joins given-name spaces only for the exact filename-bound patient wi
    if(first==='VANANH')await assert.rejects(f.resolve('unlabelled.txt'),/duy nhất/);
   }finally{f.db.close();}
  }
- for(const change of [{first:'VANANN'},{member:'other-member'},{birth:'1960-04-04'},{last:'OTHER'},{plan:2}]){
+ for(const change of [{first:'VANANN'},{last:'OTHER'}]){
   const f=fixture();try{
    f.claim.patient.firstName='Van Anh';f.claim.patient.lastName='Mai';
    f.add(1279,{first:'VANANH',last:'MAI',...change});
    await assert.rejects(f.resolve('1279.txt'),/duy nhất/);
+  }finally{f.db.close();}
+ }
+});
+
+ test('Delta filename plus name accepts different DOB, subscriber and insurance plan per clinic rule',async()=>{
+ for(const file of ['1279.txt','1279.pdf','1793111377468_1279.pdf']){
+  const f=fixture();try{
+   f.claim.patient.firstName='Van Anh';f.claim.patient.lastName='Mai';
+   f.add(1279,{first:'VANANH',last:'MAI',birth:'1980-01-01',member:'different',plan:2});
+   f.db.exec('DELETE FROM patplan');
+   const before=f.db.prepare('SELECT total_changes() AS n').get().n;
+   assert.equal((await f.resolve(file)).PatNum,1279);
+   assert.equal(f.db.prepare('SELECT total_changes() AS n').get().n,before);
+   await assert.rejects(f.resolve('1278.txt'),/duy nhất/);
   }finally{f.db.close();}
  }
 });

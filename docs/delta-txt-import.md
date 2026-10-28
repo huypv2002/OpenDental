@@ -12,9 +12,9 @@ Run `DELTA_TEXT_TEST_FILE=/private/path/1279.txt node --test src/delta/textDocum
 
 ## Identity mismatch diagnostics
 
-When the single-claim filename identifies a patient, a failed identity lookup now lists the fields that did not match: patient number, given name, surname, DOB, Delta insurance, or Subscriber ID on that Delta plan. Matching rules remain unchanged. Missing or conflicting identity still stops payment.
+For a single claim with an exact patient-number filename (`1279.txt`, `1279.pdf`, or a download timestamp followed by `_1279.pdf`), select that PatNum and verify given name and surname. Given-name spaces are ignored (`Van Anh` and `VANANH`); the existing final-given-name alternative (`Quoc Toan` / `Toan`) is retained. DOB, Subscriber ID and the attached insurance plan do not block this filename-bound lookup, per the clinic's updated instruction. A wrong patient number, missing patient or different name still stops payment. Financial validation and payment replay checks are unchanged.
 
-For a single claim whose filename binds the exact PatNum, given-name spaces are ignored (`Van Anh` and `VANANH`). All letters must still agree, and surname, DOB, Delta plan and Subscriber ID remain mandatory. Without that filename binding, this compact-name fallback is not used. Diagnostics apply the same rule.
+Without a reliable single-patient filename (including multi-claim files), the existing full-name, DOB, Delta plan and Subscriber ID lookup remains in use. The diagnostic command reports optional DOB/insurance flags for information; they are not blockers for an exact filename-bound patient. Scanner errors report only blocking name/number mismatches for that path.
 
 On SERVER, from the Bridge repository with its existing `.env`, run:
 
@@ -22,8 +22,6 @@ On SERVER, from the Bridge repository with its existing `.env`, run:
 node scripts/inspect-delta-patient.mjs "D:\SHARE\INSURANCE CLAIM\DELTA DENTAL\ERRORS\1279.txt"
 ```
 
-Use the current path if the TXT is elsewhere. This command only reads the TXT and performs SELECT queries. Its output contains match flags, patient number and claim number; it does not print Subscriber IDs or connection settings. A false flag identifies the mismatch to verify in Open Dental and the source document. This diagnostic does not modify patient records or retry payment.
+Use the current path if the TXT is elsewhere. This command only reads the TXT and performs SELECT queries. Its output contains match flags, patient number and claim number; it does not print Subscriber IDs or connection settings. A false flag identifies a field difference; only patientExists, firstNameMatches and lastNameMatches block filename-bound processing. This diagnostic does not modify patient records or retry payment.
 
 The authenticated administrative API also supports `GET /api/admin/patients/:patNum/insurance` with the existing Bridge API token. It performs SELECT-only queries and returns the selected patient's name/DOB and linked plans (carrier, group, subscriber and Subscriber ID). It returns no-store responses, rejects invalid IDs, returns 404 for a missing patient, and caps the lookup at 50 insurance records. This route requires updating and restarting SERVER; the SMS API token does not grant access to the separately authenticated MetLife desktop routes. Do not put tokens or full clinical responses in diagnostics logs.
-
-Explicit Delta `Dependent` documents now use a separate patient/subscriber coverage workflow; see [delta-dependent-import.md](delta-dependent-import.md). This can create/reuse the subscriber and add dependent coverage after document preflight, instead of requiring the dependent's old policy ID to equal the subscriber's ID.
