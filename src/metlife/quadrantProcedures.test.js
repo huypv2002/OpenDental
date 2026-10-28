@@ -60,7 +60,7 @@ test('private MetLife quadrant PDF: six exact allocations, leading-zero tooth an
   ['D4341','2026-05-19',null,'UL',15000,9360],['D4341','2026-05-19',null,'LL',15000,9360],['D2391','2026-05-19','12','',12000,6560]
  ]);
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-private-quadrants-'));
- const f=await insuranceLedger(root,[{patNum:621,firstName:'TEST',lastName:'PERSON',claimNumber:parsed.claimRaw,serviceDate:'2026-05-14',procedures:parsed.procedures}]);
+ const f=await insuranceLedger(root,[{patNum:621,firstName:parsed.patient,lastName:'PERSON',claimNumber:parsed.claimRaw,serviceDate:'2026-05-14',procedures:parsed.procedures}]);
  const file=path.join(root,'621.pdf');
  try{
   await fs.writeFile(file,bytes);await processSinglePdf(f.pool,file,{hashSplits:f.hashes});

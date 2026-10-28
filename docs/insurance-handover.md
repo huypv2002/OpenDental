@@ -27,6 +27,8 @@ PASS là đúng kỳ vọng: một case chặn tài liệu lỗi trước khi gh
 
 Delta có mã bệnh nhân rõ trong tên file và một claim: chọn đúng PatNum, kiểm tra họ tên, không chặn vì DOB/Subscriber ID hoặc tự tạo/gắn hợp đồng người phụ thuộc. File nhiều claim không áp một PatNum cho mọi người; cần đối chiếu riêng. Kiểm tra trùng tiền, dịch vụ và tài chính vẫn giữ nguyên.
 
+MetLife cũng kiểm tra tên trên EOB khi chọn theo mã file. Mẫu chỉ ghi tên gọi (Ryan/Dien) cần khớp trọn tên gọi trong OD; mẫu ghi đủ họ tên chấp nhận thứ tự họ/tên hoặc tên/họ. Mã file có trong OD nhưng tên khác phải dừng; mã file rõ nhưng không tồn tại không tự chuyển sang bệnh nhân khác theo tên.
+
 Mỗi hãng có case riêng cho: thanh toán TXT đầy đủ, note/check/date, ước tính/write-off = 0 đúng phạm vi, Excel một lần, chạy lại đổi tên, ExternalId rỗng nhưng claim note khớp, khoản cũ khác tiền/ngày/phân bổ, nhiều khoản cùng claim, dịch vụ trùng mơ hồ, native hash lỗi, lịch sử lỗi sau khi đã ghi tiền, lỗi ghi split và việc bỏ qua các folder con. Các test nguồn và fixture thực bổ sung kiểm tra parser/scan/PDF/ảnh/nhiều bệnh nhân theo từng hãng.
 
 ## Kịch bản demo 15–20 phút
@@ -43,6 +45,7 @@ Không dùng demo này để nhập lại tùy ý vào OD thật: các khoản �
 ## Giới hạn cần nói rõ
 
 - File Delta 1012 scan hiện có thể xuất TXT nhưng còn mã/số nhận dạng chưa đủ chắc chắn: chặn tự động và cần TXT được chuyển đúng từ nguồn hoặc đối chiếu. Test chặn là test bảo vệ, không phải bằng chứng nhập PDF thành công.
+- Ảnh PNG nguyên gốc Delta 280 đã có case đọc tổng và nhập/chạy lại bằng DB mô phỏng. Bản JPG tạo từ cùng tài liệu vẫn chưa đọc chắc mã D1110; case yêu cầu tự nhập JPG đó chưa đạt. Báo cáo riêng phải giữ case FAIL này; không đổi thành PASS để tuyên bố hỗ trợ mọi ảnh Delta. Các cột ngày/mã/tổng trong ảnh được đọc theo khung ảnh riêng, giữ nguyên đường đọc PDF cũ.
 - Mất kết nối sau khi Payment đã ghi nhưng trước khi các split ghi đủ có thể để lại khoản chưa hoàn tất trên MyISAM. Tool chặn lần chạy lại để không thêm Payment thứ hai; cần đối chiếu thủ công, không tự xóa hoặc tự bù số tiền.
 - Test mô phỏng lỗi file Excel không chứng minh quyền NTFS/SMB và khóa Excel trên SERVER/R5. Cần bước nghiệm thu thực tế tại máy đích.
 - Không cam kết mọi định dạng tài liệu tương lai. File ngoài mẫu hoặc mâu thuẫn số liệu phải dừng để kiểm tra.

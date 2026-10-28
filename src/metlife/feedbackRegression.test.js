@@ -23,7 +23,7 @@ async function loadCase(id,carrier){
  const extracted=carrier==='DELTA DENTAL'?(await readDeltaDocument(bytes,file)).extracted:await extractPdf(bytes);
  const p=carrier==='CIGNA'?parseCigna(extracted):carrier==='DELTA DENTAL'?parseDelta(extracted):carrier==='MetLife'?parseMetlife(extracted):parseLiberty(extracted);
  assert.deepEqual(p.errors,[]);
- const normalized=carrier==='MetLife'?[{claimNumber:metlifePaymentFields(p).claimNumber,patient:{firstName:'PERSON',lastName:'TEST'},date:p.processed,procedures:p.procedures}]:p.claims;
+ const normalized=carrier==='MetLife'?[{claimNumber:metlifePaymentFields(p).claimNumber,patient:{firstName:p.patient,lastName:'TEST'},date:p.processed,procedures:p.procedures}]:p.claims;
  const claims=normalized.map((c,i)=>({carrier,patNum:normalized.length===1?Number(id):101+i,claimNumber:c.claimNumber,firstName:c.patient.firstName,lastName:c.patient.lastName,memberId:c.patient.memberId,serviceDate:c.procedures.find(p=>p.date)?.date,procedures:c.procedures.map(p=>({...p,...(carrier==='LIBERTY Dental Plan'&&p.code==='D0220'?{odTooth:p.tooth==='8'?'13':'8'}:{})}))}));
  return {bytes,extracted,parsed:p,claims};
 }

@@ -12,7 +12,7 @@ const out=path.resolve(option('--output')||path.join(root,'output','insurance-ha
 const fixtures=option('--fixtures')?path.resolve(option('--fixtures')):null;
 await fs.mkdir(out,{recursive:true});
 const env={...process.env};delete env.METLIFE_TEST_DB_URL;
-const fixtureKeys=['INSURANCE_TXT_PDF_DIR','DELTA_TEXT_TEST_FILE','EOB_PDF_TO_TEXT_DIR','DELTA_REDUCED_TEST_PDF','DELTA_CELL_TEST_PDF','DELTA_FLB_TEST_PDF','DELTA_TEST_PDF','EOB_CURRENT_FEEDBACK_DIR','INSURANCE_FEEDBACK_DIR','METLIFE_TEST_PDF','METLIFE_QUADRANT_TEST_PDF','CIGNA_TEST_PDF','LIBERTY_TEST_SINGLE_PDF','LIBERTY_TEST_MULTI_PDF','LIBERTY_TEST_IMAGE','LIBERTY_TEST_SINGLE_IMAGE'];
+const fixtureKeys=['INSURANCE_TXT_PDF_DIR','DELTA_TEXT_TEST_FILE','EOB_PDF_TO_TEXT_DIR','DELTA_REDUCED_TEST_PDF','DELTA_CELL_TEST_PDF','DELTA_FLB_TEST_PDF','DELTA_TEST_PDF','DELTA_TEST_IMAGE_JPEG','DELTA_TEST_IMAGE_PNG','EOB_CURRENT_FEEDBACK_DIR','INSURANCE_FEEDBACK_DIR','METLIFE_TEST_PDF','METLIFE_QUADRANT_TEST_PDF','CIGNA_TEST_PDF','LIBERTY_TEST_SINGLE_PDF','LIBERTY_TEST_MULTI_PDF','LIBERTY_TEST_IMAGE','LIBERTY_TEST_SINGLE_IMAGE'];
 for(const k of fixtureKeys)delete env[k];
 const manifest={startedAt:new Date().toISOString(),platform:os.platform(),architecture:os.arch(),node:process.version,realDatabase:false,realPaymentWrites:false,realSms:false,fixtures:[],suites:[]};
 try{manifest.commit=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();manifest.trackedChanges=execFileSync('git',['diff','--name-only','HEAD'],{cwd:root,encoding:'utf8'}).trim().split('\n').filter(Boolean);}catch{}
@@ -30,6 +30,20 @@ if(fixtures){
   const {createCanvas}=await import('@napi-rs/canvas'),{getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs');
   const task=getDocument({data:new Uint8Array(await fs.readFile(env.LIBERTY_TEST_SINGLE_PDF)),isEvalSupported:false,useSystemFonts:true});
   try{const doc=await task.promise,p=await doc.getPage(1),v=p.getViewport({scale:2}),canvas=createCanvas(Math.ceil(v.width),Math.ceil(v.height));await p.render({canvasContext:canvas.getContext('2d'),viewport:v}).promise;env.LIBERTY_TEST_SINGLE_IMAGE=path.join(out,'liberty-single.jpg');await fs.writeFile(env.LIBERTY_TEST_SINGLE_IMAGE,canvas.toBuffer('image/jpeg',95),{mode:0o600});}finally{await task.destroy();}
+ }
+ // The supplied Delta 280 contains one unfiltered RGB scan spanning PDF pages.
+ // Export that original image, rather than stitching/cropping text or digits.
+ if(env.DELTA_TEST_PDF){
+  const {PDFDocument,PDFName,PDFRawStream}=await import('pdf-lib'),{createCanvas}=await import('@napi-rs/canvas');
+  const doc=await PDFDocument.load(await fs.readFile(env.DELTA_TEST_PDF));
+  const images=doc.context.enumerateIndirectObjects().map(([,o])=>o).filter(o=>o instanceof PDFRawStream&&String(o.dict.get(PDFName.of('Subtype')))==='/Image');
+  if(images.length===1){const image=images[0],w=Number(String(image.dict.get(PDFName.of('Width')))),h=Number(String(image.dict.get(PDFName.of('Height')))),bytes=image.getContents();
+   if(!image.dict.get(PDFName.of('Filter'))&&String(image.dict.get(PDFName.of('ColorSpace')))==='/DeviceRGB'&&w*h<=25000000&&bytes.length===w*h*3){
+    const c=createCanvas(w,h),ctx=c.getContext('2d'),pixels=ctx.createImageData(w,h);
+    for(let i=0;i<w*h;i++){pixels.data[i*4]=bytes[i*3];pixels.data[i*4+1]=bytes[i*3+1];pixels.data[i*4+2]=bytes[i*3+2];pixels.data[i*4+3]=255;}ctx.putImageData(pixels,0,0);
+    for(const [key,type,ext] of [['DELTA_TEST_IMAGE_JPEG','image/jpeg','jpg'],['DELTA_TEST_IMAGE_PNG','image/png','png']]){env[key]=path.join(out,'delta280-source.'+ext);await fs.writeFile(env[key],c.toBuffer(type,type==='image/jpeg'?95:undefined),{mode:0o600});}
+   }
+  }
  }
 }
 manifest.enabledFixtureKeys=fixtureKeys.filter(k=>env[k]);
@@ -57,7 +71,14 @@ for(const suite of manifest.suites.filter(s=>s.name!=='electron-ui')){
   cases.push({id:`TC-${String(cases.length+1).padStart(3,'0')}`,suite:suite.name,name:attrs.name,file:path.relative(root,attrs.file||root),seconds:Number(attrs.time),status:/<failure\b|<error\b/.test(body)?'FAIL':/<skipped\b/.test(body)?'SKIP':'PASS'});
  }
 }
+const ui=manifest.suites.find(s=>s.name==='electron-ui');
+if(ui){
+ const log=await fs.readFile(path.join(out,'electron-ui.log'),'utf8');
+ for(const match of log.matchAll(/^PASS (UI-\d+): (.+)$/gm))cases.push({id:`TC-${String(cases.length+1).padStart(3,'0')}`,suite:'electron-ui',name:`${match[1]}: ${match[2]}`,file:'metlife-electron/scripts/ui-test.cjs',seconds:null,status:'PASS'});
+ if(ui.exitCode!==0)cases.push({id:`TC-${String(cases.length+1).padStart(3,'0')}`,suite:'electron-ui',name:'UI script did not complete all expected assertions',file:'metlife-electron/scripts/ui-test.cjs',seconds:null,status:'FAIL'});
+}
 manifest.summary=Object.fromEntries(['PASS','FAIL','SKIP'].map(k=>[k,cases.filter(c=>c.status===k).length]));
+manifest.handoverStatus=manifest.summary.FAIL?'blocked-cases-remain':'local-tests-passed';
 await fs.writeFile(path.join(out,'run-manifest.json'),JSON.stringify(manifest,null,2));
 await fs.writeFile(path.join(out,'test-cases.json'),JSON.stringify(cases,null,2));
 const cell=s=>String(s??'').replaceAll('|','\\|').replaceAll('\n',' ');

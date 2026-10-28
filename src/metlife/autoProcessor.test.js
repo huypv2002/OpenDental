@@ -180,3 +180,12 @@ test('Finished Claims import fails visibly before document insert if category or
   assert.equal(inserts,0);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('MetLife filename patient must match the printed given/full name and cannot fall back to another patient',async()=>{
+ const patient={PatNum:1307,FName:'RYAN',LName:'PHAM'},queries=[];
+ const pool={execute:async(sql,args)=>{queries.push(sql);return [args[0]===1307?[patient]:[]];}};
+ for(const name of ['Ryan','RYAN PHAM','PHAM, RYAN'])assert.equal((await resolvePatient(pool,{fileName:'1307.pdf',parsed:{patient:name}})).PatNum,1307);
+ for(const name of ['Other','RYAN OTHER','Ryan P',''])await assert.rejects(resolvePatient(pool,{fileName:'1307.txt',parsed:{patient:name}}),e=>e.code==='EOB_REVIEW_REQUIRED'&&/không khớp tên/.test(e.message));
+ await assert.rejects(resolvePatient(pool,{fileName:'9999.pdf',parsed:{patient:'Ryan Pham'}}),e=>e.code==='EOB_REVIEW_REQUIRED'&&/Không tìm thấy mã/.test(e.message));
+ assert.ok(queries.every(sql=>sql.includes('FROM patient WHERE PatNum')));
+});

@@ -54,6 +54,14 @@ export async function ensureMetlifeHistoryTable(pool) {
   }
 }
 
+export function metlifeFilenameNameMatches(source,patient){
+  const normalized=value=>String(value||'').normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  const name=normalized(source),first=normalized(patient.FName),last=normalized(patient.LName);
+  // Some verified MetLife EOBs print only "Ryan" or "Dien". A filename-bound
+  // PatNum plus the complete given name is sufficient for that source format.
+  return !!name&&!!first&&[first,first+last,last+first].includes(name);
+}
+
 export async function resolvePatient(pool, { fileName, parsed }) {
   // 1. Try matching PatNum directly from filename (e.g. 1307.pdf, 1307_eob.pdf)
   const patientFile = fileName.replace(/^\d{13}_(?=\d+(?:[_.]|$))/, '');
@@ -65,8 +73,10 @@ export async function resolvePatient(pool, { fileName, parsed }) {
       [patNum]
     );
     if (rows.length === 1) {
+      if(!metlifeFilenameNameMatches(parsed.patient,rows[0]))throw reviewError(`Mã bệnh nhân #${patNum} từ tên file không khớp tên trên EOB MetLife; chưa lưu thanh toán.`);
       return rows[0];
     }
+    if(/^\d+(?=[_.]|$)/.test(patientFile))throw reviewError(`Không tìm thấy mã bệnh nhân #${patNum} từ tên file MetLife; chưa lưu thanh toán.`);
   }
 
   // 2. Try matching from parsed EOB patient name

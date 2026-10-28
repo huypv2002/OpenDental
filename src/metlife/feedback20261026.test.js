@@ -57,7 +57,7 @@ test('payment note remains a duplicate guard when OD clears ExternalId; conflict
 });
 
 test('MetLife timestamp-prefixed filename selects the patient number, not the download timestamp',async()=>{
- const result=await resolvePatient({execute:async(sql,args)=>{assert.deepEqual(args,[1278]);return [[{PatNum:1278}]];}},{fileName:'1792707377410_1278.pdf',parsed:{patient:'TEST'}});assert.equal(result.PatNum,1278);
+ const result=await resolvePatient({execute:async(sql,args)=>{assert.deepEqual(args,[1278]);return [[{PatNum:1278,FName:'TEST',LName:'PERSON'}]];}},{fileName:'1792707377410_1278.pdf',parsed:{patient:'TEST'}});assert.equal(result.PatNum,1278);
 });
 
 const folder=process.env.EOB_CURRENT_FEEDBACK_DIR;
@@ -75,7 +75,7 @@ test('current Liberty 1041 PDF: reuse both denture arches and repeat with a rena
 test('current MetLife 584 PDF: preserve existing D4342 rows with blank OD quadrants and reuse payment on retry',{skip:!folder},async()=>{
  const bytes=await fs.readFile(path.join(folder,'584.pdf')),extracted=await extractPdf(bytes),parsed=parseMetlife(extracted);assert.deepEqual(parsed.errors,[]);assert.equal(parsed.benefitCents,59100);
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-584-'));
- const f=await insuranceLedger(root,[{patNum:584,firstName:'TEST',lastName:'PERSON',claimNumber:parsed.claimRaw,procedures:parsed.procedures,serviceDate:'2025-07-31'}]);
+ const f=await insuranceLedger(root,[{patNum:584,firstName:parsed.patient,lastName:'PERSON',claimNumber:parsed.claimRaw,procedures:parsed.procedures,serviceDate:'2025-07-31'}]);
  for(const p of f.procs)if(p.ProcCode==='D4342')p.Surf='';
  const count=f.procs.length;
  try{for(let i=0;i<2;i++){const filePath=path.join(root,'584.pdf');await fs.writeFile(filePath,bytes);await processSinglePdf(f.pool,filePath,{extract:async()=>extracted,hashSplits:f.hashes});for(const p of f.payments)p.ExternalId='';}

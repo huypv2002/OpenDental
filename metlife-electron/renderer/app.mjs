@@ -93,7 +93,7 @@ function renderServerStatus(data) {
   }
 
   // Error retry button in header
-  const errorCount = data.counts?.errors || 0;
+  const errorCount = Number(data.counts?.errors || 0) + Number(data.counts?.review || 0);
   const retryBtn = $('#header-retry-btn');
   const badgeCount = $('#error-badge-count');
   if (retryBtn && badgeCount) {

@@ -7,7 +7,7 @@ const {_electron:electron}=require('playwright'),assert=require('node:assert/str
  const server=http.createServer((req,res)=>{
   calls.push([req.url,req.method]);let data;
   if(req.url.endsWith('/health'))data={db:true};
-  else if(req.url.endsWith('/status'))data={isScanning:false,counts:{errors:1,review:1,processed:4},uptimeSeconds:10};
+  else if(req.url.endsWith('/status'))data={isScanning:false,counts:{errors:0,review:1,processed:4},uptimeSeconds:10};
   else if(req.url.includes('/history'))data={items};
   else if(req.url.endsWith('/documents'))data={documents:[{DocNum:'500',PatNum:'900',FileName:'TEST_EOB.txt',Description:'Synthetic Finished Claim'}]};
   else if(req.url.endsWith('/pending'))data={pending:false};
@@ -26,7 +26,7 @@ const {_electron:electron}=require('playwright'),assert=require('node:assert/str
   await page.click('[data-filter="all"]');await page.fill('#history-search','TESTCLAIM3');assert.equal(await page.locator('.history-row').count(),1);console.log('PASS UI-04: history search selects the correct claim.');
   await page.click('[data-tab="patients"]');await page.fill('#patient-search-query','900');await page.click('#search-patients');await page.waitForFunction(()=>document.querySelectorAll('#patient-results tr').length===1);assert.match(await page.locator('#patient-results').innerText(),/900/);await page.click('#patient-results tr');await page.waitForFunction(()=>document.querySelector('#patient-documents').textContent.includes('TEST_EOB.txt'));console.log('PASS UI-05: patient lookup and Finished Claims reach synthetic Bridge.');
   await page.click('[data-tab="diagnostics"]');await page.waitForFunction(()=>document.querySelector('#diag-conn-status').textContent.includes('hoạt động'));console.log('PASS UI-06: current connection diagnostics shown.');
-  await page.click('#header-scan-btn');await page.waitForFunction(()=>!document.querySelector('#header-scan-btn').disabled);await page.click('#header-retry-btn');await page.waitForFunction(()=>!document.querySelector('#header-retry-btn').disabled);
+  await page.click('#header-scan-btn');await page.waitForFunction(()=>!document.querySelector('#header-scan-btn').disabled);assert.equal(await page.locator('#error-badge-count').innerText(),'1');await page.click('#header-retry-btn');await page.waitForFunction(()=>!document.querySelector('#header-retry-btn').disabled);
   assert.ok(calls.some(([u,m])=>u.endsWith('/scan')&&m==='POST'));assert.ok(calls.some(([u,m])=>u.endsWith('/retry-errors')&&m==='POST'));assert.ok(!calls.some(([u])=>/operations|payment|sms|send/.test(u)));assert.deepEqual(errors,[]);
   if(process.env.INSURANCE_UI_SCREENSHOT){await page.click('[data-tab="dashboard"]');await page.screenshot({path:process.env.INSURANCE_UI_SCREENSHOT,fullPage:true});}
   console.log('PASS UI-07: explicit scan/retry work; no payment/SMS endpoint called.');
