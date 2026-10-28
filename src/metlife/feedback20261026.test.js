@@ -57,18 +57,18 @@ test('payment note remains a duplicate guard when OD clears ExternalId; conflict
 });
 
 test('MetLife timestamp-prefixed filename selects the patient number, not the download timestamp',async()=>{
- const result=await resolvePatient({execute:async(sql,args)=>{assert.deepEqual(args,[1278]);return [[{PatNum:1278,FName:'TEST',LName:'PERSON'}]];}},{fileName:'1792707377410_1278.pdf',parsed:{patient:'TEST'}});assert.equal(result.PatNum,1278);
+ const result=await resolvePatient({execute:async(sql,args)=>{assert.deepEqual(args,['1278']);return [[{PatNum:1278,FName:'TEST',LName:'PERSON'}]];}},{fileName:'1792707377410_1278.pdf',parsed:{patient:'TEST'}});assert.equal(result.PatNum,1278);
 });
 
 const folder=process.env.EOB_CURRENT_FEEDBACK_DIR;
 test('current Liberty 1041 PDF: reuse both denture arches and repeat with a renamed file without new procedures/payments',{skip:!folder},async()=>{
  const bytes=await fs.readFile(path.join(folder,'1041.pdf')),{extracted}=await readInsuranceDocument(bytes,'1041.pdf'),parsed=parseLiberty(extracted);
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'liberty-1041-'));
- const f=await insuranceLedger(root,parsed.claims.map((c,i)=>({patNum:1041+i,firstName:c.patient.firstName,lastName:c.patient.lastName,memberId:c.patient.memberId,claimNumber:c.claimNumber,procedures:c.procedures,serviceDate:'2026-09-17'})));
+ const f=await insuranceLedger(root,parsed.claims.map((c,i)=>({patNum:[1041,1280][i],firstName:'DIFFERENT',lastName:'NAME',memberId:i===0?c.patient.memberId.replace(/-01$/,''):c.patient.memberId,claimNumber:c.claimNumber,procedures:c.procedures,serviceDate:'2026-09-17'})));
  for(const p of f.procs)if(p.ProcCode==='D5110'||p.ProcCode==='D5120'){p.ToothNum='';p.Surf=p.ProcCode==='D5110'?'U':'L';}
  const count=f.procs.length;
  try{for(const fileName of ['1041.pdf','1280.pdf']){const filePath=path.join(root,fileName);await fs.writeFile(filePath,bytes);await processLibertyPdf(f.pool,{filePath,fileName,fileBytes:bytes,extracted},{hashSplits:f.hashes,log:()=>{}});for(const p of f.payments)p.ExternalId='';}
- assert.equal(f.addedAudit.length,0);assert.equal(f.procs.length,count);assert.equal(f.payments.length,2);assert.equal(f.splits.length,9);assert.deepEqual(f.payments.map(p=>Number(p.PayAmt)),[1483,250]);
+ assert.deepEqual(f.payments.map(p=>p.PatNum),[1041,1280]);assert.equal(f.addedAudit.length,0);assert.equal(f.procs.length,count);assert.equal(f.payments.length,2);assert.equal(f.splits.length,9);assert.deepEqual(f.payments.map(p=>Number(p.PayAmt)),[1483,250]);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 

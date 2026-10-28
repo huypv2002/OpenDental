@@ -10,41 +10,22 @@ import {prepareInsuranceSettlement,applyInsuranceSettlement,verifyInsuranceSettl
 import { odSecurityLogHash } from '../metlife/directPayment.js';
 import { autoPopulateProcedureFees, importPdfToAtoZ } from '../metlife/autoProcessor.js';
 
-export async function resolveLibertyPatient(pool, { claim, strictMember=false }) {
-  const { lastName, firstName, memberId } = claim.patient;
-
-  // 1. Try matching by SubscriberID in inssub
-  if (memberId) {
-    const cleanId = memberId.replace(/-.*$/, ''); // e.g. 346M97946 from 346M97946-01
-    const [matches] = await pool.execute(
-      `SELECT DISTINCT p.PatNum, p.FName, p.LName, p.Birthdate, p.ClinicNum, p.PriProv, p.ImageFolder, p.ChartNumber
-       FROM patient p
-       JOIN patplan pp ON pp.PatNum = p.PatNum
-       JOIN inssub s ON s.InsSubNum = pp.InsSubNum
-       WHERE (TRIM(s.SubscriberID) = ? OR TRIM(s.SubscriberID) = ?) AND LOWER(TRIM(p.LName)) = LOWER(?) AND LOWER(TRIM(p.FName)) = LOWER(?)
-       ORDER BY p.PatNum ASC LIMIT 2`,
-      [memberId,cleanId,lastName,firstName]
-    );
-    if (matches.length === 1) {
-      return matches[0];
-    }
+export async function resolveLibertyPatient(pool, { claim }) {
+  const memberId=String(claim.patient.memberId||'').trim();
+  if(!memberId)throw reviewError(`Liberty Claim #${claim.claimNumber}: thiếu Subscriber ID; chưa lưu thanh toán.`);
+  // Prefer the complete member ID. Only fall back to the base ID when OD omits
+  // the trailing dependent suffix, and only when that identifies one patient.
+  const ids=[...new Set([memberId,memberId.replace(/-\d+$/, '')])];
+  for(const id of ids){
+    const [matches]=await pool.execute(
+      `SELECT DISTINCT p.PatNum,p.FName,p.LName,p.Birthdate,p.ClinicNum,p.PriProv,p.ImageFolder,p.ChartNumber
+       FROM patient p JOIN patplan pp ON pp.PatNum=p.PatNum
+       JOIN inssub s ON s.InsSubNum=pp.InsSubNum
+       WHERE TRIM(s.SubscriberID)=? ORDER BY p.PatNum ASC LIMIT 2`,[id]);
+    if(matches.length===1)return matches[0];
+    if(matches.length>1)throw reviewError(`Liberty Claim #${claim.claimNumber}: Subscriber ID khớp nhiều bệnh nhân; cần đối chiếu, chưa lưu thanh toán.`);
   }
-
-  // 2. Try matching by Exact Last Name + First Name
-  if (!strictMember && lastName && firstName) {
-    const [matches] = await pool.execute(
-      `SELECT DISTINCT p.PatNum, p.FName, p.LName, p.Birthdate, p.ClinicNum, p.PriProv, p.ImageFolder, p.ChartNumber
-       FROM patient p
-       WHERE LOWER(p.LName) = LOWER(?) AND LOWER(p.FName) = LOWER(?)
-       ORDER BY p.PatNum ASC LIMIT 2`,
-      [lastName, firstName]
-    );
-    if (matches.length === 1) {
-      return matches[0];
-    }
-  }
-
-  throw new Error(`Không tìm thấy bệnh nhân trong Open Dental cho Liberty Claim #${claim.claimNumber} (Bệnh nhân: ${lastName}, ${firstName} - Member ID: ${memberId})`);
+  throw reviewError(`Liberty Claim #${claim.claimNumber}: không tìm thấy bệnh nhân theo Subscriber ID; chưa lưu thanh toán.`);
 }
 
 export async function libertyProcedures(pool,patNum){

@@ -88,11 +88,11 @@ test('Delta incomplete scans, wrong totals, invalid dates and ambiguous repeated
  for(const extracted of [missing,wrong,date,badRatio,ambiguous,noMember,negative]){let queries=0;assert.ok(parseDelta(extracted).errors.length);await assert.rejects(processDeltaPdf({execute:async()=>{queries++;}},{extracted}),e=>e.code==='EOB_REVIEW_REQUIRED');assert.equal(queries,0);}
 });
 
-test('Delta resolves filename patient and name only; rejects multiple matches',async()=>{
+test('Delta resolves filename patient only; rejects multiple matches',async()=>{
  const claim=parseDelta(sample()).claims[0];
  await assert.rejects(resolveDeltaPatient({execute:async(sql,args)=>{
   if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
-  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];assert.doesNotMatch(sql,/SubscriberID|DATE\(p.Birthdate\)=/);assert.deepEqual(args,['PERSON','TEST','280']);return [[{PatNum:280},{PatNum:281}]];}},{claim,fileName:'280.pdf',claimsCount:1}),/duy nhất/);
+  if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];assert.doesNotMatch(sql,/SubscriberID|DATE\(p.Birthdate\)=/);assert.deepEqual(args,['280']);return [[{PatNum:280},{PatNum:281}]];}},{claim,fileName:'280.pdf',claimsCount:1}),/duy nhất/);
 });
 
 test('Delta sibling folder is scanned and archived documents can be found',async()=>{
@@ -132,7 +132,7 @@ test('DELTA DENTAL reuses payment/doc/history/Excel workflow and keeps the claim
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
   if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
   if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
-  if(sql.includes('FROM patient p')){assert.doesNotMatch(sql,/SubscriberID|DATE\(p.Birthdate\)=/);assert.deepEqual(args,['PERSON','TEST','280']);return [[{PatNum:280,FName:'PERSON',LName:'TEST',ImageFolder:'Test280',PriProv:1,ClinicNum:0}]];}
+  if(sql.includes('FROM patient p')){assert.doesNotMatch(sql,/SubscriberID|DATE\(p.Birthdate\)=/);assert.deepEqual(args,['280']);return [[{PatNum:280,FName:'PERSON',LName:'TEST',ImageFolder:'Test280',PriProv:1,ClinicNum:0}]];}
   if(sql.includes('procedurecode.ProcCode')||sql.includes('FROM procedurelog pl'))return [procs];
   if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:path.join(root,'images')},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];
   if(sql.includes('Category = 18'))return [[{DefNum:18}]];

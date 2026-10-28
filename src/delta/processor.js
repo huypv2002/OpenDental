@@ -1,48 +1,19 @@
+import {patientFileNumber,resolveFilePatient} from '../metlife/patientFileIdentity.js';
 import {parseDelta} from './parser.js';
 import {processLibertyPdf} from '../liberty/processor.js';
 
-// Formatting-only given-name equivalence is allowed only with a filename-bound
-// PatNum. A filename-bound claim requires the patient number and name only.
+// Diagnostics may report name differences, but posting identity is PatNum only.
 const nameConditionFor=(names,compact)=>names.map(()=>compact
  ? `LOWER(REPLACE(TRIM(p.FName),' ',''))=LOWER(REPLACE(?,' ',''))`
  : `LOWER(TRIM(p.FName))=LOWER(?)`).join(' OR ');
 
-export function deltaPatientFileNumber(fileName){
- // A downloaded attachment can add a millisecond timestamp before PatNum.
- // Never treat an arbitrary embedded number or the timestamp as a patient hint.
- const number=/^(?:\d{13}_)?(\d{1,12})\.(?:pdf|jpe?g|png|txt)$/i.exec(fileName||'')?.[1];
- return number&&Number.isSafeInteger(Number(number))&&Number(number)>0?number:null;
+export const deltaPatientFileNumber=patientFileNumber;
+
+export async function resolveDeltaPatient(pool,{fileName}){
+ return resolveFilePatient(pool,{fileName,carrier:'Delta Dental'});
 }
 
-export async function resolveDeltaPatient(pool,{claim,fileName,claimsCount}){
- const fromFile=claimsCount===1?deltaPatientFileNumber(fileName):null;
- const firstName=claim.patient.firstName.trim().replace(/\s+/g,' ');
- const names=[firstName];
- // OD can retain only the given name (TOAN) while the EOB prints QUOC TOAN.
- // Permit that exact final token only when a single-claim filename also binds
- // the same PatNum; the surname must also match.
- if(fromFile&&firstName.includes(' '))names.push(firstName.split(' ').at(-1));
- const nameCondition=nameConditionFor(names,!!fromFile);
- const args=[...names,claim.patient.lastName,...(fromFile?[fromFile]:[claim.patient.birthdate,claim.patient.memberId])];
- const [rows]=await pool.execute(`SELECT p.PatNum,p.FName,p.LName,p.Birthdate,p.ClinicNum,p.PriProv,p.ImageFolder,p.ChartNumber
- FROM patient p WHERE (${nameCondition}) AND LOWER(TRIM(p.LName))=LOWER(?)
- ${fromFile?'AND p.PatNum=?':`AND DATE(p.Birthdate)=?
- AND EXISTS (SELECT 1 FROM patplan pp JOIN inssub s ON s.InsSubNum=pp.InsSubNum
- JOIN insplan ip ON ip.PlanNum=s.PlanNum JOIN carrier c ON c.CarrierNum=ip.CarrierNum
- WHERE pp.PatNum=p.PatNum AND UPPER(c.CarrierName) LIKE '%DELTA%' AND s.SubscriberID=?)`} LIMIT 2`,args);
- if(rows.length!==1){
-  let detail='';
-  if(rows.length===0&&fromFile){
-   const checks=await diagnoseDeltaPatient(pool,{claim,fileName,claimsCount});
-   const missing=Object.entries(checks).filter(([key,value])=>['patientExists','firstNameMatches','lastNameMatches'].includes(key)&&value===false).map(([key])=>({patientExists:'mã bệnh nhân',firstNameMatches:'tên',lastNameMatches:'họ',birthdateMatches:'ngày sinh',deltaPlanExists:'bảo hiểm Delta',subscriberMatches:'Subscriber ID thuộc Delta'}[key]));
-   if(missing.length)detail=` Hồ sơ #${fromFile} không khớp: ${missing.join(', ')}.`;
-  }
-  throw Object.assign(new Error((fromFile?'Chưa đối chiếu duy nhất mã bệnh nhân và tên Delta Dental; chưa lưu thanh toán.':'Chưa đối chiếu duy nhất bệnh nhân Delta Dental khi tên file không xác định một bệnh nhân; chưa lưu thanh toán.')+detail),{code:'EOB_REVIEW_REQUIRED'});
- }
- return rows[0];
-}
-
-// Read-only diagnostics use the same SQL comparisons as the actual resolver.
+// Optional read-only diagnostics; these differences do not block filename identity.
 // Report flags only; never put subscriber IDs or connection settings in logs.
 export async function diagnoseDeltaPatient(pool,{claim,fileName,claimsCount}){
  const patNum=claimsCount===1?deltaPatientFileNumber(fileName):null;

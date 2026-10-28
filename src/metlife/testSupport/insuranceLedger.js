@@ -34,9 +34,9 @@ export async function insuranceLedger(root,claims){
   }
   if(sql.startsWith('SELECT ProcNum,PatNum,CodeNum'))return [procs.filter(p=>p.ProcNum===args[0])];
   if(sql.startsWith('INSERT INTO luk_eob_added_procedures')){addedAudit.push(args);return [{insertId:addedAudit.length}];}
-  if(sql.includes('FROM patient WHERE PatNum'))return [patients.filter(p=>p.PatNum===Number(args[0]))];
+  if(sql.includes('FROM patient WHERE PatNum')||sql.includes('FROM patient p WHERE p.PatNum=?'))return [patients.filter(p=>p.PatNum===Number(args[0]))];
   if(sql.includes('FROM patient p')){
-   const p=patients.find(p=>args.includes(p.memberId))||patients.find(p=>args.includes(p.FName)&&args.includes(p.LName));return [p?[p]:[]];
+   return [patients.filter(p=>args.includes(p.memberId)).slice(0,2)];
   }
   if(sql.includes('SELECT procedurelog.ProcNum')||sql.includes('SELECT pl.ProcNum'))return [procs.filter(p=>p.PatNum===args[0]&&(!args[1]||p.ProcCode===args[1])&&(!args[2]||p.ProcDate===args[2])).map(p=>({ProcStatus:2,...p}))];
   if(sql.includes('FROM claimproc cp'))return [byIds(claimprocs,args[0],args.slice(1,-1),'ProcNum').map(r=>({...r}))];

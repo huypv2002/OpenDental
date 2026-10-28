@@ -12,9 +12,7 @@ Run `DELTA_TEXT_TEST_FILE=/private/path/1279.txt node --test src/delta/textDocum
 
 ## Identity mismatch diagnostics
 
-For a single claim with an exact patient-number filename (`1279.txt`, `1279.pdf`, or a download timestamp followed by `_1279.pdf`), select that PatNum and verify given name and surname. Given-name spaces are ignored (`Van Anh` and `VANANH`); the existing final-given-name alternative (`Quoc Toan` / `Toan`) is retained. DOB, Subscriber ID and the attached insurance plan do not block this filename-bound lookup, per the clinic's updated instruction. A wrong patient number, missing patient or different name still stops payment. Financial validation and payment replay checks are unchanged.
-
-Without a reliable single-patient filename (including multi-claim files), the existing full-name, DOB, Delta plan and Subscriber ID lookup remains in use. The diagnostic command reports optional DOB/insurance flags for information; they are not blockers for an exact filename-bound patient. Scanner errors report only blocking name/number mismatches for that path.
+Updated clinic rule (28/10/2026): Delta resolves the patient only from the PatNum at the beginning of the filename, such as `1279.pdf`, `1279.txt`, `1793111377468_1279.pdf` or `1279 DELTA SAMPLE.pdf`. Names, DOB, Subscriber ID and attached plan do not block patient selection. A missing/invalid number or a patient absent from OD stops processing; there is no name-based fallback. See [patient identification rules](insurance-patient-identity-2026-10-28.md).
 
 On SERVER, from the Bridge repository with its existing `.env`, run:
 
@@ -22,6 +20,6 @@ On SERVER, from the Bridge repository with its existing `.env`, run:
 node scripts/inspect-delta-patient.mjs "D:\SHARE\INSURANCE CLAIM\DELTA DENTAL\ERRORS\1279.txt"
 ```
 
-Use the current path if the TXT is elsewhere. This command only reads the TXT and performs SELECT queries. Its output contains match flags, patient number and claim number; it does not print Subscriber IDs or connection settings. A false flag identifies a field difference; only patientExists, firstNameMatches and lastNameMatches block filename-bound processing. This diagnostic does not modify patient records or retry payment.
+Use the current path if the TXT is elsewhere. This command only reads the TXT and performs SELECT queries. Its output contains match flags, patient number and claim number; it does not print Subscriber IDs or connection settings. A false flag identifies a field difference; only patientExists blocks filename-bound identity selection; name, DOB and insurance flags are informational. This diagnostic does not modify patient records or retry payment.
 
 The authenticated administrative API also supports `GET /api/admin/patients/:patNum/insurance` with the existing Bridge API token. It performs SELECT-only queries and returns the selected patient's name/DOB and linked plans (carrier, group, subscriber and Subscriber ID). It returns no-store responses, rejects invalid IDs, returns 404 for a missing patient, and caps the lookup at 50 insurance records. This route requires updating and restarting SERVER; the SMS API token does not grant access to the separately authenticated MetLife desktop routes. Do not put tokens or full clinical responses in diagnostics logs.

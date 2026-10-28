@@ -93,7 +93,7 @@ test('OCR preflights every claim before the first import or payment',async()=>{
  const pool={execute:async(sql,args)=>{
   if(!sql.trim().startsWith('SELECT')){writes++;throw Error('must not write');}
   if(sql.includes('FROM claimproc cp')||sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
-  if(sql.includes('FROM patient p'))return args.includes('PERSON1')?[[{PatNum:99}]]:[[]];
+  if(sql.includes('FROM patient p'))return args.includes('TEST-001')?[[{PatNum:99}]]:[[]];
   if(sql.includes('FROM procedurelog'))return [[{ProcNum:1,ProcCode:'D0150',ProcDate:'2026-09-17'}]];
   throw Error('unexpected query');
  }};

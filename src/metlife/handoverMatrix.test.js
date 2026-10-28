@@ -136,17 +136,13 @@ for(const carrier of ['CIGNA','DELTA DENTAL']){
   const f=await insuranceLedger(root,parsed.claims.map((c,i)=>({patNum:500+i,firstName:c.patient.firstName,lastName:c.patient.lastName,memberId:c.patient.memberId,claimNumber:c.claimNumber,procedures:c.procedures,serviceDate:c.procedures[0].date})));
   const file=path.join(root,'batch.txt');await fs.writeFile(file,text);return {root,text,file,parsed,f};
  }
- test(`HANDOVER ${carrier}: two patients keep separate payments, dates, services and IDs across a renamed TXT retry`,async()=>{
+ test(`HANDOVER ${carrier}: unnamed multi-patient batch requires patient-number filenames before any write`,async()=>{
   const x=await batchFixture(),{f}=x;try{
-   for(const file of [x.file,path.join(x.root,'batch-copy.txt')]){await fs.writeFile(file,x.text);await processSinglePdf(f.pool,file,{hashSplits:f.hashes});}
-   assert.equal(f.payments.length,2);assert.equal(f.documents.length,2);assert.equal(f.history.length,2);assert.equal(f.addedAudit.length,0);
-   for(const [i,c] of x.parsed.claims.entries()){
-    const payment=f.payments.find(p=>p.PatNum===500+i);assert.equal(payment.PayDate,c.date);assert.equal(Math.round(Number(payment.PayAmt)*100),c.totals.planPaidCents);
-    const splits=f.splits.filter(s=>s.PayNum===payment.PayNum);assert.ok(splits.every(s=>s.PatNum===500+i));assert.equal(splits.reduce((n,s)=>n+Math.round(Number(s.SplitAmt)*100),0),c.totals.planPaidCents);
-   }
+   await assert.rejects(processSinglePdf(f.pool,x.file,{hashSplits:f.hashes}),e=>e.code==='EOB_REVIEW_REQUIRED'&&/tên file/.test(e.message));
+   assert.equal(f.payments.length,0);assert.equal(f.documents.length,0);assert.equal(f.history.length,0);assert.equal(f.events.length,0);
   }finally{await fs.rm(x.root,{recursive:true,force:true});}
  });
- test(`HANDOVER ${carrier}: second-patient ambiguity stops the entire batch before the first payment or document`,async()=>{
+ test(`HANDOVER ${carrier}: unnamed batch with ambiguous services stops before the first payment or document`,async()=>{
   const x=await batchFixture(),{f}=x;try{
    const row=f.procs.find(p=>p.PatNum===501);f.procs.push({...row,ProcNum:99000});
    await assert.rejects(processSinglePdf(f.pool,x.file,{hashSplits:f.hashes}),e=>e.code==='EOB_REVIEW_REQUIRED');

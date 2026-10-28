@@ -11,6 +11,7 @@ import { odSecurityLogHash } from './directPayment.js';
 import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
 import {documentInsert} from './documentImport.js';
 import {readInsuranceDocument,isInsuranceFile,isImageFile,imagePdf} from '../liberty/document.js';
+import {resolveFilePatient} from './patientFileIdentity.js';
 import {exportDailyReports} from './dailyExcel.js';
 
 let isScanning = false;
@@ -54,76 +55,9 @@ export async function ensureMetlifeHistoryTable(pool) {
   }
 }
 
-export function metlifeFilenameNameMatches(source,patient){
-  const normalized=value=>String(value||'').normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().replace(/[^a-z0-9]/g,'');
-  const name=normalized(source),first=normalized(patient.FName),last=normalized(patient.LName);
-  // Some verified MetLife EOBs print only "Ryan" or "Dien". A filename-bound
-  // PatNum plus the complete given name is sufficient for that source format.
-  return !!name&&!!first&&[first,first+last,last+first].includes(name);
-}
-
-export async function resolvePatient(pool, { fileName, parsed }) {
-  // 1. Try matching PatNum directly from filename (e.g. 1307.pdf, 1307_eob.pdf)
-  const patientFile = fileName.replace(/^\d{13}_(?=\d+(?:[_.]|$))/, '');
-  const numMatch = patientFile.match(/^(\d+)/) || fileName.match(/[^\d](\d{3,7})[^\d]/) || fileName.match(/(\d{3,7})\.pdf$/i);
-  if (numMatch) {
-    const patNum = Number.parseInt(numMatch[1], 10);
-    const [rows] = await pool.execute(
-      'SELECT PatNum, FName, LName, ClinicNum, PriProv, ImageFolder FROM patient WHERE PatNum = ?',
-      [patNum]
-    );
-    if (rows.length === 1) {
-      if(!metlifeFilenameNameMatches(parsed.patient,rows[0]))throw reviewError(`Mã bệnh nhân #${patNum} từ tên file không khớp tên trên EOB MetLife; chưa lưu thanh toán.`);
-      return rows[0];
-    }
-    if(/^\d+(?=[_.]|$)/.test(patientFile))throw reviewError(`Không tìm thấy mã bệnh nhân #${patNum} từ tên file MetLife; chưa lưu thanh toán.`);
-  }
-
-  // 2. Try matching from parsed EOB patient name
-  if (parsed.patient) {
-    const rawName = parsed.patient.trim();
-    let fname = '', lname = '';
-    if (rawName.includes(',')) {
-      const parts = rawName.split(',').map((s) => s.trim());
-      lname = parts[0];
-      fname = parts[1]?.split(' ')[0] || '';
-    } else {
-      const parts = rawName.split(/\s+/);
-      fname = parts[0] || '';
-      lname = parts.slice(1).join(' ') || '';
-    }
-
-    if (fname && lname) {
-      const [byName] = await pool.execute(
-        `SELECT PatNum, FName, LName, ClinicNum, PriProv, ImageFolder FROM patient
-         WHERE (LName LIKE ? AND FName LIKE ?) OR (LName LIKE ? AND FName LIKE ?)
-         LIMIT 5`,
-        [`%${lname}%`, `%${fname}%`, `%${fname}%`, `%${lname}%`]
-      );
-      if (byName.length === 1) {
-        return byName[0];
-      }
-      if (byName.length > 1 && parsed.group) {
-        // Disambiguate using group number
-        const patIds = byName.map((r) => r.PatNum);
-        const [matched] = await pool.execute(
-          `SELECT p.PatNum, p.FName, p.LName, p.ClinicNum, p.PriProv, p.ImageFolder
-           FROM patient p
-           JOIN patplan pp ON pp.PatNum = p.PatNum
-           JOIN inssub s ON s.InsSubNum = pp.InsSubNum
-           JOIN insplan ip ON ip.PlanNum = s.PlanNum
-           WHERE p.PatNum IN (${patIds.map(() => '?').join(',')}) AND ip.GroupNum LIKE ?
-           LIMIT 1`,
-          [...patIds, `%${parsed.group}%`]
-        );
-        if (matched.length === 1) {
-          return matched[0];
-        }
-      }
-    }
-  }
-
-  throw new Error(`Không xác định được bệnh nhân trong Open Dental cho file: ${fileName} (Tên: ${parsed.patient || 'N/A'})`);
+// MetLife identity follows the clinic-assigned filename, including TXT retries.
+export async function resolvePatient(pool, { fileName }) {
+  return resolveFilePatient(pool,{fileName,carrier:'MetLife'});
 }
 
 export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, claimNumber, paymentDate, amountCents, carrier = 'MetLife' }) {

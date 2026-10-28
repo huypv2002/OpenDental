@@ -85,7 +85,7 @@ test('CIGNA reuses payment/doc/history/Excel workflow and keeps the same-code te
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
   if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
   if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
-  if(sql.includes('FROM patient p')){assert.match(sql,/%CIGNA%/);assert.deepEqual(args,['PERSON','TEST','1275']);return [[{PatNum:1275,FName:'PERSON',LName:'TEST',ImageFolder:'Test1275',PriProv:1,ClinicNum:0}]];}
+  if(sql.includes('FROM patient p')){assert.doesNotMatch(sql,/SubscriberID|LOWER\(|EXISTS/);assert.deepEqual(args,['1275']);return [[{PatNum:1275,FName:'PERSON',LName:'TEST',ImageFolder:'Test1275',PriProv:1,ClinicNum:0}]];}
   if(sql.includes('procedurecode.ProcCode')||sql.includes('FROM procedurelog pl'))return [procs];
   if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:path.join(root,'images')},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];
   if(sql.includes('Category = 18'))return [[{DefNum:18}]];

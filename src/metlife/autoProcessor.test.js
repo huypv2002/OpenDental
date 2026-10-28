@@ -8,8 +8,8 @@ import os from 'node:os';
 test('resolvePatient matches PatNum in filename directly', async () => {
   const pool = {
     execute: async (sql, values) => {
-      if (sql.includes('FROM patient WHERE PatNum = ?')) {
-        assert.equal(values[0], 1307);
+      if (sql.includes('FROM patient p WHERE p.PatNum=?')) {
+        assert.equal(values[0], '1307');
         return [[{ PatNum: 1307, FName: 'RYAN', LName: 'PHAM', ClinicNum: 0, PriProv: 1, ImageFolder: 'PhamRyan1307' }]];
       }
       return [[]];
@@ -24,22 +24,12 @@ test('resolvePatient matches PatNum in filename directly', async () => {
   assert.equal(patient.LName, 'PHAM');
 });
 
-test('resolvePatient matches patient by parsed name when filename has no ID', async () => {
-  const pool = {
-    execute: async (sql, values) => {
-      if (sql.includes('LName LIKE ? AND FName LIKE ?')) {
-        return [[{ PatNum: 1307, FName: 'RYAN', LName: 'PHAM', ClinicNum: 0, PriProv: 1, ImageFolder: 'PhamRyan1307' }]];
-      }
-      return [[]];
-    }
-  };
-
-  const patient = await resolvePatient(pool, {
-    fileName: 'MetLife_EOB_Claim.pdf',
-    parsed: { patient: 'PHAM, RYAN', group: '301044' }
-  });
-  assert.equal(patient.PatNum, 1307);
-  assert.equal(patient.FName, 'RYAN');
+test('resolvePatient requires a filename PatNum instead of falling back to a printed name', async () => {
+  let queries=0;
+  await assert.rejects(resolvePatient({execute:async()=>{queries++;return [[]];}}, {
+    fileName:'MetLife_EOB_Claim.pdf',parsed:{patient:'PHAM, RYAN',group:'301044'}
+  }),e=>e.code==='EOB_REVIEW_REQUIRED'&&/tên file/.test(e.message));
+  assert.equal(queries,0);
 });
 
 test('autoPopulateProcedureFees updates 0.00 ProcFee to submitted fee from EOB', async () => {
@@ -139,7 +129,7 @@ test('MetLife full processor writes blank check, processed date, claim-only note
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
   if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
   if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];
-  if(sql.includes('FROM patient WHERE PatNum'))return [[{PatNum:99,FName:'TEST',LName:'PERSON',ImageFolder:'Test99',ClinicNum:0,PriProv:1}]];
+  if(sql.includes('FROM patient p WHERE p.PatNum'))return [[{PatNum:99,FName:'TEST',LName:'PERSON',ImageFolder:'Test99',ClinicNum:0,PriProv:1}]];
   if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:imageRoot},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];
   if(sql.includes('Category = 18')){assert.match(sql,/IsHidden = 0/);return [[{DefNum:55}]];}
   if(sql.includes('INFORMATION_SCHEMA.COLUMNS'))return [[{COLUMN_NAME:'DocNum',EXTRA:'auto_increment'},...['DocCategory','PatNum','FileName','Description','DateCreated','MountItemNum','RawBase64'].map(COLUMN_NAME=>({COLUMN_NAME,IS_NULLABLE:'NO',COLUMN_DEFAULT:null,EXTRA:''}))]];
@@ -181,11 +171,10 @@ test('Finished Claims import fails visibly before document insert if category or
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
-test('MetLife filename patient must match the printed given/full name and cannot fall back to another patient',async()=>{
- const patient={PatNum:1307,FName:'RYAN',LName:'PHAM'},queries=[];
- const pool={execute:async(sql,args)=>{queries.push(sql);return [args[0]===1307?[patient]:[]];}};
- for(const name of ['Ryan','RYAN PHAM','PHAM, RYAN'])assert.equal((await resolvePatient(pool,{fileName:'1307.pdf',parsed:{patient:name}})).PatNum,1307);
- for(const name of ['Other','RYAN OTHER','Ryan P',''])await assert.rejects(resolvePatient(pool,{fileName:'1307.txt',parsed:{patient:name}}),e=>e.code==='EOB_REVIEW_REQUIRED'&&/không khớp tên/.test(e.message));
- await assert.rejects(resolvePatient(pool,{fileName:'9999.pdf',parsed:{patient:'Ryan Pham'}}),e=>e.code==='EOB_REVIEW_REQUIRED'&&/Không tìm thấy mã/.test(e.message));
- assert.ok(queries.every(sql=>sql.includes('FROM patient WHERE PatNum')));
+test('MetLife filename patient ignores printed names, including middle initials, and never falls back',async()=>{
+ const patient={PatNum:1004,FName:'BINH',LName:'DANG'},queries=[];
+ const pool={execute:async(sql,args)=>{queries.push(sql);return [Number(args[0])===1004?[patient]:[]];}};
+ for(const name of ['Binh T Dang','Other',''])for(const fileName of ['1004.pdf','1004.txt','1792789329060_1004.pdf'])assert.equal((await resolvePatient(pool,{fileName,parsed:{patient:name}})).PatNum,1004);
+ await assert.rejects(resolvePatient(pool,{fileName:'9999.pdf',parsed:{patient:'Binh Dang'}}),e=>e.code==='EOB_REVIEW_REQUIRED'&&/mã bệnh nhân/.test(e.message));
+ assert.ok(queries.every(sql=>sql.includes('WHERE p.PatNum=?')));
 });

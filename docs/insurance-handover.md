@@ -25,11 +25,9 @@ PASS là đúng kỳ vọng: một case chặn tài liệu lỗi trước khi gh
 | CIGNA | PDF chuyển TXT; TXT giữ cột | Date Processed | Quyền lợi theo từng dòng và alternate benefit đã xác nhận | Ví dụ header $0 nhưng hai khoản $56.80 thành $113.60; răng 03/3; không hỗ trợ ảnh rời CIGNA |
 | Delta Dental | PDF, JPG/JPEG, PNG; TXT | Date payment sent | Delta Dental pays của Claim total | Amount có thể gộp nhiều claim; đủ sáu tổng cột; quyền lợi giảm; X-quang FLB; tên ghép Van Anh/VANANH |
 
-Delta có mã bệnh nhân rõ trong tên file và một claim: chọn đúng PatNum, kiểm tra họ tên, không chặn vì DOB/Subscriber ID hoặc tự tạo/gắn hợp đồng người phụ thuộc. File nhiều claim không áp một PatNum cho mọi người; cần đối chiếu riêng. Kiểm tra trùng tiền, dịch vụ và tài chính vẫn giữ nguyên.
+Quy tắc đã chốt ngày 28/10/2026: MetLife, CIGNA và Delta lấy PatNum từ đầu tên file, không kiểm tra trùng tên EOB và không tự tìm hồ sơ khác theo tên. Hỗ trợ tiền tố timestamp tải xuống/lưu trữ và ghi chú sau mã. Mọi claim trong file của ba hãng này đi theo cùng mã file; file nhiều bệnh nhân cần tách theo mã bệnh nhân.
 
-MetLife cũng kiểm tra tên trên EOB khi chọn theo mã file. Mẫu chỉ ghi tên gọi (Ryan/Dien) cần khớp trọn tên gọi trong OD; mẫu ghi đủ họ tên chấp nhận thứ tự họ/tên hoặc tên/họ. Mã file có trong OD nhưng tên khác phải dừng; mã file rõ nhưng không tồn tại không tự chuyển sang bệnh nhân khác theo tên.
-
-Nhiều bệnh nhân: Liberty có mẫu PDF/JPEG thực hai bệnh nhân trong cùng check. CIGNA và Delta có batch TXT mô phỏng với một claim trên mỗi trang, giữ riêng patient/date/payment và kiểm tra toàn bộ batch trước khi ghi. MetLife hiện yêu cầu đúng một Claim Number mỗi file; file gộp nhiều claim bị chặn trước DB, cần tách file.
+Riêng Liberty tìm từng bệnh nhân bằng Subscriber ID trong từng claim, không dùng PatNum của tên file hoặc tên in trên EOB. Ưu tiên ID đầy đủ, sau đó thử ID bỏ hậu tố số nếu OD lưu thiếu hậu tố. Không khớp hoặc khớp nhiều hồ sơ thì dừng trước khi ghi claim đầu tiên. Xem [quy tắc và kiểm thử 28/10](insurance-patient-identity-2026-10-28.md). MetLife vẫn yêu cầu đúng một Claim Number mỗi file.
 
 Mỗi hãng có case riêng cho: thanh toán TXT đầy đủ, note/check/date, ước tính/write-off = 0 đúng phạm vi, Excel một lần, chạy lại đổi tên, ExternalId rỗng nhưng claim note khớp, khoản cũ khác tiền/ngày/phân bổ, nhiều khoản cùng claim, dịch vụ trùng mơ hồ, native hash lỗi, lịch sử lỗi sau khi đã ghi tiền, lỗi ghi split và việc bỏ qua các folder con. Các test nguồn và fixture thực bổ sung kiểm tra parser/scan/PDF/ảnh/nhiều bệnh nhân theo từng hãng.
 
@@ -38,7 +36,7 @@ Mỗi hãng có case riêng cho: thanh toán TXT đầy đủ, note/check/date, 
 1. Mở console Bridge và Electron; chứng minh kết nối bằng trạng thái thực, không chỉ việc cửa sổ đã mở. Kiểm tra folder `D:\SHARE\INSURANCE CLAIM\EXCEL`.
 2. Trên môi trường thử nghiệm, thả một mẫu mới của từng hãng. Đối chiếu patient, claim, ngày trả, tổng tiền, từng dòng phân bổ. Kiểm tra Finished Claims có tài liệu gốc, note `Claim number: ...`, Check để trống.
 3. Liberty dùng mẫu hai bệnh nhân: kiểm tra hai khoản riêng và đúng dịch vụ D5110/D5120 sẵn có. Kiểm tra không có thủ thuật mới trùng mã/ngày/hàm.
-4. Delta 1279: mã file chọn #1279, tên Van Anh/VANANH khớp dù Subscriber ID trong OD khác. Dịch vụ D2393 răng 4/19, tổng $232.00. Không sửa thông tin hợp đồng bảo hiểm.
+4. Delta 1279: mã file chọn #1279, không chặn vì tên hoặc Subscriber ID trong OD khác. Dịch vụ D2393 răng 4/19, tổng $232.00. Không sửa thông tin hợp đồng bảo hiểm.
 5. Chạy lại đúng file và bản đổi tên: Payment/DocNum/procedure count giữ nguyên; Excel không thêm nhóm trùng. Mở Excel kiểm tra tab PAYMENTS, TONG HOP và CAN DOI CHIEU nếu có.
 6. Mở Excel khi xuất báo cáo: thanh toán thành công không chạy lại; đóng Excel rồi xem báo cáo được ghi bù. Case sai tổng/thiếu trang phải vào REVIEW, không tự lặp lại.
 

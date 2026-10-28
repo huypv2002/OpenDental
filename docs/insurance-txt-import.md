@@ -11,6 +11,8 @@ Place a TXT in the insurer's usual SERVER folder under `D:\SHARE\INSURANCE CLAIM
 | CIGNA | CIGNA | Processed claim, six service money columns, Plan Coinsurance Paid |
 | Delta Dental | DELTA DENTAL | Provider Tools, six service money columns and Claim total |
 
+Patient identity follows the [28/10/2026 clinic rule](insurance-patient-identity-2026-10-28.md): MetLife/CIGNA/Delta use filename PatNum only; Liberty uses each claim's Subscriber ID only. Printed names do not select or reject patients. Missing numbers/unknown patients and missing/ambiguous Liberty subscribers stop before posting.
+
 TXT recognition uses content rather than relying on the folder name. Conflicting insurer signatures or unrecognized formats stop before database queries. This does not expand automatic PDF carrier detection.
 
 UTF-8 with/without BOM and UTF-16 with BOM are supported. A form-feed character may preserve page boundaries. MetLife and CIGNA must retain the aligned whitespace/table columns from the original EOB; collapsing all spaces can lose the financial column identity and is rejected. Ordinary line wrapping and continuation pages still use each carrier's existing parser and validation. New insurer layouts are not guaranteed automatically.
