@@ -323,15 +323,15 @@ function renderHistoryDetail(item) {
         </div>
         <div class="reconcile-item">
           <span>✓</span>
-          <span><b>Trạng thái Claim:</b> Đã nhận thanh toán (<code>ClaimStatus = 'R'</code>)</span>
+          <span><b>Trạng thái Claim:</b> ${details?.insuranceDefaults?.claimNums?.length ? 'Đã cập nhật claim OD liên kết sang trạng thái nhận thanh toán.' : 'Không có thông tin claim OD liên kết trong lịch sử; kiểm tra trong Open Dental.'}</span>
         </div>
         <div class="reconcile-item">
           <span>✓</span>
-          <span><b>Chống nhân đôi dòng tiền:</b> Đã chặn dòng ảo <i>PAYMENT NEEDS TO BE FINALIZED</i> thành công. Chỉ hiển thị 1 dòng $${amountStr}.</span>
+          <span><b>Chống thanh toán trùng:</b> Khi chạy lại, hệ thống đối chiếu claim, bệnh nhân, ngày, ${amountStr} và từng phân bổ trước khi dùng lại khoản đã lưu.</span>
         </div>
         <div class="reconcile-item">
           <span>✓</span>
-          <span><b>Số dư tài khoản bệnh nhân (Balance):</b> Khớp đúng <b>$0.00</b> (Không bị âm tiền)</span>
+          <span><b>Số dư tài khoản bệnh nhân (Balance):</b> Xem số dư hiện tại trong Open Dental; màn hình lịch sử không xác nhận số dư bằng 0.</span>
         </div>
       </div>
     </div>
@@ -619,9 +619,10 @@ async function searchPatients(page = 0) {
   $('#search-patients').textContent = 'Đang tìm...';
   try {
     const res = await request('search-patients', { q, kind, page });
-    patientState.patients = res?.patients || [];
-    patientState.page = res?.page || 0;
-    patientState.hasMore = !!res?.hasMore;
+    const browser = res?.patientBrowser || res;
+    patientState.patients = browser?.patients || [];
+    patientState.page = browser?.page || 0;
+    patientState.hasMore = !!browser?.hasMore;
     renderPatientResults();
   } catch (err) {
     toast(`Lỗi tìm bệnh nhân: ${err.message}`);
@@ -671,7 +672,7 @@ $('#patient-results')?.addEventListener('click', async e => {
 
   try {
     const res = await request('patient-documents', p.PatNum);
-    patientState.documents = res?.documents || [];
+    patientState.documents = (res?.patientBrowser || res)?.documents || [];
     renderPatientDocuments();
   } catch (err) {
     toast(`Lỗi tải Finished Claims: ${err.message}`);
@@ -736,6 +737,15 @@ function startAutoRefresh() {
 }
 
 // Initial boot
+// The window loads before the asynchronous LAN connection completes. Refresh
+// as soon as it becomes available instead of showing an empty/error dashboard
+// until the first 15-second timer tick.
+let connectedEndpoint='';
+window.metlife.onState(state=>{
+ const endpoint=state.patientBrowser?.connected?state.patientBrowser.url:'';
+ if(endpoint&&endpoint!==connectedEndpoint){connectedEndpoint=endpoint;loadServerHistory();}
+ else if(!endpoint)connectedEndpoint='';
+});
 loadServerHistory();
 startAutoRefresh();
 addEvent('Đã khởi chạy LUK MetLife Audit Center trên máy R5.');

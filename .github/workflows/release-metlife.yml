@@ -1,4 +1,4 @@
-name: Validate MetLife deployment
+name: Validate four-carrier insurance delivery
 on:
   workflow_dispatch:
   push:
@@ -6,6 +6,11 @@ on:
     paths:
       - 'src/metlife/**'
       - 'src/liberty/**'
+      - 'src/cigna/**'
+      - 'src/delta/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/verify-insurance-handover.mjs'
       - 'scripts/inspect-metlife-db.mjs'
       - 'scripts/inspect-metlife-od-context.ps1'
       - 'scripts/inspect-metlife-od-host.ps1'
@@ -60,10 +65,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-metlife-hash-helper.ps1 -FixtureArchitecture anycpu
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install Bridge and PDF conversion dependencies on Windows
+        run: npm ci
+      - name: Verify insurance parsers, converter and financial guards on Windows
+        run: npm run test:metlife
       - run: npm ci --prefix metlife-electron
       - run: npm test --prefix metlife-electron
-      - run: npm run test:save --prefix metlife-electron
-      - run: npm run test:connect --prefix metlife-electron
+      # The current desktop is the audit dashboard. Legacy save/connect scripts
+      # target removed controls; financial writes are exercised in the DB job.
       - run: npm run test:ui --prefix metlife-electron
       - run: npm run dist:win --prefix metlife-electron
       - run: node metlife-electron/scripts/verify-editions.cjs

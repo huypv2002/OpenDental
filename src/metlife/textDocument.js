@@ -77,6 +77,14 @@ export function readInsuranceTextDocument(bytes){
   warnings.push(`TXT: đọc $${whole} ${cents} là $${whole}.${cents}.`);
   return `$${whole}.${cents}`.padEnd(all.length,' ');
  });
- const pages=normalized.split('\f').map((s,i)=>layoutPage(s,i+1,carrier));
+ // Portal printouts can strand a section title at the bottom of a page while
+ // its column headings and payment rows start on the next. Move only that
+ // exact trailing title, preserving the remaining page boundary and contents.
+ const pageText=normalized.split('\f');
+ if(carrier==='METLIFE')for(let i=0;i<pageText.length-1;i++){
+  const title=/(?:^|\r?\n)[ \t]*Payment[ \t]+Detail[ \t\r\n]*$/.exec(pageText[i]);
+  if(title){pageText[i]=pageText[i].slice(0,title.index);pageText[i+1]='Payment Detail\n'+pageText[i+1];}
+ }
+ const pages=pageText.map((s,i)=>layoutPage(s,i+1,carrier));
  return {extracted:{sha256:createHash('sha256').update(bytes).digest('hex'),sourceFormat:'text',textCarrier:carrier,ocr:false,warnings,pages},pdfBytes:bytes};
 }

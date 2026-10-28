@@ -10,6 +10,13 @@ export function parseDelta(extracted){
  try{
  for(const page of extracted.pages){
   const lines=page.lines.map(l=>{const t=l.text.trim();return /^claimtotal$/i.test(t.replace(/\s/g,''))?'Claim total':t;}).filter(Boolean);
+  // A large-font total label may contain I/l confusion or lose its final l.
+  // Normalize the label only when immediately followed by all six explicit
+  // currency cells. Never repair a service code, claim ID or monetary digit.
+  for(let i=0;i<lines.length-1;i++)if(/^c[li]a[li]mtota[li]?$/i.test(lines[i].replace(/\s/g,''))&&amounts(lines[i+1]).length===6&&/^[-$\d,.\s]+$/.test(lines[i+1])){
+   if(lines[i]!=='Claim total')warnings.push('Delta: chuẩn hóa nhãn Claim total; giữ nguyên sáu số tiền để đối chiếu.');
+   lines[i]='Claim total';
+  }
   // Export libraries may put a larger 'Claim total' label on its own line.
   // Join only its immediately following six explicit currency values.
   for(let i=0;i<lines.length-1;i++)if(/^Claim total$/i.test(lines[i])&&amounts(lines[i+1]).length===6&&/^[-$\d,.\s]+$/.test(lines[i+1]))lines.splice(i,2,lines[i]+' '+lines[i+1]);
@@ -24,20 +31,11 @@ export function parseDelta(extracted){
    const birth=lines[nameIndex+1]?.match(/\d{2}\/\d{2}\/\d{4}/)?.[0];
    const memberIndex=lines.findIndex(l=>/Subscriber ID/.test(l));
    const member=lines[memberIndex+1]?.match(/\b\d{6,20}\b/)?.[0];
-   const relationship=(lines[nameIndex+1]||'').replace(/^.*?\d{2}\/\d{2}\/\d{4}\s*/,'').trim();
-   const subscriberName=member?(lines[memberIndex+1]||'').split(member)[0].trim():'';
-   const subscriberParts=subscriberName.split(/\s+/);
-   const subscriberBirthIndex=lines.findIndex(l=>/^Policy holder\/subscriber date of birth\b/i.test(l));
-   const subscriberBirth=lines[subscriberBirthIndex+1]?.match(/\d{2}\/\d{2}\/\d{4}/)?.[0];
-   const group=subscriberBirthIndex>=0?(lines[subscriberBirthIndex+1]||'').replace(/^.*?\d{2}\/\d{2}\/\d{4}\s*/,'').split(/\s+/)[0]:'';
    const dateIndex=lines.findIndex(l=>/^Date payment sent$/i.test(l));
    const payDate=isoDate(lines[dateIndex+1]);
    const amountIndex=lines.findIndex(l=>/^Amount\b.*Payment status updated/i.test(l));
    const headerPaid=amountIndex>=0?amounts(lines[amountIndex+1])[0]:null;
    current={claimNumber:ids[0],patient:{raw:name,firstName:parts.slice(0,-1).join(' '),lastName:parts.at(-1),memberId:member||'',birthdate:isoDate(birth)},date:payDate,headerPaidCents:headerPaid,rawProcedures:[],printedTotals:null};
-   current.patient.relationship=/^Dependent$/i.test(relationship)?'Dependent':relationship;
-   current.subscriber={raw:subscriberName,firstName:subscriberParts.slice(0,-1).join(' '),lastName:subscriberParts.at(-1),birthdate:isoDate(subscriberBirth),memberId:member||''};
-   current.groupNumber=group||'';
    if(parts.length<2||!current.patient.birthdate||!member||!payDate||!Number.isSafeInteger(headerPaid)||!/\bCleared\b|\bPaid\b/.test(text))throw fail('Thiếu thông tin bệnh nhân, ngày gửi tiền hoặc trạng thái thanh toán Delta.');
    claims.push(current);
   }
@@ -111,7 +109,7 @@ export function parseDelta(extracted){
   // Only this claim's reconciled Delta Dental pays column is posted.
   if(claim.headerPaidCents!==paid)warnings.push(`Claim ${claim.claimNumber}: Amount ${money(claim.headerPaidCents)} là thông tin tổng đợt trả; dùng Claim total ${money(paid)} theo quy tắc đã xác nhận.`);
   claim.procedures=normalized.map((p,i)=>({...p,line:i+1,copayCents:0,coinsuranceCents:0,status:p.benefitCents>0?'Approved':'Denied'}));
-  claim.totals={planPaidCents:paid};claim.plan={carrier:'DELTA DENTAL',group:claim.groupNumber||''};claim.check={number:'',date:claim.date};
+  claim.totals={planPaidCents:paid};claim.plan={carrier:'DELTA DENTAL',group:''};claim.check={number:'',date:claim.date};
   claim.paymentPayload={payType:'Insurance Paid',checkNum:'',claimNum:claim.claimNumber,payDate:claim.date,payNote:`Claim number: ${claim.claimNumber}`,amountCents:paid,amount:money(paid),splits:claim.procedures.filter(p=>p.benefitCents>0).map(p=>({code:p.code,tooth:p.tooth,date:p.date,amountCents:p.benefitCents,amount:money(p.benefitCents)}))};
  }
  if(!claims.length)throw fail('Không nhận diện được claim Delta Dental.');

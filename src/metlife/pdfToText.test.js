@@ -17,9 +17,9 @@ const delta=`DELTA DENTAL Provider Tools | Fee for service
 Claim 20262965110923
 TEST PERSON
 Patient date of birth Relationship to policy holder/subscriber
-06/06/1981 Self (Subscriber)
+06/06/1981 Dependent
 Policy holder/subscriber name Subscriber ID Employer or group name
-TEST PERSON 115084523301 GROUP
+OTHER PERSON 115084523301 GROUP
 Payment status
 Outstanding Paid to
 Amount Payment status updated Payee address
@@ -91,12 +91,7 @@ for(const [file,parse,expected] of fixtures)test(`Scribe library converts real $
  assert.deepEqual(p.errors,[]);assert.equal(p.benefitCents??p.check.netPaymentCents,expected);
  const expectedIds={'1793111377468_1279.pdf':'20262965110923','1793110627097_423.pdf':'20262965111086','1283.pdf':'20262635105590','280.pdf':'20261625116008','1792771310824_1012.pdf':'20261165105694'};
  if(expectedIds[file])assert.equal(p.claims[0].claimNumber,expectedIds[file]);
- if(file.includes('1279')){
-  const c=p.claims[0];
-  assert.deepEqual(c.paymentPayload.splits.map(s=>[s.code,s.tooth,s.amount]),[['D2393','4','96.00'],['D2393','19','136.00']]);
-  assert.equal(c.patient.relationship,'Dependent');assert.equal(c.subscriber.raw,'Joseph Nichols');
-  assert.equal(c.subscriber.birthdate,'1971-02-08');assert.equal(c.plan.group,'21767');
- }
+ if(file.includes('1279'))assert.deepEqual(p.claims[0].paymentPayload.splits.map(s=>[s.code,s.tooth,s.amount]),[['D2393','4','96.00'],['D2393','19','136.00']]);
 });
 
 
@@ -124,4 +119,10 @@ test('converted TXT is retained when financial validation rejects an ambiguous s
 test('known scanned Delta 1012 converts to TXT but refuses payment when service codes remain ambiguous',{skip:!process.env.EOB_PDF_TO_TEXT_DIR,timeout:130000},async()=>{
  const bytes=await fs.readFile(path.join(process.env.EOB_PDF_TO_TEXT_DIR,'1792771310824_1012.pdf'));
  await assert.rejects(convertPdfBytesToText(bytes),e=>e.code==='EOB_REVIEW_REQUIRED'&&typeof e.convertedText==='string'&&e.convertedText.includes('DELTA')&&e.convertedText.includes('$115.00'));
+});
+
+test('PDF conversion rejects invalid bytes, files over 30MB and a worker timeout before DB access',async()=>{
+ await assert.rejects(convertPdfBytesToText(Buffer.from('not a PDF')),/không phải PDF/);
+ await assert.rejects(convertPdfBytesToText(Buffer.alloc(30*1024*1024+1)),/30 MB/);
+ await assert.rejects(convertPdfBytesToText(Buffer.from('%PDF-synthetic'),{timeoutMs:1}),/quá thời gian/);
 });

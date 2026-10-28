@@ -41,6 +41,19 @@ test('Delta FLB bundled radiographs reconcile submitted fees without changing so
  assert.ok(p.warnings.some(s=>s.includes('FLB')));
 });
 
+test('Delta split total label tolerates I/l formatting only beside six unchanged explicit totals',()=>{
+ for(const label of ['C I a i m tota','Claim tota','C l a i m total']){
+  const input=sample(),last=input.pages.at(-1),index=last.lines.findIndex(l=>l.text.startsWith('Claim total'));
+  const values=last.lines[index].text.replace('Claim total','').trim();
+  last.lines.splice(index,1,{text:label},{text:values});
+  const parsed=parseDelta(input);assert.deepEqual(parsed.errors,[]);assert.equal(parsed.claims[0].paymentPayload.amount,'154.00');
+  last.lines[index+1].text=values.replace('$154.00','$155.00');assert.ok(parseDelta(input).errors.length);
+ }
+ const input=sample(),last=input.pages.at(-1),index=last.lines.findIndex(l=>l.text.startsWith('Claim total'));
+ last.lines.splice(index,1,{text:'C I a i m tota'},{text:'$263.00 $154.00'});
+ assert.ok(parseDelta(input).errors.length);
+});
+
 test('Delta FLB still rejects missing evidence, incomplete rows, changed totals or unrelated services',()=>{
  const variants=[
   s=>s.pages[1].lines.pop(),
