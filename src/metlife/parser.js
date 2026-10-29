@@ -75,7 +75,7 @@ export async function extractPdf(buffer) {
 
 const take = (text, re) => text.match(re)?.[1]?.trim() || '';
 
-export function parseMetlife(extracted) {
+export function parseMetlife(extracted, {clinicConfirmedPaid = false} = {}) {
   const { pages, sha256 } = extracted;
   const text = pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n\f\n');
   const errors = [],
@@ -223,10 +223,14 @@ export function parseMetlife(extracted) {
     errors.push('Cần đúng một dòng thanh toán; nhiều dòng hoặc thiếu trang cần kiểm tra riêng.');
   const payment = payments.length === 1 ? payments[0] : null;
   const benefitCents = benefits.length === 1 ? benefits[0] : null;
-  if (payment && !/Paid\s*\/?\s*Settled/i.test(payment.status))
+  if (payment && !clinicConfirmedPaid && !/Paid\s*\/?\s*Settled/i.test(payment.status))
     errors.push('Trạng thái thanh toán không phải Paid / Settled.');
-  if (payment && (!payment.trace || !/^(EFT|Check|ACH)$/i.test(payment.method)))
+  if (payment && !clinicConfirmedPaid && (!payment.trace || !/^(EFT|Check|ACH)$/i.test(payment.method)))
     errors.push('Thiếu trace/check number hoặc payment method chưa hỗ trợ.');
+  if (payment && clinicConfirmedPaid) {
+    payment.confirmationSource = 'clinic-incoming-folder';
+    warnings.push('Phòng khám xác nhận đã paid bằng cách đưa file vào thư mục quét; giữ nguyên status, method và trace trên EOB.');
+  }
   if (payment && payment.amountCents <= 0) errors.push('Số tiền thực trả phải lớn hơn 0.');
   if (
     procedures.every((r) => r.benefitCents !== null) &&

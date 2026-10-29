@@ -2,6 +2,8 @@
 
 Small Node.js API for reading available appointment slots and creating website bookings in Open Dental. WordPress should call this API instead of connecting directly to MySQL.
 
+MetLife files submitted through the incoming-folder processor are already confirmed paid by clinic staff. This path accepts missing or non-Paid/Settled status, payment method and check/trace metadata, preserves the source fields, and records `clinic-incoming-folder` as the confirmation source. It still requires one payment row, a positive amount reconciled with the benefit total, valid claim/procedure data and the existing duplicate-payment checks. Other parser entry points retain their default payment-metadata validation. For a paid D0210 Allowable replacement with a missing charge/date, the clinic confirmed preserving the unique matching completed OD procedure's fee/date. No matching service or multiple candidates requires review; this exception never creates a missing service or uses the benefit amount as its charge.
+
 Insurance procedure Amount uses MetLife Fee Charged, Liberty Allowed Amount, CIGNA Amount Charged, or Delta Accepted Fee; insurance payments keep the validated benefit amount. See [procedure fee rules and replay correction](docs/insurance-procedure-fees-2026-10-28.md).
 
 ## Liberty EOB: PDF and images

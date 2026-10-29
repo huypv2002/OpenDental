@@ -12,6 +12,7 @@ import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
 import {documentInsert} from './documentImport.js';
 import {readInsuranceDocument,isInsuranceFile,isImageFile,imagePdf} from '../liberty/document.js';
 import {procedureFeeCents} from './procedureFee.js';
+import {resolveMetlifeAllowableProcedures} from './allowableProcedure.js';
 import {isCignaStatement} from '../cigna/statementParser.js';
 import {resolveFilePatient} from './patientFileIdentity.js';
 import {exportDailyReports} from './dailyExcel.js';
@@ -128,6 +129,7 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
 
   for (const item of eobProcedures) {
     if (!item.code || !item.benefitCents || item.benefitCents <= 0) continue;
+    if (item.preserveExistingFee) continue;
     const procedureFee = (procedureFeeCents(item,carrier) / 100).toFixed(2);
 
     // Find matching completed procedure
@@ -207,7 +209,8 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
       document=readInsuranceTextDocument(sourceBytes);
     }else if(/\.pdf$/i.test(fileName)&&(convertPdf||extract===extractPdf)){
       const {readPdfAsText}=await import('./pdfToText.js');
-      document=await readPdfAsText(sourceBytes,filePath,convertPdf?{convert:convertPdf}:{});
+      // Files placed in this incoming workflow are confirmed paid by clinic staff.
+      document=await readPdfAsText(sourceBytes,filePath,{clinicConfirmedPaid:true,...(convertPdf?{convert:convertPdf}:{})});
     }else if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
       const {readDeltaDocument}=await import('../delta/document.js');
       document=await readDeltaDocument(sourceBytes,fileName,{extract});
@@ -235,7 +238,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   }
 
   if(extracted.ocr)throw Object.assign(new Error('Ảnh/PDF scan chưa xác nhận được là EOB Liberty; cần đối chiếu tài liệu gốc.'),{code:'EOB_REVIEW_REQUIRED'});
-  const parsed = parseMetlife(extracted);
+  const parsed = parseMetlife(extracted,{clinicConfirmedPaid:true});
 
   if (parsed.errors && parsed.errors.length > 0) {
     throw new Error(`Lỗi định dạng MetLife: ${parsed.errors.join('; ')}`);
@@ -264,16 +267,17 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     [patNum]
   );
 
-  const missingPlan=planMissingProcedures(completedProcs,parsed.procedures,{metlife:true});
+  const eobProcedures=resolveMetlifeAllowableProcedures(parsed.procedures,completedProcs);
+  const missingPlan=planMissingProcedures(completedProcs,eobProcedures,{metlife:true});
   const dbProcs=missingPlan.procs;
 
   const splitsPlan = [],matchedProcedures=new Map();
-  for (const eobProc of parsed.procedures) {
+  for (const eobProc of eobProcedures) {
     if (!eobProc.benefitCents || eobProc.benefitCents <= 0) continue;
     const splitAmount = (eobProc.benefitCents / 100).toFixed(2);
 
     const byDate=dbProcs.filter(p=>p.ProcCode===eobProc.code&&(!eobProc.date||procedureDay(p.ProcDate)===eobProc.date));
-    const matches=procedureCandidates(byDate,eobProc,parsed.procedures,{metlife:true});
+    const matches=procedureCandidates(byDate,eobProc,eobProcedures,{metlife:true});
     if(matches.length!==1)throw reviewError(`${eobProc.code}: chưa khớp duy nhất dịch vụ hoàn tất theo ngày; cần đối chiếu.`);
     const match=matches[0];
     if([...matchedProcedures.values()].some(p=>String(p.ProcNum)===String(match.ProcNum)))throw reviewError(`${eobProc.code}: nhiều dòng đang khớp cùng một dịch vụ; cần đối chiếu vùng hàm.`);
@@ -309,7 +313,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     amountCents: parsed.benefitCents
   });
 
-  const updatedFees=await autoPopulateProcedureFees(pool,{patNum,onlyChanged:!!existing,eobProcedures:parsed.procedures.map(p=>({...p,procNum:matchedProcedures.get(p)?.ProcNum})),dbProcs:dbProcs.filter(p=>settlement.procIds.includes(String(p.ProcNum))),settlement});
+  const updatedFees=await autoPopulateProcedureFees(pool,{patNum,onlyChanged:!!existing,eobProcedures:eobProcedures.map(p=>({...p,procNum:matchedProcedures.get(p)?.ProcNum})),dbProcs:dbProcs.filter(p=>settlement.procIds.includes(String(p.ProcNum))),settlement});
 
   // 4. Generate SecurityHash for each split
   const hashPlan = {
@@ -439,14 +443,15 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     documentDate: aToZResult.dateCreated,
     eobPayment: parsed.payment || null,
     subscriber: parsed.subscriber || '',
-    procedures: (parsed.procedures || []).map((p) => ({
+    procedures: eobProcedures.map((p) => ({
       procNum:matchedProcedures.get(p)?.ProcNum,
       code: p.code,
-      date: p.date || '',
+      date: p.odFallback ? p.odFallback.sourceDate || '' : p.date || '',
       tooth: p.tooth || '',
       surface:p.surface||'',
       status: p.status || '',
-      feeCents: p.feeCents ?? null,
+      feeCents: p.odFallback ? p.odFallback.sourceFeeCents : p.feeCents ?? null,
+      odFallback:p.odFallback,
       benefitCents: p.benefitCents || 0,
       remarks: p.remarks || []
     })),
