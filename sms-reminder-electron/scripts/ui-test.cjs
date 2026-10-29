@@ -72,6 +72,9 @@ async function run() {
       await page.waitForTimeout(180);
       assert.equal(await page.locator(".page:visible").count(), 1);
     }
+    await page.getByRole("button", { name: "Settings", exact: true }).first().click();
+    await page.click("#check-updates");
+    await page.waitForFunction(() => document.body.textContent.includes("Updates are available in the packaged Windows app."));
     await page
       .getByRole("button", { name: "Patient", exact: true })
       .first()

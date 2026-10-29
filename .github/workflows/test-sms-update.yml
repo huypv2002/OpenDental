@@ -1,0 +1,28 @@
+name: SMS Electron update checks
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'sms-reminder-electron/**'
+      - '.github/workflows/test-sms-update.yml'
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+        working-directory: sms-reminder-electron
+      - run: npm run check
+        working-directory: sms-reminder-electron
+      - run: npm test
+        working-directory: sms-reminder-electron
+      - name: Test update installation, rollback and config preservation
+        shell: powershell
+        run: '& ./sms-reminder-electron/scripts/test-update.ps1'

@@ -1,18 +1,18 @@
 {
   "name": "luk-dental-sms-electron",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "private": true,
   "description": "LUK Dental SMS Reminder Tool for R5 and FD2",
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
     "demo": "electron . --demo",
-    "test": "node scripts/test.mjs",
+    "test": "node scripts/test.mjs && node --test tests/updater.test.cjs",
     "test:ui": "node scripts/ui-test.cjs",
     "check": "node scripts/check.cjs",
     "pack": "electron-builder --dir",
     "dist:win": "electron-builder --win --x64",
-    "pack:win": "electron-builder --win dir --x64 --config.win.signAndEditExecutable=false",
+    "pack:win": "electron-builder --win dir --x64 --config.win.signExecutable=false",
     "dist:mac": "electron-builder --mac --arm64",
     "test:scheduler": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-scheduler.ps1"
   },

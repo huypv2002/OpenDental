@@ -8,6 +8,8 @@ const { Bridge } = require("./lib/bridge.cjs");
 const { DemoBridge } = require("./lib/demo.cjs");
 const { WindowsAdapter } = require("./lib/windows.cjs");
 const { SmsService } = require("./lib/service.cjs");
+const updater = require("./lib/updater.cjs");
+let updateBusy = false, updateInstalling = false;
 let window, service, store, model, timer;
 const pendingMonitoringArgs = [process.argv];
 let monitoringArgsReady = false, drainingMonitoringArgs = false;
@@ -49,7 +51,7 @@ async function drainMonitoringArgs() {
   } finally { drainingMonitoringArgs = false; }
 }
 async function applyMonitoringArgs(args) {
-  if (!service) return;
+  if (!service || updateInstalling) return;
   if (args.includes("--stop-reminder-monitoring")) service.stopMonitoring("appointment");
   if (args.includes("--stop-recall-monitoring")) service.stopMonitoring("recall");
   if (args.includes("--start-monitoring") || args.includes("--start-reminder-monitoring")) await service.startMonitoring("appointment");
@@ -151,6 +153,8 @@ async function start() {
     15000,
   );
   setTimeout(() => { monitoringArgsReady = true; drainMonitoringArgs().catch(e => service.activity(e.message)); }, 2000);
+  if (app.isPackaged && process.platform === "win32" && !demo)
+    setTimeout(() => checkForUpdates(false), 10000);
   if (process.argv.includes("--smoke"))
     setTimeout(async () => {
       const result = await window.webContents.executeJavaScript(
@@ -167,6 +171,56 @@ async function start() {
         );
       app.exit(result.tabs === 10 && !result.error ? 0 : 1);
     }, 2500);
+}
+async function checkForUpdates(manual) {
+  if (updateBusy) return { message: "An update check is already running." };
+  if (demo || !app.isPackaged || process.platform !== "win32")
+    return { message: "Updates are available in the packaged Windows app." };
+  updateBusy = true;
+  let resumeOnFailure = false;
+  try {
+    const release = await updater.checkUpdate(app.getVersion());
+    if (!release) return { message: "You have the latest SMS Electron version." };
+    if (!updater.canInstall(service.status())) {
+      service.activity(`SMS Electron ${release.version} is available. Finish the current SMS/draft, then use Settings > Check for updates.`);
+      return { message: "Update available. Finish the current SMS or draft, then check again." };
+    }
+    const { response } = await dialog.showMessageBox(window, {
+      type: "info", title: "SMS Electron update",
+      message: `SMS Electron ${release.version} is available.`,
+      detail: "Download and restart now? Your settings, SMS history and Windows schedule will be kept.",
+      buttons: ["Update & restart", "Later"], defaultId: 0, cancelId: 1,
+    });
+    if (response !== 0) return { message: "Update postponed." };
+    const dir = fs.mkdtempSync(path.join(store.dir, "update-"));
+    service.activity(`Downloading SMS Electron ${release.version}...`);
+    const archive = await updater.downloadUpdate(release, dir);
+    if (!updater.canInstall(service.status()))
+      throw new Error("Finish the current SMS or draft, then check for updates again.");
+    const installer = path.join(dir, "install-update.ps1");
+    fs.copyFileSync(path.join(process.resourcesPath, "windows", "install-update.ps1"), installer);
+    const plan = path.join(dir, "plan.json");
+    fs.writeFileSync(plan, JSON.stringify({
+      archive, sha256: release.sha256, target: path.dirname(process.execPath),
+      pid: process.pid, resumeMonitoring: service.monitoring || service.recallMonitoring,
+    }), { mode: 0o600 });
+    resumeOnFailure = service.monitoring || service.recallMonitoring;
+    updateInstalling = true;
+    service.stopMonitoring();
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", installer, "-Plan", plan], {
+      detached: true, stdio: "ignore", windowsHide: true,
+    });
+    await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
+    child.unref();
+    app.quit();
+    return { message: "Installing update and restarting..." };
+  } catch (error) {
+    updateInstalling = false;
+    if (resumeOnFailure) await service.startMonitoring();
+    service.activity(`Update check failed: ${error.message}`);
+    if (manual) throw error;
+    return { message: "Update check unavailable. Try again in Settings." };
+  } finally { updateBusy = false; }
 }
 function publicConfig() {
   const { api_token, ...config } = store.config;
@@ -244,7 +298,10 @@ function saveConfig(input) {
   return publicConfig();
 }
 async function dispatch(action, p, resources) {
+  if (updateInstalling) throw new Error("The app is restarting to install an update.");
   switch (action) {
+    case "check-updates":
+      return checkForUpdates(true);
     case "init":
       return {
         config: publicConfig(),

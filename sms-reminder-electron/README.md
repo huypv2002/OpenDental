@@ -114,3 +114,19 @@ Upgrade: close the old app, extract the full v1.0.6 ZIP into a permanent folder,
 Default Windows tasks open the app at 10:55 for the configured 11:00 clinic send time. Windows task times follow the workstation zone; sending follows America/Chicago by default. The app sends within 30 minutes of the send time, with no late catch-up. R5 must be signed in/unlocked with Phone Link ready. The existing auto-login/restart/lock tasks stay shared. FD2 stays manual.
 
 Source/unit/demo UI and package validation do not prove native Windows task execution or actual SMS delivery on R5.
+
+## Simple ZIP auto update — v1.0.8
+
+The packaged Windows app checks the `sms-electron-latest` GitHub Release at startup.
+A newer version offers **Update & restart**; **Settings → Check for updates** retries manually.
+An active SMS operation or pending draft blocks installation. Downloads are checked by SHA256;
+the Windows helper waits for the app to exit, replaces app files in the same directory and restarts it.
+Monitoring resumes if it was enabled. AppData settings/history and the config beside the EXE are preserved.
+If file replacement fails, the helper restores overwritten files. Diagnostics are in
+`update-*/install.log` inside the settings folder. The app folder must be writable by the current user.
+
+To publish a version: bump package.json and package-lock.json, run checks/tests and `pack:win`, then
+`python3 scripts/package-update.py`. Upload only the ZIP and update.json from `dist/update-release`
+to the `sms-electron-latest` GitHub release (upload the ZIP before update.json).
+Never upload the private R5 ZIP: it contains the clinic API token.
+Use `package-r5.py --config ...` afterward for the private first-install ZIP.
