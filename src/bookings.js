@@ -126,8 +126,11 @@ function phoneDigits(phone) {
   return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
 }
 
-function escapeLike(value) {
-  return String(value).replace(/[\\%_]/g, (match) => `\\${match}`);
+// Online booking identity is DOB + phone. Names may be shortened or mistyped.
+function hasMatchingBookingPhone(patient, phone) {
+  const expected = phoneDigits(phone);
+  return expected.length === 10 && ['WirelessPhone', 'HmPhone', 'WkPhone']
+    .some((field) => phoneDigits(patient[field]) === expected);
 }
 
 export async function appointmentPattern(connection, appointmentTypeNum, fallbackDurationMinutes) {
@@ -180,116 +183,40 @@ export async function assertSlotStillAvailable(input) {
 
 async function assertNoSameDayPatientBooking(connection, input) {
   const nextDate = dateKey(addDays(parseDate(input.date), 1));
-  const identityClauses = [
-    `(p.FName = ?
-      AND p.LName = ?
-      AND REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', '') = ?)`
-  ];
-  const values = [
-    `${input.date} 00:00:00`,
-    `${nextDate} 00:00:00`,
-    input.birthdate,
-    input.firstName,
-    input.lastName,
-    phoneDigits(input.phone)
-  ];
-  if (input.driverLicense) {
-    identityClauses.push(
-      "a.Note LIKE ? ESCAPE '\\\\'",
-      'af.FieldValue = ?',
-      'pf.FieldValue = ?'
-    );
-    values.push(
-      `%${escapeLike(input.driverLicense)}%`,
-      input.driverLicense,
-      input.driverLicense
-    );
-  }
-
   const [rows] = await connection.execute(
-    `SELECT a.AptNum, a.AptDateTime
+    `SELECT a.AptNum, a.AptDateTime, p.WirelessPhone, p.HmPhone, p.WkPhone
      FROM appointment a
      INNER JOIN patient p ON p.PatNum = a.PatNum
-     LEFT JOIN apptfield af
-       ON af.AptNum = a.AptNum
-      AND af.FieldName = 'Driver License ID'
-     LEFT JOIN patfield pf
-       ON pf.PatNum = p.PatNum
-      AND pf.FieldName = 'Driver License ID'
      WHERE a.AptStatus = 1
        AND a.AptDateTime >= ?
        AND a.AptDateTime < ?
        AND p.Birthdate = ?
-       AND a.Note LIKE '%ONLINE PT%'
-       AND (
-         ${identityClauses.join('\n         OR ')}
-       )
-     ORDER BY a.AptDateTime
-     LIMIT 1`,
-    values
+       AND a.Note LIKE '%ONLINE PT%'`,
+    [`${input.date} 00:00:00`, `${nextDate} 00:00:00`, input.birthdate]
   );
 
-  if (rows.length) {
+  // Include all matching charts, including duplicates created before this rule.
+  if (rows.some((row) => hasMatchingBookingPhone(row, input.phone))) {
     const error = new Error('This patient already has an active online appointment on this date.');
     error.status = 409;
     throw error;
   }
 }
 
-async function findExistingOnlinePatient(connection, input) {
-  const identityClauses = [
-    `(p.FName = ?
-      AND p.LName = ?
-      AND REPLACE(REPLACE(REPLACE(REPLACE(p.WirelessPhone, '(', ''), ')', ''), '-', ''), ' ', '') = ?)`
-  ];
-  const values = [
-    input.birthdate,
-    input.firstName,
-    input.lastName,
-    phoneDigits(input.phone)
-  ];
-  if (input.driverLicense) {
-    identityClauses.push(
-      'pf.FieldValue = ?',
-      `EXISTS (
-        SELECT 1
-        FROM appointment a
-        LEFT JOIN apptfield af
-          ON af.AptNum = a.AptNum
-         AND af.FieldName = 'Driver License ID'
-        WHERE a.PatNum = p.PatNum
-          AND a.Note LIKE '%ONLINE PT%'
-          AND (
-            a.Note LIKE ? ESCAPE '\\\\'
-            OR af.FieldValue = ?
-          )
-        LIMIT 1
-      )`
-    );
-    values.push(
-      input.driverLicense,
-      `%${escapeLike(input.driverLicense)}%`,
-      input.driverLicense
-    );
-  }
-
+export async function findExistingOnlinePatient(connection, input) {
   const [rows] = await connection.execute(
     `SELECT
-       p.PatNum, p.FName, p.LName, p.WirelessPhone, p.Email, p.Birthdate, p.Address, p.City, p.State, p.Zip
+       p.PatNum, p.FName, p.LName, p.WirelessPhone, p.HmPhone, p.WkPhone,
+       p.Email, p.Birthdate, p.Address, p.City, p.State, p.Zip
      FROM patient p
-     LEFT JOIN patfield pf
-       ON pf.PatNum = p.PatNum
-      AND pf.FieldName = 'Driver License ID'
      WHERE p.Birthdate = ?
-       AND (
-         ${identityClauses.join('\n         OR ')}
-       )
-     ORDER BY p.PatNum
-    LIMIT 1`,
-    values
+     ORDER BY p.PatNum`,
+    [input.birthdate]
   );
 
-  return rows[0] || null;
+  // Normalize phone formatting in JS, including an optional US +1 prefix.
+  // Prefer the oldest chart when historical duplicates already exist.
+  return rows.find((row) => hasMatchingBookingPhone(row, input.phone)) || null;
 }
 
 async function ensureDriverLicensePatField(connection, patNum, input, clinicDate) {
@@ -400,13 +327,14 @@ export async function createBooking(input) {
     const [appointmentResult] = await connection.execute(
       `INSERT INTO appointment
         (PatNum, AptStatus, Pattern, Confirmed, TimeLocked, Op, ProvNum, ProvHyg, AptDateTime, IsNewPatient, ProcDescript, Note, ClinicNum, AppointmentTypeNum, SecUserNumEntry, SecDateTEntry)
-       VALUES (?, 1, ?, 0, 0, ?, ?, 0, ?, 1, ?, ?, 0, ?, 0, ?)`,
+       VALUES (?, 1, ?, 0, 0, ?, ?, 0, ?, ?, ?, ?, 0, ?, 0, ?)`,
       [
         patNum,
         pattern,
         input.operatoryNum,
         input.providerNum,
         dateTime(input.date, input.time),
+        isReturningPatient ? 0 : 1,
         isReturningPatient ? 'Website Booking - Existing Patient' : 'Website Booking - New Patient',
         noteParts.join('\n'),
         input.appointmentTypeNum,

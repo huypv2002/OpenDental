@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "test:booking": "node --test src/bookings.test.js src/bookingHours.test.js src/bookingCapabilities.test.js",
     "metlife:inspect": "node scripts/inspect-metlife-db.mjs",
     "liberty:inspect": "node scripts/inspect-liberty-eob.mjs",
     "test:metlife:database": "node --test src/metlife/directPayment.database.test.js",
