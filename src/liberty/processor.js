@@ -140,7 +140,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       const matches=matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
       const check={...parsed.check,...claim.check},splits=libertySplitPlan(claim,check,patient,matches);
       const settlement=await prepareInsuranceSettlement(pool,{patNum:patient.PatNum,carrier,procedures:claim.procedures,dbProcs,splits});
-      const existing=await verifiedInsurancePayment(pool,{patNum:patient.PatNum,claimNumber:claim.claimNumber,displayClaimNumber:claim.documentNumber,date:check.date,amountCents:claim.totals.planPaidCents,splits});
+      const existing=await verifiedInsurancePayment(pool,{patNum:patient.PatNum,claimNumber:claim.claimNumber,displayClaimNumber:claim.documentNumber,claimAliases:claim.legacyClaimNumbers,date:check.date,amountCents:claim.totals.planPaidCents,splits});
       preflight.set(claim.claimNumber,{patient,dbProcs,matches,splits,settlement,existing,missingPlan});
     }}catch(e){e.code='EOB_REVIEW_REQUIRED';throw e;}
   }
@@ -156,7 +156,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       const check={...parsed.check,...claim.check};
       checked.splits=libertySplitPlan(claim,check,checked.patient,checked.matches);
       checked.settlement=await prepareInsuranceSettlement(pool,{patNum:checked.patient.PatNum,carrier,procedures:claim.procedures,dbProcs:checked.dbProcs,splits:checked.splits});
-      checked.existing=await verifiedInsurancePayment(pool,{patNum:checked.patient.PatNum,claimNumber:claim.claimNumber,displayClaimNumber:claim.documentNumber,date:check.date,amountCents:claim.totals.planPaidCents,splits:checked.splits});
+      checked.existing=await verifiedInsurancePayment(pool,{patNum:checked.patient.PatNum,claimNumber:claim.claimNumber,displayClaimNumber:claim.documentNumber,claimAliases:claim.legacyClaimNumbers,date:check.date,amountCents:claim.totals.planPaidCents,splits:checked.splits});
     }
   }
 
@@ -189,6 +189,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       fileBytes,
       fileName,
       claimNumber,
+      claimAliases:claim.legacyClaimNumbers,
       carrier,
       paymentDate: checkDate,
       amountCents: claim.totals.planPaidCents
@@ -227,9 +228,12 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
 
       log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: ghi thanh toán $${totalBenefit}, ${payload.splits.length} phân bổ...`);
       await verifyInsuranceSettlement(conn,checked.settlement);
-      const previous=await verifiedInsurancePayment(conn,{patNum,claimNumber,displayClaimNumber:claim.documentNumber,date:checkDate,amountCents:claim.totals.planPaidCents,splits:payload.splits});
+      const previous=await verifiedInsurancePayment(conn,{patNum,claimNumber,displayClaimNumber:claim.documentNumber,claimAliases:claim.legacyClaimNumbers,date:checkDate,amountCents:claim.totals.planPaidCents,splits:payload.splits});
       if(previous){
-       if(claim.documentNumber&&claim.documentNumber!==claimNumber)await conn.execute('UPDATE payment SET PayNote=? WHERE PayNum=? AND PatNum=? AND PayNote=?',[paymentFields.note,previous.PayNum,patNum,`Claim number: ${claimNumber}`]);
+       for(const legacy of claim.legacyClaimNumbers||[]){
+        await conn.execute('UPDATE payment SET PayNote=? WHERE PayNum=? AND PatNum=? AND PayNote=?',[paymentFields.note,previous.PayNum,patNum,`Claim number: ${legacy}`]);
+        await conn.execute('UPDATE payment SET ExternalId=? WHERE PayNum=? AND PatNum=? AND ExternalId=?',[claimNumber,previous.PayNum,patNum,legacy]);
+       }
        payNum=previous.PayNum;log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: đã xác minh Payment #${payNum}; giữ nguyên khoản đã lưu.`);}
       else {
        if(checked.existing)throw reviewError('Khoản đã lưu thay đổi sau đối chiếu; chưa tạo lại thanh toán.');
@@ -333,6 +337,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       patNum,
       claimNumber,
       displayClaimNumber:claim.documentNumber||claimNumber,
+      legacyClaimNumbers:claim.legacyClaimNumbers,
       checkNumber,
       groupNum,
       payNum,

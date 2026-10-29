@@ -62,7 +62,7 @@ export async function resolvePatient(pool, { fileName }) {
   return resolveFilePatient(pool,{fileName,carrier:'MetLife'});
 }
 
-export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, claimNumber, paymentDate, amountCents, carrier = 'MetLife' }) {
+export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, claimNumber, paymentDate, amountCents, carrier = 'MetLife', claimAliases=[] }) {
   const {description,dateCreated}=claimDocumentFields(claimNumber,paymentDate,amountCents);
   const [prefs]=await pool.execute("SELECT PrefName, ValueString FROM preference WHERE LOWER(PrefName) IN ('docpath','atozfolderused','atozfolder','imagestore')");
   const pref=name=>prefs.find(r=>r.PrefName.toLowerCase()===name)?.ValueString;
@@ -89,13 +89,21 @@ export async function importPdfToAtoZ(pool, { patient, fileBytes, fileName, clai
   const sourceExtension=/\.txt$/i.test(fileName)?'txt':'pdf';
   const safeClaim=claimNumber.replace(/[^a-zA-Z0-9]/g,'_');
   const prefix=carrier==='DELTA DENTAL'?'DELTA':carrier==='CIGNA'?'CIGNA':carrier==='LIBERTY Dental Plan'?'LIBERTY':'METLIFE';
-  const [existingDocs]=await pool.execute('SELECT DocNum,FileName FROM document WHERE PatNum=? AND DocCategory=? AND Description=? AND DateCreated=? AND FileName LIKE ? ORDER BY DocNum DESC LIMIT 5',[patient.PatNum,cats[0].DefNum,description,dateCreated,`${prefix}_%`]);
+  const existingDocs=[];
+  for(const id of new Set([claimNumber,...claimAliases])){
+    const previousDescription=claimDocumentFields(id,paymentDate,amountCents).description;
+    const [docs]=await pool.execute('SELECT DocNum,FileName FROM document WHERE PatNum=? AND DocCategory=? AND Description=? AND DateCreated=? AND FileName LIKE ? ORDER BY DocNum DESC LIMIT 5',[patient.PatNum,cats[0].DefNum,previousDescription,dateCreated,`${prefix}_%`]);
+    existingDocs.push(...docs.map(d=>({...d,previousDescription})));
+  }
   for(const doc of existingDocs){
     if(!doc.FileName||/[\\/]/.test(doc.FileName))continue;
     const existingPath=path.join(resolvedDir,doc.FileName);
     try{
       const real=await fs.realpath(existingPath);if(path.dirname(real)!==resolvedDir)continue;
-      if((await fs.readFile(real)).equals(fileBytes))return {docNum:doc.DocNum,savedPath:real,description,dateCreated,reused:true};
+      if((await fs.readFile(real)).equals(fileBytes)){
+        if(doc.previousDescription!==description)await pool.execute('UPDATE document SET Description=? WHERE DocNum=? AND PatNum=? AND Description=?',[description,doc.DocNum,patient.PatNum,doc.previousDescription]);
+        return {docNum:doc.DocNum,savedPath:real,description,dateCreated,reused:true};
+      }
     }catch(e){if(e.code!=='ENOENT')throw e;}
   }
   const destFileName=`${prefix}_${safeClaim}_${paymentDate}_${randomUUID()}.${sourceExtension}`;

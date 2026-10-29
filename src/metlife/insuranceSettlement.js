@@ -56,10 +56,10 @@ function splitMap(splits,date){
  for(const s of splits){const key=[s.ProcNum,s.ProvNum,s.ClinicNum,procedureDay(s.ProcDate??s.date),procedureDay(s.DatePay??date)].join('/');values.set(key,(values.get(key)||0)+cents(s.SplitAmt??s.amount));}
  return values;
 }
-export async function verifiedInsurancePayment(db,{patNum,claimNumber,displayClaimNumber=claimNumber,date,amountCents,splits}){
+export async function verifiedInsurancePayment(db,{patNum,claimNumber,displayClaimNumber=claimNumber,claimAliases=[],date,amountCents,splits}){
  const query='SELECT PayNum,PatNum,PayDate,PayAmt FROM payment WHERE PatNum = ? AND (ExternalId = ? OR CheckNum = ? OR PayNote = ?)';
  const found=[];
- for(const id of new Set([claimNumber,displayClaimNumber])){const [rows]=await db.execute(query,[patNum,id,id,`Claim number: ${id}`]);found.push(...rows);}
+ for(const id of new Set([claimNumber,displayClaimNumber,...claimAliases])){const [rows]=await db.execute(query,[patNum,id,id,`Claim number: ${id}`]);found.push(...rows);}
  const payments=[...new Map(found.map(p=>[String(p.PayNum),p])).values()];
  if(!payments.length)return null;
  if(payments.length!==1)throw reviewError('Có nhiều khoản thanh toán cùng claim; cần đối chiếu, không ghi đè.');
@@ -72,13 +72,21 @@ export async function verifiedInsurancePayment(db,{patNum,claimNumber,displayCla
 }
 
 export async function recordInsuranceResult(db,values){
- const [previous]=await db.execute("SELECT Id,Details FROM luk_metlife_history WHERE Status='SUCCESS' AND PayNum=? AND PatNum=? AND ClaimNumber=? ORDER BY Id DESC LIMIT 1",[values[9],values[2],values[4]]);
+ const next=JSON.parse(values[12]),matches=[];
+ for(const id of new Set([values[4],...(next.legacyClaimNumbers||[])])){
+  const [rows]=await db.execute("SELECT Id,Details FROM luk_metlife_history WHERE Status='SUCCESS' AND PayNum=? AND PatNum=? AND ClaimNumber=? ORDER BY Id DESC LIMIT 1",[values[9],values[2],id]);
+  matches.push(...rows.map(r=>({...r,matchedClaim:id})));
+ }
+ const previous=matches.sort((a,b)=>Number(b.Id)-Number(a.Id));
  if(previous.length){
   let details=previous[0].Details||{};if(typeof details==='string')details=JSON.parse(details);
-  const next=JSON.parse(values[12]);details={...details,insuranceDefaults:next.insuranceDefaults,lastVerifiedAt:new Date().toISOString()};
+  details={...details,insuranceDefaults:next.insuranceDefaults,lastVerifiedAt:new Date().toISOString()};
   if(next.displayClaimNumber){details.displayClaimNumber=next.displayClaimNumber;details.paymentNote=next.paymentNote;}
+  if(next.legacyClaimNumbers?.length){details.claimNumber=next.claimNumber;details.legacyClaimNumbers=next.legacyClaimNumbers;details.documentDescription=next.documentDescription;}
   if(next.updatedFees?.length)details.feeCorrection={updatedFees:next.updatedFees,verifiedAt:details.lastVerifiedAt};
-  await db.execute('UPDATE luk_metlife_history SET Details=?,Message=? WHERE Id=?',[JSON.stringify(details),'Đã đối chiếu khoản thanh toán đã lưu; Insurance Estimate và Write-off bằng 0.',previous[0].Id]);
+  const message='Đã đối chiếu khoản thanh toán đã lưu; Insurance Estimate và Write-off bằng 0.';
+  if(previous[0].matchedClaim!==values[4])await db.execute('UPDATE luk_metlife_history SET ClaimNumber=?,Details=?,Message=? WHERE Id=?',[values[4],JSON.stringify(details),message,previous[0].Id]);
+  else await db.execute('UPDATE luk_metlife_history SET Details=?,Message=? WHERE Id=?',[JSON.stringify(details),message,previous[0].Id]);
   return {reused:true,id:previous[0].Id};
  }
  const [result]=await db.execute(`INSERT INTO luk_metlife_history (

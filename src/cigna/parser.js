@@ -22,7 +22,7 @@ export function parseCigna(extracted){
       if(!current){
         const name=/Patient Name:\s*([^|\n]+)/.exec(text)?.[1]?.trim()||'';
         const parts=name.split(/\s+/),lastName=name.includes(',')?name.split(',')[0].trim():parts.at(-1),firstName=name.includes(',')?name.split(',')[1].trim():parts.slice(0,-1).join(' ');
-        current={claimNumber:ids[0],patient:{raw:name,firstName,lastName,memberId:''},status:/Claim Status:\s*([A-Z]+)/.exec(text)?.[1]||'',date:isoDate(/Date Processed:\s*(\d{2}\/\d{2}\/\d{4})/.exec(text)?.[1]),headerPaidCents:null,rawProcedures:[],printedTotals:null};
+        current={claimNumber:ids[0],patient:{raw:name,firstName,lastName,memberId:/(?:Patient ID|Subscriber ID|Member ID):\s*([A-Z0-9* -]+?)(?=\s*\||\n|$)/i.exec(text)?.[1]?.trim()||''},status:/Claim Status:\s*([A-Z]+)/.exec(text)?.[1]||'',date:isoDate(/Date Processed:\s*(\d{2}\/\d{2}\/\d{4})/.exec(text)?.[1]),headerPaidCents:null,rawProcedures:[],printedTotals:null};
         claims.push(current);byId.set(ids[0],current);
       }
       const header=/Claim Amount Paid:\s*(\$[\d,]+\.\d{2})/.exec(text);

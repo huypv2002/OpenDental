@@ -26,7 +26,7 @@ test('CIGNA supports both portal and payment-statement templates without mixing 
  const old=parse(cignaText),p=parse(source);assert.deepEqual(old.errors,[]);assert.deepEqual(p.errors,[]);
  assert.equal(old.claims[0].claimNumber,'E262868007800');assert.equal(old.check.netPaymentCents,5680);
  assert.equal(p.sourceTemplate,'payment-statement');assert.equal(p.claims.length,1);
- const c=p.claims[0];assert.equal(c.claimNumber,'D123456789000-01-002');assert.equal(c.sourceClaimNumber,'002');
+ const c=p.claims[0];assert.equal(c.claimNumber,'D123456789000');assert.equal(c.sourceClaimNumber,'002');
  assert.equal(c.paymentPayload.claimNum,'D123456789000');assert.equal(c.paymentPayload.payNote,'Claim number: D123456789000');
  assert.equal(c.date,'2026-10-22');assert.equal(c.paymentPayload.payDate,'2026-10-22'); // Not deposit date Oct 28.
  assert.equal(c.totals.planPaidCents,39300);assert.equal(c.paymentPayload.checkNum,'');
@@ -56,11 +56,17 @@ async function posting(text,{pdfBytes}={}){
    // Model an older saved compound note, then an OD-cleared ExternalId with
    // the new short note. Both must resolve to the same existing payment.
    f.payments[0].ExternalId='';
-   if(i===0)f.payments[0].PayNote=`Claim number: ${c.claimNumber}`;
+   if(i===0){
+    const legacy=c.legacyClaimNumbers[0];f.payments[0].PayNote=`Claim number: ${legacy}`;f.payments[0].ExternalId=legacy;
+    f.documents[0].Description=f.documents[0].Description.replace(c.claimNumber,legacy);
+    const d=JSON.parse(f.history[0].Details);d.claimNumber=legacy;d.paymentNote=`Claim number: ${legacy}`;delete d.displayClaimNumber;
+    f.history[0].ClaimNumber=legacy;f.history[0].Details=JSON.stringify(d);
+   }
   }
   assert.equal(f.payments.length,1);assert.equal(f.payments[0].PatNum,140);assert.equal(f.payments[0].PayDate,'2026-10-22');
   assert.equal(Number(f.payments[0].PayAmt),393);assert.equal(f.splits.length,6);assert.equal(f.documents.length,1);assert.equal(f.history.length,1);assert.equal(f.addedAudit.length,0);
   assert.equal(f.splits.reduce((s,p)=>s+Number(p.SplitAmt),0),393);
+  assert.equal(f.history[0].ClaimNumber,c.claimNumber);assert.ok(!f.documents[0].Description.includes('-01-002'));
   const saved=JSON.parse(f.history[0].Details);assert.equal(saved.displayClaimNumber,c.documentNumber);assert.equal(saved.paymentNote,`Claim number: ${c.documentNumber}`);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 }

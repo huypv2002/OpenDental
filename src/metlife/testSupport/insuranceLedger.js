@@ -51,8 +51,10 @@ export async function insuranceLedger(root,claims){
   if(sql.includes('Category = 18'))return [[{DefNum:18}]];
   if(sql.includes('INFORMATION_SCHEMA.COLUMNS'))return [[{COLUMN_NAME:'DocNum',EXTRA:'auto_increment'},...['DocCategory','PatNum','FileName','Description','DateCreated','ImgType','MountItemNum','ExternalSource','RawBase64'].map(COLUMN_NAME=>({COLUMN_NAME,IS_NULLABLE:'NO',COLUMN_DEFAULT:null,EXTRA:''}))]];
   if(sql.startsWith('SELECT DocNum,FileName FROM document'))return [documents.filter(d=>d.PatNum===args[0]&&d.DocCategory===args[1]&&d.Description===args[2]&&d.DateCreated===args[3])];
+  if(sql.startsWith('UPDATE document SET Description=')){const d=documents.find(d=>d.DocNum===args[1]&&d.PatNum===args[2]&&d.Description===args[3]);if(d)d.Description=args[0];return [{affectedRows:d?1:0}];}
   if(sql.includes('INSERT INTO document')){assert.equal(locked,false);const d={DocNum:++docId,DocCategory:args[0],PatNum:args[1],FileName:args[2],Description:args[3],DateCreated:args[4]};documents.push(d);return [{insertId:d.DocNum}];}
   if(sql.includes('Category = 10'))return [[{DefNum:10,ItemName:'Insurance Paid'}]];
+  if(sql.startsWith('UPDATE payment SET ExternalId=')){assert.ok(locked);const p=payments.find(p=>p.PayNum===args[1]&&p.PatNum===args[2]&&p.ExternalId===args[3]);if(p)p.ExternalId=args[0];return [{affectedRows:p?1:0}];}
   if(sql.startsWith('UPDATE payment SET PayNote=')){assert.ok(locked);const p=payments.find(p=>p.PayNum===args[1]&&p.PatNum===args[2]&&p.PayNote===args[3]);if(p)p.PayNote=args[0];return [{affectedRows:p?1:0}];}
   if(sql.includes('INSERT INTO payment')){assert.ok(locked);const p={PayNum:++payId,PayDate:args[1],PayAmt:args[2],CheckNum:args[3],PayNote:args[4],PatNum:args[5],ExternalId:args[7]};payments.push(p);return [{insertId:p.PayNum}];}
   if(sql.includes('INSERT INTO paysplit')){assert.ok(locked);splits.push({SplitAmt:args[0],PatNum:args[1],ProcDate:args[2],DatePay:args[3],ProcNum:args[4],ProvNum:args[5],ClinicNum:args[6],PayNum:args[7]});return [{insertId:splits.length}];}
@@ -61,7 +63,7 @@ export async function insuranceLedger(root,claims){
   if(sql.includes('INSERT INTO securityloghash'))return [{insertId:301}];
   if(sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [history.filter(r=>r.PayNum===args[0]&&r.PatNum===args[1]&&r.ClaimNumber===args[2])];
   if(sql.includes('INSERT INTO luk_metlife_history')){history.push({Id:history.length+1,FileName:args[0],FileHash:args[1],PatNum:args[2],PatientName:args[3],ClaimNumber:args[4],TotalAmount:args[6],PayNum:args[9],DocNum:args[10],Status:'SUCCESS',Details:args[12]});return [{insertId:history.length}];}
-  if(sql.startsWith('UPDATE luk_metlife_history')){const h=history.find(r=>r.Id===args[2]);h.Details=args[0];return [{affectedRows:1}];}
+  if(sql.startsWith('UPDATE luk_metlife_history')){const migrated=sql.includes('SET ClaimNumber='),h=history.find(r=>r.Id===args.at(-1));if(migrated)h.ClaimNumber=args[0];h.Details=args[migrated?1:0];return [{affectedRows:1}];}
   if(sql.includes('SUM(ProcFee)'))return [[{TotalCharges:0}]];
   if(sql.includes('SUM(SplitAmt)'))return [[{TotalPaid:0}]];
   if(sql.includes('SUM(FeeBilled)'))return [[{TotalFee:0}]];

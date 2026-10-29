@@ -4,10 +4,11 @@ The user confirmed this rule with Nhân. It supersedes earlier name-matching rul
 
 | Carrier | Patient identity |
 | --- | --- |
-| MetLife / CIGNA / Delta Dental | PatNum at the beginning of the filename. Do not compare the EOB name, DOB or subscriber to select the patient. |
+| MetLife / Delta Dental | PatNum at the beginning of the filename. Do not compare the EOB name, DOB or subscriber to select the patient. |
+| CIGNA | Single claim: filename PatNum. Multiple claims (updated 30/10): per-claim Subscriber ID and dependent suffix; see [CIGNA layouts](cigna-two-templates-2026-10-29.md). |
 | Liberty | Subscriber ID from each patient claim block. Ignore filename PatNum and printed patient names for identity. |
 
-Non-Liberty examples: `1004.pdf`, `1004.txt`, `1792789329060_423.pdf`, `1283 DELTA SAMPLE.pdf`. Download/archive timestamp prefixes and descriptive suffixes are supported. A timestamp by itself, arbitrary embedded numbers or a missing/nonexistent patient number require review. Never fall back to a different patient by name. Every claim in a non-Liberty file follows the filename's patient; separate multi-patient files by patient number.
+Non-Liberty examples: `1004.pdf`, `1004.txt`, `1792789329060_423.pdf`, `1283 DELTA SAMPLE.pdf`. Download/archive timestamp prefixes and descriptive suffixes are supported. A timestamp by itself, arbitrary embedded numbers or a missing/nonexistent patient number require review. Never fall back to a different patient by name. MetLife/Delta files follow the filename patient. CIGNA multiple-claim files use the newer 30/10 per-claim subscriber rule.
 
 Liberty first tries the complete Subscriber ID. If no patient matches, it tries the ID without a trailing numeric dependent suffix, accommodating OD records that omit `-01`. Either lookup must identify exactly one patient. Multiple patients sharing an exact or base ID require review; the resolver does not choose by name or pick the first result. All claims pass read-only patient/procedure/settlement preflight before the first document or financial write.
 

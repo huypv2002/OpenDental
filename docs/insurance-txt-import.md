@@ -11,7 +11,7 @@ Place a TXT in the insurer's usual SERVER folder under `D:\SHARE\INSURANCE CLAIM
 | CIGNA | CIGNA | Portal: six money columns / Plan Coinsurance Paid; statement: seven money columns plus percentage / Amount paid by the plan |
 | Delta Dental | DELTA DENTAL | Provider Tools, six service money columns and Claim total |
 
-Patient identity follows the [28/10/2026 clinic rule](insurance-patient-identity-2026-10-28.md): MetLife/CIGNA/Delta use filename PatNum only; Liberty uses each claim's Subscriber ID only. Printed names do not select or reject patients. Missing numbers/unknown patients and missing/ambiguous Liberty subscribers stop before posting.
+Patient identity follows the [28/10/2026 clinic rule](insurance-patient-identity-2026-10-28.md): MetLife/Delta and single-claim CIGNA use filename PatNum. Liberty and, as of 30/10, multiple-claim CIGNA use each claim's Subscriber ID (including the dependent suffix when present). Printed names do not select or reject patients. Missing numbers/unknown patients and missing/ambiguous Liberty subscribers stop before posting.
 
 TXT recognition uses content rather than relying on the folder name. Conflicting insurer signatures or unrecognized formats stop before database queries. This does not expand automatic PDF carrier detection.
 

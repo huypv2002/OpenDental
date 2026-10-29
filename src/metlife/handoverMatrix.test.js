@@ -138,7 +138,7 @@ for(const carrier of ['CIGNA','DELTA DENTAL']){
  }
  test(`HANDOVER ${carrier}: unnamed multi-patient batch requires patient-number filenames before any write`,async()=>{
   const x=await batchFixture(),{f}=x;try{
-   await assert.rejects(processSinglePdf(f.pool,x.file,{hashSplits:f.hashes}),e=>e.code==='EOB_REVIEW_REQUIRED'&&/tên file/.test(e.message));
+   await assert.rejects(processSinglePdf(f.pool,x.file,{hashSplits:f.hashes}),e=>e.code==='EOB_REVIEW_REQUIRED'&&new RegExp(carrier==='CIGNA'?'Subscriber ID':'tên file').test(e.message));
    assert.equal(f.payments.length,0);assert.equal(f.documents.length,0);assert.equal(f.history.length,0);assert.equal(f.events.length,0);
   }finally{await fs.rm(x.root,{recursive:true,force:true});}
  });

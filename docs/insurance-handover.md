@@ -25,7 +25,7 @@ PASS là đúng kỳ vọng: một case chặn tài liệu lỗi trước khi gh
 | CIGNA | PDF chuyển TXT; TXT giữ cột | Date Processed | Quyền lợi theo từng dòng và alternate benefit đã xác nhận | Ví dụ header $0 nhưng hai khoản $56.80 thành $113.60; răng 03/3; không hỗ trợ ảnh rời CIGNA |
 | Delta Dental | PDF, JPG/JPEG, PNG; TXT | Date payment sent | Delta Dental pays của Claim total | Amount có thể gộp nhiều claim; đủ sáu tổng cột; quyền lợi giảm; X-quang FLB; tên ghép Van Anh/VANANH |
 
-Quy tắc đã chốt ngày 28/10/2026: MetLife, CIGNA và Delta lấy PatNum từ đầu tên file, không kiểm tra trùng tên EOB và không tự tìm hồ sơ khác theo tên. Hỗ trợ tiền tố timestamp tải xuống/lưu trữ và ghi chú sau mã. Mọi claim trong file của ba hãng này đi theo cùng mã file; file nhiều bệnh nhân cần tách theo mã bệnh nhân.
+Quy tắc đã chốt ngày 28/10/2026: MetLife, CIGNA và Delta lấy PatNum từ đầu tên file, không kiểm tra trùng tên EOB và không tự tìm hồ sơ khác theo tên. Hỗ trợ tiền tố timestamp tải xuống/lưu trữ và ghi chú sau mã. Cập nhật 30/10: CIGNA nhiều claim tìm từng bệnh nhân bằng Subscriber ID / mã người phụ thuộc trong từng khối EOB; không lấy mã file áp cho cả nhóm. CIGNA một claim, MetLife và Delta vẫn theo mã file.
 
 Riêng Liberty tìm từng bệnh nhân bằng Subscriber ID trong từng claim, không dùng PatNum của tên file hoặc tên in trên EOB. Ưu tiên ID đầy đủ, sau đó thử ID bỏ hậu tố số nếu OD lưu thiếu hậu tố. Không khớp hoặc khớp nhiều hồ sơ thì dừng trước khi ghi claim đầu tiên. Xem [quy tắc và kiểm thử 28/10](insurance-patient-identity-2026-10-28.md). MetLife vẫn yêu cầu đúng một Claim Number mỗi file.
 

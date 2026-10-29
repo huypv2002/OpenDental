@@ -1,4 +1,5 @@
 import express from 'express';
+import {cignaHistoryDisplay} from '../cigna/claimDisplay.js';
 import {isLocalDesktop} from './local.js';
 import {loginAdminAccount,isMetlifeAdminActive} from '../adminAuth.js';
 import {issueSession,readSession,loginLimiter} from './session.js';
@@ -58,12 +59,7 @@ export function createMetlifeRouter({repository=createRepository(pool),getToken=
  router.get('/history',json(async()=>{
   try{
    const [rows]=await pool.execute(`SELECT Id, FileName, FileHash, PatNum, PatientName, ClaimNumber, CheckNumber, TotalAmount, ProceduresCount, FeesUpdated, PayNum, DocNum, Status, Message, Details, DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt, DATE_FORMAT(ProcessedAt, '%Y-%m-%d %H:%i:%s') AS ProcessedAt FROM luk_metlife_history ORDER BY Id DESC LIMIT 100`);
-   return {items:rows.map(row=>{
-     // Keep the stored replay key; display only DOCUMENT # for CIGNA statements.
-     let d=row.Details;try{if(typeof d==='string')d=JSON.parse(d);}catch{}
-     const display=d?.displayClaimNumber||(d?.carrier==='CIGNA'?/^(D\d{12})-\d+-\d+$/.exec(row.ClaimNumber||'')?.[1]:null);
-     return display?{...row,ClaimNumber:display}:row;
-    })};
+   return {items:rows.map(cignaHistoryDisplay)};
   }catch(err){
    if(err.code==='ER_NO_SUCH_TABLE')return {items:[]};
    throw err;
