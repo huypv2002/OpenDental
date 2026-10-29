@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {isCignaStatement} from '../cigna/statementParser.js';
 export function decodeClaimText(bytes){
  let encoding='utf-8',data=bytes;
  if(bytes[0]===0xff&&bytes[1]===0xfe){encoding='utf-16le';data=bytes.subarray(2);}
@@ -69,7 +70,7 @@ export function readInsuranceTextDocument(bytes){
  const signature=text.replace(/\s+/g,' ');
  if(/DELTA\s+DENTAL/i.test(signature)&&/Provider Tools/i.test(signature))carriers.push('DELTA DENTAL');
  if(/LIBERTY Dental Plan/i.test(signature)&&/PAYMENT DETAILS/i.test(signature))carriers.push('LIBERTY');
- if(/Claim\/Reference Number:/.test(signature)&&/Date Processed:/.test(signature)&&/Claim Amount Paid:/.test(signature))carriers.push('CIGNA');
+ if((/Claim\/Reference Number:/.test(signature)&&/Date Processed:/.test(signature)&&/Claim Amount Paid:/.test(signature))||isCignaStatement(signature))carriers.push('CIGNA');
  if(/Claim Summary/.test(signature)&&/Relationship to Subscriber:/.test(signature)&&/Claim Detail/.test(signature))carriers.push('METLIFE');
  if(carriers.length!==1)throw review('TXT chưa nhận diện duy nhất mẫu MetLife / Liberty / CIGNA / Delta Dental đã hỗ trợ.');
  const carrier=carriers[0],warnings=[];

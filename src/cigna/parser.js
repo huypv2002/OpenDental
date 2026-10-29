@@ -1,10 +1,16 @@
 import {cents,isoDate,money} from '../metlife/parser.js';
+import {isCignaStatement,parseCignaStatement} from './statementParser.js';
 
 const currency=/^-?\$[\d,]+\.\d{2}$/;
 const value=s=>cents(s.replace(/\$/g,''));
 const unique=values=>[...new Set(values)];
 
 export function parseCigna(extracted){
+  const fullText=extracted.pages.flatMap(p=>p.lines.map(l=>l.text)).join('\n');
+  if(isCignaStatement(fullText)){
+    if(/Claim\/Reference Number:/i.test(fullText))return {errors:['File trộn hai mẫu CIGNA; cần tách và đối chiếu.'],claims:[],warnings:[]};
+    return parseCignaStatement(extracted);
+  }
   const errors=[],warnings=[...(extracted.warnings||[])],claims=[],byId=new Map();let current;
   const fail=text=>errors.push(text);
   for(const page of extracted.pages){

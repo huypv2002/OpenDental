@@ -12,6 +12,7 @@ import {metlifePaymentFields,claimDocumentFields} from './paymentFormat.js';
 import {documentInsert} from './documentImport.js';
 import {readInsuranceDocument,isInsuranceFile,isImageFile,imagePdf} from '../liberty/document.js';
 import {procedureFeeCents} from './procedureFee.js';
+import {isCignaStatement} from '../cigna/statementParser.js';
 import {resolveFilePatient} from './patientFileIdentity.js';
 import {exportDailyReports} from './dailyExcel.js';
 
@@ -213,7 +214,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     return processDeltaPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits});
   }
 
-  if(extracted.textCarrier==='CIGNA'||(!extracted.textCarrier&&path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA')||(/Claim\/Reference Number:/.test(fullText)&&/Claim Amount Paid:/.test(fullText)&&/Date Processed:/.test(fullText))){
+  if(extracted.textCarrier==='CIGNA'||(!extracted.textCarrier&&path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA')||isCignaStatement(fullText)||(/Claim\/Reference Number:/.test(fullText)&&/Claim Amount Paid:/.test(fullText)&&/Date Processed:/.test(fullText))){
     const {processCignaPdf}=await import('../cigna/processor.js');
     return processCignaPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits});
   }
