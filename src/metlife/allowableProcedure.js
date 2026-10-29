@@ -9,7 +9,9 @@ export function resolveMetlifeAllowableProcedures(procedures,completedProcs) {
     if(p.code!=='D0210'||!p.bundled||!(p.benefitCents>0)||(p.feeCents!=null&&p.date))return p;
     const candidates=completedProcs.filter(r=>r.ProcCode===p.code&&(!p.date||procedureDay(r.ProcDate)===p.date));
     const matches=procedureCandidates(candidates,p,procedures,{metlife:true});
-    if(matches.length!==1)throw reviewError('D0210 Allowable: cần đúng một dịch vụ có sẵn phù hợp trong Open Dental; không tự thêm hoặc chọn ngày/phí.');
+    if(matches.length!==1)throw reviewError(matches.length===0
+      ? 'D0210 Allowable: không có dịch vụ D0210 hoàn tất phù hợp trong Open Dental; không tự thêm hoặc đổi từ D0120.'
+      : `D0210 Allowable: có ${matches.length} dịch vụ D0210 hoàn tất phù hợp (ProcNum: ${matches.map(r=>r.ProcNum).join(', ')}); cần xác định đúng dòng, không tự chọn ngày/phí.`);
     const match=matches[0],date=procedureDay(match.ProcDate);
     const parsedDate=new Date(date+'T12:00:00Z');
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(+parsedDate)||parsedDate.toISOString().slice(0,10)!==date||date==='0001-01-01')throw reviewError('D0210 Allowable: ngày dịch vụ Open Dental không hợp lệ.');

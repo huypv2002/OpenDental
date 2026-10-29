@@ -32,6 +32,12 @@ test('complete rows and other codes retain their existing fee rules',()=>{
   assert.equal(resolveMetlifeAllowableProcedures([other],[od])[0],other);
 });
 
+test('diagnostics distinguish no completed match from ambiguous completed matches',()=>{
+  assert.throws(()=>resolveMetlifeAllowableProcedures([source],[]),/không có dịch vụ D0210 hoàn tất/);
+  assert.throws(()=>resolveMetlifeAllowableProcedures([source],[od,{...od,ProcNum:100}]),/có 2 dịch vụ D0210.*99, 100/);
+  assert.throws(()=>resolveMetlifeAllowableProcedures([source],[{...od,ProcCode:'D0120'}]),/không có dịch vụ D0210 hoàn tất/);
+});
+
 test('folder replay preserves existing procedure charge/date and creates one payment (simulated DB)',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-allowable-'));
   try{
