@@ -3,7 +3,7 @@ $installer = Join-Path $PSScriptRoot '..\windows\install-update.ps1'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('luk-update-test-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $root | Out-Null
 # Run the actual installer against synthetic files; never launch an EXE or wait on the test host.
-function Start-Process { param($FilePath,$WorkingDirectory,$ArgumentList) $script:restarted = $FilePath; $script:restartArgs = $ArgumentList }
+function Start-Process { param($FilePath,$WorkingDirectory,$ArgumentList) $global:LukTestRestarted = $FilePath; $global:LukTestRestartArgs = $ArgumentList }
 function Get-Process { param($Id,$ErrorAction) return $null }
 function Start-Sleep { param($Seconds) }
 function Assert($ok,$message) { if (!$ok) { throw $message } }
@@ -40,8 +40,8 @@ try {
     Assert ((Get-Content -LiteralPath "$target\resources\app.asar" -Raw).Trim() -eq $expectedAsar) "$kind ASAR result"
     Assert ((Get-Content -LiteralPath "$target\sms_config.json" -Raw).Trim() -eq 'private-config-keep') "$kind config changed"
     Assert ((Get-Content -LiteralPath "$target\scheduler-runtime.json" -Raw).Trim() -eq 'scheduler-keep') "$kind scheduler changed"
-    Assert ($script:restarted -eq "$target\LUK Dental SMS Electron.exe") "$kind restart path"
-    Assert ($script:restartArgs -eq '--start-reminder-monitoring') "$kind resume monitoring"
+    Assert ($global:LukTestRestarted -eq "$target\LUK Dental SMS Electron.exe") "$kind restart path"
+    Assert ($global:LukTestRestartArgs -eq '--start-reminder-monitoring') "$kind resume monitoring"
     Assert (!(Test-Path -LiteralPath (Join-Path $case 'escaped.txt'))) "$kind path traversal"
     Write-Host "PASS update installer: $kind"
   }
