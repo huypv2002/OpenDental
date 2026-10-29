@@ -65,7 +65,7 @@ export function parseCignaStatement(extracted){
    const totals=keys.map(k=>c.procedures.reduce((s,p)=>s+p[k],0));
    if(!c.printedTotals||totals.some((s,i)=>s!==c.printedTotals[i])||c.planPaid!==totals[6]||c.responsibility!==totals[0]-totals[6])fail(`Claim ${c.claimNumber}: thiếu trang hoặc tổng cột / Amount paid / trách nhiệm bệnh nhân không khớp.`);
    c.procedures=c.procedures.map((p,i)=>({...p,line:i+1}));c.status='PROCESSED';c.headerPaidCents=c.planPaid;c.totals={planPaidCents:c.planPaid};c.check={number:'',date:c.date};
-   c.paymentPayload={payType:'Insurance Paid',checkNum:'',claimNum:c.claimNumber,payDate:c.date,payNote:`Claim number: ${c.claimNumber}`,amountCents:c.planPaid,amount:money(c.planPaid),splits:c.procedures.filter(p=>p.benefitCents>0).map(p=>({code:p.code,tooth:p.tooth,date:p.date,amountCents:p.benefitCents,amount:money(p.benefitCents)}))};
+   c.paymentPayload={payType:'Insurance Paid',checkNum:'',claimNum:c.documentNumber,payDate:c.date,payNote:`Claim number: ${c.documentNumber}`,amountCents:c.planPaid,amount:money(c.planPaid),splits:c.procedures.filter(p=>p.benefitCents>0).map(p=>({code:p.code,tooth:p.tooth,date:p.date,amountCents:p.benefitCents,amount:money(p.benefitCents)}))};
   }
   const summaries=[...extracted.pages.flatMap(p=>p.lines.map(l=>clean(l.text))).join('\n').matchAll(/^Payment amount:\s*(\$[\d,]+\.\d{2})$/gim)].map(m=>cents(m[1]));
   if(summaries.length!==1||summaries[0]!==claims.reduce((s,c)=>s+c.planPaid,0))fail('CIGNA statement: Payment Summary không khớp tổng các claim hoặc thiếu trang đầu.');

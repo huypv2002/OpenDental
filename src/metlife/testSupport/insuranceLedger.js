@@ -53,6 +53,7 @@ export async function insuranceLedger(root,claims){
   if(sql.startsWith('SELECT DocNum,FileName FROM document'))return [documents.filter(d=>d.PatNum===args[0]&&d.DocCategory===args[1]&&d.Description===args[2]&&d.DateCreated===args[3])];
   if(sql.includes('INSERT INTO document')){assert.equal(locked,false);const d={DocNum:++docId,DocCategory:args[0],PatNum:args[1],FileName:args[2],Description:args[3],DateCreated:args[4]};documents.push(d);return [{insertId:d.DocNum}];}
   if(sql.includes('Category = 10'))return [[{DefNum:10,ItemName:'Insurance Paid'}]];
+  if(sql.startsWith('UPDATE payment SET PayNote=')){assert.ok(locked);const p=payments.find(p=>p.PayNum===args[1]&&p.PatNum===args[2]&&p.PayNote===args[3]);if(p)p.PayNote=args[0];return [{affectedRows:p?1:0}];}
   if(sql.includes('INSERT INTO payment')){assert.ok(locked);const p={PayNum:++payId,PayDate:args[1],PayAmt:args[2],CheckNum:args[3],PayNote:args[4],PatNum:args[5],ExternalId:args[7]};payments.push(p);return [{insertId:p.PayNum}];}
   if(sql.includes('INSERT INTO paysplit')){assert.ok(locked);splits.push({SplitAmt:args[0],PatNum:args[1],ProcDate:args[2],DatePay:args[3],ProcNum:args[4],ProvNum:args[5],ClinicNum:args[6],PayNum:args[7]});return [{insertId:splits.length}];}
   if(sql.includes('INSERT INTO securitylog '))return [{insertId:300}];

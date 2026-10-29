@@ -1,11 +1,13 @@
 import {money} from './parser.js';
 
-export function claimPaymentFields(claimNumber,date){
+export function claimPaymentFields(claimNumber,date,displayClaimNumber=claimNumber){
  const claim=String(claimNumber||'').trim().replace(/\s+/g,' ');
  if(!claim||claim.length>64)throw new Error('Thiếu hoặc sai số claim.');
  const parsed=/^\d{4}-\d{2}-\d{2}$/.test(date||'')?new Date(date+'T12:00:00Z'):null;
  if(!parsed||!Number.isFinite(+parsed)||parsed.toISOString().slice(0,10)!==date)throw new Error('Thiếu hoặc sai ngày thanh toán trên EOB.');
- return {claimNumber:claim,date,checkNum:'',note:`Claim number: ${claim}`};
+ const display=String(displayClaimNumber||'').trim().replace(/\s+/g,' ');
+ if(!display||display.length>64)throw new Error('Thiếu hoặc sai số claim hiển thị.');
+ return {claimNumber:claim,date,checkNum:'',note:`Claim number: ${display}`};
 }
 
 export function metlifePaymentFields(parsed){

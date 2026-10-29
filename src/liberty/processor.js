@@ -109,7 +109,7 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
     splitsPlan[idx].SecurityHash = h;
   });
 
-  const paymentFields = claimPaymentFields(claimNumber,checkDate);
+  const paymentFields = claimPaymentFields(claimNumber,checkDate,claim.documentNumber||claimNumber);
   const payNote = paymentFields.note;
   const totalAmount = (claim.totals.planPaidCents / 100).toFixed(2);
 
@@ -140,7 +140,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       const matches=matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
       const check={...parsed.check,...claim.check},splits=libertySplitPlan(claim,check,patient,matches);
       const settlement=await prepareInsuranceSettlement(pool,{patNum:patient.PatNum,carrier,procedures:claim.procedures,dbProcs,splits});
-      const existing=await verifiedInsurancePayment(pool,{patNum:patient.PatNum,claimNumber:claim.claimNumber,date:check.date,amountCents:claim.totals.planPaidCents,splits});
+      const existing=await verifiedInsurancePayment(pool,{patNum:patient.PatNum,claimNumber:claim.claimNumber,displayClaimNumber:claim.documentNumber,date:check.date,amountCents:claim.totals.planPaidCents,splits});
       preflight.set(claim.claimNumber,{patient,dbProcs,matches,splits,settlement,existing,missingPlan});
     }}catch(e){e.code='EOB_REVIEW_REQUIRED';throw e;}
   }
@@ -150,13 +150,13 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
   for(const claim of parsed.claims){
     const checked=preflight.get(claim.claimNumber);
     checked.addedProcedures=await createMissingProcedures(pool,{plan:checked.missingPlan,patient:checked.patient,claimNumber:claim.claimNumber,carrier});
-    for(const p of checked.addedProcedures)log(`[${label} Auto-Processor] Claim #${claim.claimNumber}: ${p.reused?'dùng lại':'đã thêm'} dịch vụ ${p.code}, ProcNum: ${p.procNum}${p.newCode?' (đã thêm mã vào danh mục)':''}.`);
+    for(const p of checked.addedProcedures)log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claim.claimNumber}: ${p.reused?'dùng lại':'đã thêm'} dịch vụ ${p.code}, ProcNum: ${p.procNum}${p.newCode?' (đã thêm mã vào danh mục)':''}.`);
     if(checked.addedProcedures.length){
       checked.matches=matchLibertyProcedures(checked.dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
       const check={...parsed.check,...claim.check};
       checked.splits=libertySplitPlan(claim,check,checked.patient,checked.matches);
       checked.settlement=await prepareInsuranceSettlement(pool,{patNum:checked.patient.PatNum,carrier,procedures:claim.procedures,dbProcs:checked.dbProcs,splits:checked.splits});
-      checked.existing=await verifiedInsurancePayment(pool,{patNum:checked.patient.PatNum,claimNumber:claim.claimNumber,date:check.date,amountCents:claim.totals.planPaidCents,splits:checked.splits});
+      checked.existing=await verifiedInsurancePayment(pool,{patNum:checked.patient.PatNum,claimNumber:claim.claimNumber,displayClaimNumber:claim.documentNumber,date:check.date,amountCents:claim.totals.planPaidCents,splits:checked.splits});
     }
   }
 
@@ -168,9 +168,9 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
   const archivePath = path.join(processedDir, `${Date.now()}_${fileName}`);
 
   for (const claim of parsed.claims) {
-    log(`[${label} Auto-Processor] Đang xử lý claim #${claim.claimNumber} cho bệnh nhân ${claim.patient.lastName}, ${claim.patient.firstName}...`);
+    log(`[${label} Auto-Processor] Đang xử lý claim #${claim.documentNumber||claim.claimNumber} cho bệnh nhân ${claim.patient.lastName}, ${claim.patient.firstName}...`);
 
-    log(`[${label} Auto-Processor] Claim #${claim.claimNumber}: đối chiếu bệnh nhân...`);
+    log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claim.claimNumber}: đối chiếu bệnh nhân...`);
     const patient = preflight.get(claim.claimNumber)?.patient || await patientResolver(pool, { claim });
     const patNum = patient.PatNum;
     const clinicNum = patient.ClinicNum || 0;
@@ -179,10 +179,10 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     const groupNum = claim.plan.group || '';
     const claimCheck={...parsed.check,...claim.check};
     const checkDate = claimCheck.date;
-    const paymentFields = claimPaymentFields(claimNumber,checkDate);
+    const paymentFields = claimPaymentFields(claimNumber,checkDate,claim.documentNumber||claimNumber);
     const totalBenefit = (claim.totals.planPaidCents / 100).toFixed(2);
 
-    log(`[${label} Auto-Processor] Claim #${claimNumber}: lưu ${/\.txt$/i.test(fileName)?'TXT':'PDF'} vào Finished Claims...`);
+    log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: lưu ${/\.txt$/i.test(fileName)?'TXT':'PDF'} vào Finished Claims...`);
     // Import PDF to AtoZ
     const aToZResult = await importPdfToAtoZ(pool, {
       patient,
@@ -195,7 +195,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     });
 
     // Prepare payload
-    log(`[${label} Auto-Processor] Claim #${claimNumber}: đối chiếu dịch vụ, cập nhật phí và chuẩn bị phân bổ...`);
+    log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: đối chiếu dịch vụ, cập nhật phí và chuẩn bị phân bổ...`);
     const checked=preflight.get(claim.claimNumber);
     const payload=checked.existing?{splits:checked.splits,updatedFees:await autoPopulateProcedureFees(pool,{
       patNum,carrier,onlyChanged:true,settlement:checked.settlement,
@@ -204,7 +204,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     })}:await preparePayload(pool, { claim, check: claimCheck, patient, carrier, dbProcs:checked.dbProcs,settlement:checked.settlement,hashSplits });
 
     // Select Payment Type
-    log(`[${label} Auto-Processor] Claim #${claimNumber}: chọn loại thanh toán...`);
+    log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: chọn loại thanh toán...`);
     const [payTypes] = await pool.execute(
       'SELECT DefNum, ItemName FROM definition WHERE Category = 10 AND IsHidden = 0 ORDER BY ItemOrder'
     );
@@ -215,20 +215,22 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       { DefNum: 10, ItemName: 'Insurance Paid' };
 
     // DB Transaction with LOCK TABLES
-    log(`[${label} Auto-Processor] Claim #${claimNumber}: chờ kết nối ghi thanh toán...`);
+    log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: chờ kết nối ghi thanh toán...`);
     const conn = await pool.getConnection();
     let payNum = 0;
 
     try {
-      log(`[${label} Auto-Processor] Claim #${claimNumber}: chờ khóa bảng thanh toán...`);
+      log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: chờ khóa bảng thanh toán...`);
       await conn.query(
         'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE'
       );
 
-      log(`[${label} Auto-Processor] Claim #${claimNumber}: ghi thanh toán $${totalBenefit}, ${payload.splits.length} phân bổ...`);
+      log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: ghi thanh toán $${totalBenefit}, ${payload.splits.length} phân bổ...`);
       await verifyInsuranceSettlement(conn,checked.settlement);
-      const previous=await verifiedInsurancePayment(conn,{patNum,claimNumber,date:checkDate,amountCents:claim.totals.planPaidCents,splits:payload.splits});
-      if(previous){payNum=previous.PayNum;log(`[${label} Auto-Processor] Claim #${claimNumber}: đã xác minh Payment #${payNum}; giữ nguyên khoản đã lưu.`);}
+      const previous=await verifiedInsurancePayment(conn,{patNum,claimNumber,displayClaimNumber:claim.documentNumber,date:checkDate,amountCents:claim.totals.planPaidCents,splits:payload.splits});
+      if(previous){
+       if(claim.documentNumber&&claim.documentNumber!==claimNumber)await conn.execute('UPDATE payment SET PayNote=? WHERE PayNum=? AND PatNum=? AND PayNote=?',[paymentFields.note,previous.PayNum,patNum,`Claim number: ${claimNumber}`]);
+       payNum=previous.PayNum;log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: đã xác minh Payment #${payNum}; giữ nguyên khoản đã lưu.`);}
       else {
        if(checked.existing)throw reviewError('Khoản đã lưu thay đổi sau đối chiếu; chưa tạo lại thanh toán.');
       // Insert Payment
@@ -295,7 +297,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       conn.release();
     }
 
-    log(`[${label} Auto-Processor] Claim #${claimNumber}: đã ghi Payment #${payNum}, đã mở khóa; cập nhật số dư...`);
+    log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: đã ghi Payment #${payNum}, đã mở khóa; cập nhật số dư...`);
     // Re-calculate BalTotal after releasing table locks
     try {
       const [balRes] = await pool.execute(
@@ -312,7 +314,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       console.warn(`[${label}] Warning calculating BalTotal:`, e.message);
     }
 
-    log(`[${label} Auto-Processor] Claim #${claimNumber}: ghi lịch sử xử lý...`);
+    log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: ghi lịch sử xử lý...`);
     // Record in history table
     const details = JSON.stringify({
       carrier,
@@ -330,6 +332,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       patient: `${patient.LName}, ${patient.FName}`,
       patNum,
       claimNumber,
+      displayClaimNumber:claim.documentNumber||claimNumber,
       checkNumber,
       groupNum,
       payNum,
@@ -375,7 +378,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       ]
     );
 
-    log(`[${label} Auto-Processor] ✓ CLAIM HOÀN TẤT: #${claimNumber} -> PayNum: ${payNum}, DocNum: ${aToZResult.docNum}, $${totalBenefit}`);
+    log(`[${label} Auto-Processor] ✓ CLAIM HOÀN TẤT: #${claim.documentNumber||claimNumber} -> PayNum: ${payNum}, DocNum: ${aToZResult.docNum}, $${totalBenefit}`);
     processedClaims.push({
       claimNumber,
       patNum,

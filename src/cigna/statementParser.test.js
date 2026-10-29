@@ -27,6 +27,7 @@ test('CIGNA supports both portal and payment-statement templates without mixing 
  assert.equal(old.claims[0].claimNumber,'E262868007800');assert.equal(old.check.netPaymentCents,5680);
  assert.equal(p.sourceTemplate,'payment-statement');assert.equal(p.claims.length,1);
  const c=p.claims[0];assert.equal(c.claimNumber,'D123456789000-01-002');assert.equal(c.sourceClaimNumber,'002');
+ assert.equal(c.paymentPayload.claimNum,'D123456789000');assert.equal(c.paymentPayload.payNote,'Claim number: D123456789000');
  assert.equal(c.date,'2026-10-22');assert.equal(c.paymentPayload.payDate,'2026-10-22'); // Not deposit date Oct 28.
  assert.equal(c.totals.planPaidCents,39300);assert.equal(c.paymentPayload.checkNum,'');
  assert.deepEqual(c.procedures.map(p=>[p.code,p.feeCents,p.benefitCents]),rows.map(([code,amount])=>[code,Math.round(Number(amount)*100),Math.round(Number(amount)*100)]));
@@ -47,14 +48,20 @@ async function posting(text,{pdfBytes}={}){
  const p=parse(text);assert.deepEqual(p.errors,[]);const c=p.claims[0],root=await fs.mkdtemp(path.join(os.tmpdir(),'statement-post-'));
  try{
   const f=await insuranceLedger(root,[{patNum:140,firstName:'DIFFERENT',lastName:'NAME',claimNumber:c.claimNumber,procedures:c.procedures,serviceDate:'2026-10-20'}]);
-  for(const name of ['140','1793288482937_140']){
+  for(const [i,name] of ['140','1793288482937_140','1793288482938_140'].entries()){
    const file=path.join(root,name+(pdfBytes?'.pdf':'.txt'));await fs.writeFile(file,pdfBytes||text);
    // Actual private PDF takes the production Scribe conversion path.
    await processSinglePdf(f.pool,file,{hashSplits:f.hashes});
+   assert.equal(f.payments[0].PayNote,`Claim number: ${c.documentNumber}`);
+   // Model an older saved compound note, then an OD-cleared ExternalId with
+   // the new short note. Both must resolve to the same existing payment.
+   f.payments[0].ExternalId='';
+   if(i===0)f.payments[0].PayNote=`Claim number: ${c.claimNumber}`;
   }
   assert.equal(f.payments.length,1);assert.equal(f.payments[0].PatNum,140);assert.equal(f.payments[0].PayDate,'2026-10-22');
   assert.equal(Number(f.payments[0].PayAmt),393);assert.equal(f.splits.length,6);assert.equal(f.documents.length,1);assert.equal(f.history.length,1);assert.equal(f.addedAudit.length,0);
   assert.equal(f.splits.reduce((s,p)=>s+Number(p.SplitAmt),0),393);
+  const saved=JSON.parse(f.history[0].Details);assert.equal(saved.displayClaimNumber,c.documentNumber);assert.equal(saved.paymentNote,`Claim number: ${c.documentNumber}`);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 }
 test('CIGNA statement posts all six services across continuation pages and replays without duplicates (simulated DB)',()=>posting(source));
