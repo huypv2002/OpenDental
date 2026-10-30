@@ -1,6 +1,7 @@
 import {patientFileNumber,resolveFilePatient} from '../metlife/patientFileIdentity.js';
 import {parseDelta} from './parser.js';
 import {processLibertyPdf} from '../liberty/processor.js';
+import {reviewError} from '../metlife/insuranceSettlement.js';
 
 // Diagnostics may report name differences, but posting identity is PatNum only.
 const nameConditionFor=(names,compact)=>names.map(()=>compact
@@ -9,7 +10,19 @@ const nameConditionFor=(names,compact)=>names.map(()=>compact
 
 export const deltaPatientFileNumber=patientFileNumber;
 
-export async function resolveDeltaPatient(pool,{fileName}){
+export async function resolveDeltaPatient(pool,{fileName,claim,claimsCount}){
+ if(claimsCount>1){
+  const p=claim?.patient;
+  if(!p?.memberId||!p.birthdate||!p.firstName||!p.lastName)throw reviewError('Delta Dental: file nhiều bệnh nhân cần Subscriber ID, ngày sinh và họ tên cho từng claim.');
+  const [rows]=await pool.execute(`SELECT DISTINCT p.PatNum,p.FName,p.LName,p.Birthdate,p.ClinicNum,p.PriProv,p.ImageFolder,p.ChartNumber
+   FROM patient p JOIN patplan pp ON pp.PatNum=p.PatNum JOIN inssub s ON s.InsSubNum=pp.InsSubNum
+   JOIN insplan ip ON ip.PlanNum=s.PlanNum JOIN carrier c ON c.CarrierNum=ip.CarrierNum
+   WHERE TRIM(s.SubscriberID)=? AND DATE(p.Birthdate)=?
+     AND LOWER(TRIM(p.FName))=LOWER(?) AND LOWER(TRIM(p.LName))=LOWER(?)
+     AND UPPER(c.CarrierName) LIKE '%DELTA%' ORDER BY p.PatNum LIMIT 2`,[p.memberId,p.birthdate,p.firstName,p.lastName]);
+  if(rows.length!==1)throw reviewError(`Delta Dental claim ${claim.claimNumber}: chưa khớp duy nhất Subscriber ID/ngày sinh/họ tên; không dùng chung mã bệnh nhân từ tên file.`);
+  return rows[0];
+ }
  return resolveFilePatient(pool,{fileName,carrier:'Delta Dental'});
 }
 

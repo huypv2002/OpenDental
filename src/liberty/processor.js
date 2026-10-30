@@ -1,3 +1,4 @@
+import {assertNoLegacyMetlifePayment} from '../metlife/legacyPayment.js';
 import {procedureFeeCents} from '../metlife/procedureFee.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -75,7 +76,7 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
   const groupNumber = claim.plan.group || '';
 
   const dbProcs = suppliedProcs || await libertyProcedures(pool,patNum);
-  const matches = matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:claim.plan?.carrier==='LIBERTY Dental Plan'});
+  const matches = matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:['LIBERTY Dental Plan','MetLife'].includes(claim.plan?.carrier)});
   const claimDates = new Set(claim.procedures.map(p=>p.date));
 
   const eobProcedures = claim.procedures.map((p) => ({
@@ -128,16 +129,17 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
 }
 
 export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, hashSplits=nativeSplitHashes, log = console.log, normalized=null, carrier='LIBERTY Dental Plan', patientResolver=resolveLibertyPatient } = {}) {
-  const label=carrier==='DELTA DENTAL'?'Delta Dental':carrier==='CIGNA'?'Cigna':'Liberty';
-  const parsed = validateLibertyForPosting(normalized||parseLiberty(extracted),extracted,carrier==='DELTA DENTAL'?{verifyLibertyOcr:false}:carrier==='CIGNA'?{claimPattern:/^[A-Z0-9-]{1,64}$/,requireMember:false,verifyLibertyOcr:false}:{});
+  const label=carrier==='DELTA DENTAL'?'Delta Dental':carrier==='CIGNA'?'Cigna':carrier==='MetLife'?'MetLife':'Liberty';
+  const parsed = validateLibertyForPosting(normalized||parseLiberty(extracted),extracted,carrier==='DELTA DENTAL'?{verifyLibertyOcr:false}:carrier==='MetLife'?{claimPattern:/^\d+(?: \d+)*$/,requireMember:false,verifyLibertyOcr:false}:carrier==='CIGNA'?{claimPattern:/^[A-Z0-9-]{1,64}$/,requireMember:false,verifyLibertyOcr:false}:{});
   const preflight=new Map();
   {
     // Resolve every patient/procedure before importing or changing fees for the first claim.
     try{for(const claim of parsed.claims){
       const patient=await patientResolver(pool,{claim,strictMember:!!extracted.ocr||!!extracted.textCarrier,fileName,claimsCount:parsed.claimsCount});
-      const missingPlan=planMissingProcedures(await libertyProcedures(pool,patient.PatNum),claim.procedures,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan',carrier});
+      if(carrier==='MetLife')await assertNoLegacyMetlifePayment(pool,{patNum:patient.PatNum,claimRaw:claim.claimNumber,claimBase:claim.claimBase});
+      const missingPlan=planMissingProcedures(await libertyProcedures(pool,patient.PatNum),claim.procedures,{allowUniqueCodeDate:['LIBERTY Dental Plan','MetLife'].includes(carrier),carrier,includeUnpaid:true});
       const dbProcs=missingPlan.procs;
-      const matches=matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
+      const matches=matchLibertyProcedures(dbProcs,claim,{allowUniqueCodeDate:['LIBERTY Dental Plan','MetLife'].includes(carrier)});
       const check={...parsed.check,...claim.check},splits=libertySplitPlan(claim,check,patient,matches);
       const settlement=await prepareInsuranceSettlement(pool,{patNum:patient.PatNum,carrier,procedures:claim.procedures,dbProcs,splits});
       const existing=await verifiedInsurancePayment(pool,{patNum:patient.PatNum,claimNumber:claim.claimNumber,displayClaimNumber:claim.documentNumber,claimAliases:claim.legacyClaimNumbers,date:check.date,amountCents:claim.totals.planPaidCents,splits});
@@ -152,7 +154,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
     checked.addedProcedures=await createMissingProcedures(pool,{plan:checked.missingPlan,patient:checked.patient,claimNumber:claim.claimNumber,carrier});
     for(const p of checked.addedProcedures)log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claim.claimNumber}: ${p.reused?'dùng lại':'đã thêm'} dịch vụ ${p.code}, ProcNum: ${p.procNum}${p.newCode?' (đã thêm mã vào danh mục)':''}.`);
     if(checked.addedProcedures.length){
-      checked.matches=matchLibertyProcedures(checked.dbProcs,claim,{allowUniqueCodeDate:carrier==='LIBERTY Dental Plan'});
+      checked.matches=matchLibertyProcedures(checked.dbProcs,claim,{allowUniqueCodeDate:['LIBERTY Dental Plan','MetLife'].includes(carrier)});
       const check={...parsed.check,...claim.check};
       checked.splits=libertySplitPlan(claim,check,checked.patient,checked.matches);
       checked.settlement=await prepareInsuranceSettlement(pool,{patNum:checked.patient.PatNum,carrier,procedures:claim.procedures,dbProcs:checked.dbProcs,splits:checked.splits});
@@ -228,6 +230,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
 
       log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claimNumber}: ghi thanh toán $${totalBenefit}, ${payload.splits.length} phân bổ...`);
       await verifyInsuranceSettlement(conn,checked.settlement);
+      if(carrier==='MetLife')await assertNoLegacyMetlifePayment(conn,{patNum,claimRaw:claimNumber,claimBase:claim.claimBase});
       const previous=await verifiedInsurancePayment(conn,{patNum,claimNumber,displayClaimNumber:claim.documentNumber,claimAliases:claim.legacyClaimNumbers,date:checkDate,amountCents:claim.totals.planPaidCents,splits:payload.splits});
       if(previous){
        for(const legacy of claim.legacyClaimNumbers||[]){
@@ -327,6 +330,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
       settlementBasis:parsed.settlementBasis,
       warnings:parsed.warnings,
       sourceProcedures:claim.rawProcedures,
+      eobPayment:claim.eobPayment,
       depositAmountCents:claim.headerPaidCents,
       sourceFormat: extracted.sourceFormat||'pdf',
       generatedTextPath:extracted.generatedTextPath,
@@ -357,7 +361,8 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
         date: p.date,
         tooth: p.tooth,
         status: p.status,
-        feeCents: p.feeCents,
+        feeCents: p.bundleResolution?p.bundleResolution.sourceFeeCents:p.feeCents,
+        bundleResolution:p.bundleResolution,
         procedureFeeCents:procedureFeeCents(p,carrier),
         benefitCents: p.benefitCents
       }))

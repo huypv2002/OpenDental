@@ -125,7 +125,7 @@ test('MetLife full processor writes blank check, processed date, claim-only note
   if(sql.includes('AS LogDateTime'))return [[{PermType:15,UserNum:0,LogDateTime:'2026-09-29 12:00:00',LogText:'synthetic',PatNum:99,DateTPrevious:'0001-01-01 00:00:00'}]];
   return [{affectedRows:1}];
  }};
- const procs=['D0150','D1110','D0210'].map((ProcCode,i)=>({ProcNum:51+i,ProcDate:new Date('2026-09-13T12:00:00Z'),ProcFee:0,ProvNum:1,ClinicNum:0,ProcCode,Descript:'Synthetic procedure'}));
+ const procs=['D0150','D1110','D0210','D0220','D0230','D0274','D1206'].map((ProcCode,i)=>({ProcNum:51+i,ProcDate:new Date('2026-09-13T12:00:00Z'),ProcFee:0,ProvNum:1,ClinicNum:0,ProcCode,Descript:'Synthetic procedure'}));
  const pool={getConnection:async()=>conn,execute:async(sql,args)=>{
   if(sql.includes('FROM claimproc cp')||sql.includes('SELECT DocNum,FileName FROM document')||sql.includes('SELECT Id,Details FROM luk_metlife_history'))return [[]];
   if(sql.includes('SELECT PayNum,PatNum,PayDate,PayAmt FROM payment'))return [[]];

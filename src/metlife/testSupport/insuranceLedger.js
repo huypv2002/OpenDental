@@ -36,6 +36,7 @@ export async function insuranceLedger(root,claims){
   if(sql.startsWith('INSERT INTO luk_eob_added_procedures')){addedAudit.push(args);return [{insertId:addedAudit.length}];}
   if(sql.includes('FROM patient WHERE PatNum')||sql.includes('FROM patient p WHERE p.PatNum=?'))return [patients.filter(p=>p.PatNum===Number(args[0]))];
   if(sql.includes('FROM patient p')){
+   if(sql.includes("'%METLIFE%'"))return [patients.filter(p=>p.FName.toLowerCase()===String(args[1]).toLowerCase()&&p.LName.toLowerCase()===String(args[2]).toLowerCase()).slice(0,2)];
    return [patients.filter(p=>args.includes(p.memberId)).slice(0,2)];
   }
   if(sql.includes('SELECT procedurelog.ProcNum')||sql.includes('SELECT pl.ProcNum'))return [procs.filter(p=>p.PatNum===args[0]&&(!args[1]||p.ProcCode===args[1])&&(!args[2]||p.ProcDate===args[2])).map(p=>({ProcStatus:2,...p}))];
@@ -45,6 +46,7 @@ export async function insuranceLedger(root,claims){
    assert.ok(locked);for(const r of byIds(claimprocs,args[0],args.slice(1)))for(const k of insuranceZeroFields)r[k]=0;return [{affectedRows:1}];
   }
   if(sql.includes('COALESCE(SUM(InsPayEst)')){const selected=claimprocs.filter(r=>String(r.ClaimNum)===String(args[0])&&r.PatNum===args[1]);return [[{InsPayEst:selected.reduce((n,r)=>n+r.InsPayEst,0),WriteOff:selected.reduce((n,r)=>n+r.WriteOff,0)}]];}
+  if(sql.includes('FROM payment')&&sql.includes('PayNote REGEXP'))return [payments.filter(p=>p.PatNum===args[0]&&(p.ExternalId===args[1]||p.CheckNum===args[2]||new RegExp(args[3]).test(p.PayNote||''))&&p.ExternalId!==args[4]&&String(p.PayNote||'').trim()!==args[5])];
   if(sql.includes('FROM payment WHERE PatNum ='))return [payments.filter(p=>p.PatNum===args[0]&&(p.ExternalId===args[1]||p.CheckNum===args[2]||p.PayNote===args[3]))];
   if(sql.includes('FROM paysplit WHERE PayNum='))return [splits.filter(s=>s.PayNum===args[0])];
   if(sql.includes('FROM preference'))return [[{PrefName:'DocPath',ValueString:imageRoot},{PrefName:'AtoZfolderUsed',ValueString:'1'}]];

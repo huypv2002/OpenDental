@@ -1,26 +1,33 @@
-import {cents} from './parser.js';
-import {procedureDay,reviewError} from './insuranceSettlement.js';
-import {procedureCandidates} from './procedureIdentity.js';
+import {reviewError} from './insuranceSettlement.js';
 
-// Clinic confirmed: preserve the unique existing D0210 when an Allowable
-// replacement row omits its charge/date. Never infer a fee from the benefit.
-export function resolveMetlifeAllowableProcedures(procedures,completedProcs) {
+const groupedXrayCodes=new Set(['D0220','D0230','D0274','D0330']);
+const validDay=value=>{
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(value||'')||value==='0001-01-01')return false;
+  const date=new Date(value+'T12:00:00Z');
+  return Number.isFinite(+date)&&date.toISOString().slice(0,10)===value;
+};
+
+// Clinic confirmed 30/10: the replacement D0210 follows the grouped X-rays'
+// date. Missing Fee Charged uses Covered Expense, then the clinic's $150 fee.
+// This policy is specific to MetLife D0210 Allowable, not other service rows.
+export function resolveMetlifeAllowableProcedures(procedures) {
   return procedures.map(p=>{
-    if(p.code!=='D0210'||!p.bundled||!(p.benefitCents>0)||(p.feeCents!=null&&p.date))return p;
-    const candidates=completedProcs.filter(r=>r.ProcCode===p.code&&(!p.date||procedureDay(r.ProcDate)===p.date));
-    const matches=procedureCandidates(candidates,p,procedures,{metlife:true});
-    if(matches.length!==1)throw reviewError(matches.length===0
-      ? 'D0210 Allowable: không có dịch vụ D0210 hoàn tất phù hợp trong Open Dental; không tự thêm hoặc đổi từ D0120.'
-      : `D0210 Allowable: có ${matches.length} dịch vụ D0210 hoàn tất phù hợp (ProcNum: ${matches.map(r=>r.ProcNum).join(', ')}); cần xác định đúng dòng, không tự chọn ngày/phí.`);
-    const match=matches[0],date=procedureDay(match.ProcDate);
-    const parsedDate=new Date(date+'T12:00:00Z');
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(+parsedDate)||parsedDate.toISOString().slice(0,10)!==date||date==='0001-01-01')throw reviewError('D0210 Allowable: ngày dịch vụ Open Dental không hợp lệ.');
-    let fee=p.feeCents;
-    if(fee==null){
-      try{fee=cents(match.ProcFee);}catch{throw reviewError('D0210 Allowable: phí dịch vụ Open Dental không hợp lệ.');}
-      if(fee<0)throw reviewError('D0210 Allowable: phí dịch vụ Open Dental không hợp lệ.');
+    if(p.code!=='D0210'||!p.bundled||!(p.benefitCents>0))return p;
+    let date=p.date,dateSource='eob';
+    const grouped=procedures.filter(r=>groupedXrayCodes.has(r.code)&&r.status==='Denied'&&/\b(?:65|J)\b/.test(r.evidence||''));
+    if(!date){
+      const dates=[...new Set(grouped.map(r=>r.date))];
+      if(!grouped.length||dates.length!==1||!validDay(dates[0]))throw reviewError('D0210 Allowable: chưa xác định duy nhất ngày của các code X-ray bị gộp trên EOB; không tự chọn ngày.');
+      date=dates[0];dateSource='grouped-eob-services';
     }
-    return {...p,date:p.date||date,feeCents:fee,preserveExistingFee:p.feeCents==null,
-      odFallback:{procNum:match.ProcNum,sourceDate:p.date??null,sourceFeeCents:p.feeCents??null,date:p.date||date,feeCents:fee}};
+    if(!validDay(date))throw reviewError('D0210 Allowable: ngày dịch vụ trên EOB không hợp lệ.');
+    const feeSource=p.feeCents!=null?'fee-charged':p.coveredCents!=null?'covered-expense':'clinic-default';
+    const feeCents=p.feeCents??p.coveredCents??15000;
+    if(!Number.isSafeInteger(feeCents)||feeCents<0)throw reviewError('D0210 Allowable: phí dịch vụ trên EOB không hợp lệ.');
+    return {...p,date,feeCents,bundleResolution:{
+      sourceDate:p.date??null,sourceFeeCents:p.feeCents??null,
+      date,dateSource,feeCents,feeSource,
+      groupedServices:grouped.map(r=>({code:r.code,date:r.date}))
+    }};
   });
 }

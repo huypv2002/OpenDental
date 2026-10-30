@@ -13,6 +13,7 @@ import {documentInsert} from './documentImport.js';
 import {readInsuranceDocument,isInsuranceFile,isImageFile,imagePdf} from '../liberty/document.js';
 import {procedureFeeCents} from './procedureFee.js';
 import {resolveMetlifeAllowableProcedures} from './allowableProcedure.js';
+import {assertNoLegacyMetlifePayment} from './legacyPayment.js';
 import {isCignaStatement} from '../cigna/statementParser.js';
 import {resolveFilePatient} from './patientFileIdentity.js';
 import {exportDailyReports} from './dailyExcel.js';
@@ -129,7 +130,6 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
 
   for (const item of eobProcedures) {
     if (!item.code || !item.benefitCents || item.benefitCents <= 0) continue;
-    if (item.preserveExistingFee) continue;
     const procedureFee = (procedureFeeCents(item,carrier) / 100).toFixed(2);
 
     // Find matching completed procedure
@@ -238,6 +238,12 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   }
 
   if(extracted.ocr)throw Object.assign(new Error('Ảnh/PDF scan chưa xác nhận được là EOB Liberty; cần đối chiếu tài liệu gốc.'),{code:'EOB_REVIEW_REQUIRED'});
+  const {parseMetlifeClaims,normalizedMetlifeBatch,resolveMetlifeBatchPatient}=await import('./multiClaim.js');
+  const batch=parseMetlifeClaims(extracted,{clinicConfirmedPaid:true});
+  if(batch.claims.length>1){
+    const {processLibertyPdf}=await import('../liberty/processor.js');
+    return processLibertyPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits,normalized:normalizedMetlifeBatch(batch),carrier:'MetLife',patientResolver:resolveMetlifeBatchPatient});
+  }
   const parsed = parseMetlife(extracted,{clinicConfirmedPaid:true});
 
   if (parsed.errors && parsed.errors.length > 0) {
@@ -254,6 +260,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   const groupNum = parsed.group || '';
   const eobDate = paymentFields.date;
   const totalBenefit = (parsed.benefitCents / 100).toFixed(2);
+  await assertNoLegacyMetlifePayment(pool,{patNum,claimRaw:parsed.claimRaw,claimBase:parsed.claimBase});
 
   console.log(`[MetLife Auto-Processor] Bệnh nhân: ${patient.LName}, ${patient.FName} (#${patNum})`);
   console.log(`[MetLife Auto-Processor] Claim / Check: ${claimNumber} | Tổng tiền: $${totalBenefit}`);
@@ -267,8 +274,8 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     [patNum]
   );
 
-  const eobProcedures=resolveMetlifeAllowableProcedures(parsed.procedures,completedProcs);
-  const missingPlan=planMissingProcedures(completedProcs,eobProcedures,{metlife:true});
+  const eobProcedures=resolveMetlifeAllowableProcedures(parsed.procedures);
+  const missingPlan=planMissingProcedures(completedProcs,eobProcedures,{metlife:true,includeUnpaid:true});
   const dbProcs=missingPlan.procs;
 
   const splitsPlan = [],matchedProcedures=new Map();
@@ -345,6 +352,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
       'LOCK TABLES payment WRITE, paysplit WRITE, securitylog WRITE, securityloghash WRITE, claimproc WRITE, claim WRITE, patient WRITE'
     );
 
+    await assertNoLegacyMetlifePayment(conn,{patNum,claimRaw:parsed.claimRaw,claimBase:parsed.claimBase});
     await verifyInsuranceSettlement(conn,settlement);
     const previous=await verifiedInsurancePayment(conn,{patNum,claimNumber,date:eobDate,amountCents:parsed.benefitCents,splits:splitsPlan});
     if(previous){payNum=previous.PayNum;console.log(`[MetLife Auto-Processor] Claim #${claimNumber}: đã xác minh Payment #${payNum}; giữ nguyên khoản đã lưu.`);}
@@ -446,12 +454,12 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
     procedures: eobProcedures.map((p) => ({
       procNum:matchedProcedures.get(p)?.ProcNum,
       code: p.code,
-      date: p.odFallback ? p.odFallback.sourceDate || '' : p.date || '',
+      date: p.bundleResolution ? p.bundleResolution.sourceDate || '' : p.date || '',
       tooth: p.tooth || '',
       surface:p.surface||'',
       status: p.status || '',
-      feeCents: p.odFallback ? p.odFallback.sourceFeeCents : p.feeCents ?? null,
-      odFallback:p.odFallback,
+      feeCents: p.bundleResolution ? p.bundleResolution.sourceFeeCents : p.feeCents ?? null,
+      bundleResolution:p.bundleResolution,
       benefitCents: p.benefitCents || 0,
       remarks: p.remarks || []
     })),

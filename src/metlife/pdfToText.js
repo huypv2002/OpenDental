@@ -6,6 +6,7 @@ import {fork} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {readInsuranceTextDocument} from './textDocument.js';
 import {parseMetlife} from './parser.js';
+import {parseMetlifeClaims} from './multiClaim.js';
 import {parseDelta} from '../delta/parser.js';
 import {parseLiberty} from '../liberty/parser.js';
 import {parseCigna} from '../cigna/parser.js';
@@ -62,16 +63,17 @@ export function selectConvertedText({candidates,native=false},{clinicConfirmedPa
   try{
    const extracted=readInsuranceTextDocument(Buffer.from(text)).extracted;
    const parser={'METLIFE':parseMetlife,'LIBERTY':parseLiberty,'CIGNA':parseCigna,'DELTA DENTAL':parseDelta}[extracted.textCarrier];
-   const p=parser===parseMetlife?parser(extracted,{clinicConfirmedPaid}):parser(extracted);
-   const claimIds=p.claims?.map(c=>c.claimNumber)||[p.claimRaw];
+   const batch=parser===parseMetlife?parseMetlifeClaims(extracted,{clinicConfirmedPaid}):null;
+   const p=batch?{...batch.claims[0],errors:batch.errors}:parser(extracted);
+   const claimIds=batch?batch.claims.map(c=>c.claimRaw):p.claims?.map(c=>c.claimNumber)||[p.claimRaw];
    // This verified Delta Provider Tools format has 14-digit claim IDs.
    // Do not accept a converter result that dropped a digit. Other formats review.
    if(extracted.textCarrier==='DELTA DENTAL'&&claimIds.some(id=>!/^\d{14}$/.test(id))){error='Số claim Delta từ thư viện chưa đúng định dạng 14 chữ số đã hỗ trợ.';continue;}
    if(claimIds.length&&claimIds.every(Boolean))ids.push(JSON.stringify(claimIds));
    if(p.errors.length){error=p.errors.join('; ');continue;}
    if(extracted.textCarrier==='LIBERTY')validateLibertyForPosting(p,extracted);
-   const signature=JSON.stringify(p.claims?.map(c=>[c.claimNumber,c.patient.memberId,c.patient.birthdate,c.date,c.paymentPayload.amountCents,c.paymentPayload.splits.map(s=>[s.code,s.date,procedureAreaKey(s),s.amountCents]),c.procedures.map(r=>[r.code,r.date,procedureAreaKey(r),r.feeCents,r.benefitCents,r.allowedCents,r.maximumCents,r.deductibleCents,r.patientDueCents,r.percent])])||[p.claimRaw,p.processed,p.benefitCents,p.procedures.map(r=>[r.code,r.date,procedureAreaKey(r),r.feeCents,r.benefitCents])]);
-   const names=JSON.stringify(p.claims?.map(c=>[c.patient.firstName,c.patient.lastName])||p.patient);
+   const signature=JSON.stringify(batch?batch.claims.map(c=>[c.claimRaw,c.patient,c.group,c.processed,c.payment,c.benefitCents,c.procedures]):p.claims?.map(c=>[c.claimNumber,c.patient.memberId,c.patient.birthdate,c.date,c.paymentPayload.amountCents,c.paymentPayload.splits.map(s=>[s.code,s.date,procedureAreaKey(s),s.amountCents]),c.procedures.map(r=>[r.code,r.date,procedureAreaKey(r),r.feeCents,r.benefitCents,r.allowedCents,r.maximumCents,r.deductibleCents,r.patientDueCents,r.percent])])||[p.claimRaw,p.processed,p.benefitCents,p.procedures.map(r=>[r.code,r.date,procedureAreaKey(r),r.feeCents,r.benefitCents])]);
+   const names=JSON.stringify(batch?batch.claims.map(c=>c.patient):p.claims?.map(c=>[c.patient.firstName,c.patient.lastName])||p.patient);
    good.push({text,signature,names,ids:JSON.stringify(claimIds)});
   }catch(e){error=e.message;}
  }

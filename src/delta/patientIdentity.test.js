@@ -41,7 +41,7 @@ test('Delta requires a real filename PatNum and never falls back to matching nam
  const f=fixture();try{
   f.add(423,{first:'QUOC TOAN'});
   for(const file of ['unlabelled.pdf','note_423.pdf','1792789329060_424.pdf'])await assert.rejects(f.resolve(file),e=>e.code==='EOB_REVIEW_REQUIRED');
-  assert.equal((await f.resolve('423.pdf',2)).PatNum,423);
+  assert.equal((await f.resolve('batch.pdf',2)).PatNum,423);
  }finally{f.db.close();}
 });
 
@@ -56,6 +56,18 @@ test('Delta identity diagnostics identify each mismatch without exposing subscri
    assert.equal(f.db.prepare('SELECT total_changes() AS n').get().n,before);
   }finally{f.db.close();}
  }
+});
+
+test('Delta batch resolves each claim with member/DOB/name; ambiguous dependent identity stops',async()=>{
+ const f=fixture();try{
+  f.add(423,{first:'QUOC TOAN'});
+  f.add(424,{first:'OTHER',last:'PERSON',birth:'1980-01-01',member:'other'});
+  assert.equal((await f.resolve('batch.pdf',2)).PatNum,423);
+  const other={patient:{firstName:'OTHER',lastName:'PERSON',birthdate:'1980-01-01',memberId:'other'}};
+  assert.equal((await resolveDeltaPatient(f.pool,{fileName:'423.pdf',claim:other,claimsCount:2})).PatNum,424);
+  f.add(425,{first:'QUOC TOAN'});
+  await assert.rejects(f.resolve('423.pdf',2),/khớp duy nhất/);
+ }finally{f.db.close();}
 });
 
 test('Delta identity diagnostics distinguish absent patient and a fully matching identity',async()=>{

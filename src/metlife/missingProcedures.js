@@ -13,10 +13,11 @@ function anatomy(p){
 }
 
 // Pure preflight: negative IDs reserve missing rows until ALL claims validate.
-export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=false,metlife=false,carrier='MetLife'}={}){
+export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=false,metlife=false,carrier='MetLife',includeUnpaid=false}={}){
  const procs=[...dbProcs],additions=[],seen=new Set();
- for(const p of procedures.filter(p=>p.benefitCents>0)){
-  const chargeCents=procedureFeeCents(p,carrier);
+ const eligible=p=>Number.isSafeInteger(p.benefitCents)&&(includeUnpaid?p.benefitCents>=0:p.benefitCents>0);
+ for(const p of procedures.filter(eligible)){
+  const chargeCents=p.benefitCents===0?0:procedureFeeCents(p,carrier);
   const key=JSON.stringify([p.code,p.date||'',procedureAreaKey(p)]);
   if(seen.has(key))throw reviewError(`${p.code}: nhiều dòng trả tiền cùng ngày/răng; cần đối chiếu trước khi thêm dịch vụ.`);
   seen.add(key);
@@ -25,15 +26,15 @@ export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=fa
   if(/^D434[12]$/.test(p.code)&&!procedureQuadrant(p)&&byDate.length!==1)throw reviewError(`${p.code}: chưa đọc rõ vùng hàm UR/UL/LR/LL; cần đối chiếu PDF, không tự phân bổ theo thứ tự.`);
   const exact=procedureCandidates(byDate,p,procedures,{metlife,allowUniqueCodeDate});
   if(exact.length)continue;
-  const sourceCount=procedures.filter(r=>r.benefitCents>0&&r.code===p.code&&r.date===p.date).length;
+  const sourceCount=procedures.filter(r=>eligible(r)&&r.code===p.code&&r.date===p.date).length;
   if(byDate.length>=sourceCount&&byDate.length)throw reviewError(`${p.code}: đã có dịch vụ cùng mã/ngày nhưng vùng răng/hàm chưa khớp; không tự thêm trùng.`);
   const date=/^\d{4}-\d{2}-\d{2}$/.test(p.date||'')?new Date(p.date+'T12:00:00Z'):null;
-  if(!/^D\d{4}$/.test(p.code)||!date||Number.isNaN(+date)||date.toISOString().slice(0,10)!==p.date||!Number.isSafeInteger(p.benefitCents)||p.benefitCents<=0)throw reviewError(`${p.code}: thiếu ngày/mã/số tiền để thêm dịch vụ.`);
+  if(!/^D\d{4}$/.test(p.code)||!date||Number.isNaN(+date)||date.toISOString().slice(0,10)!==p.date||!Number.isSafeInteger(p.benefitCents)||(includeUnpaid?p.benefitCents<0:p.benefitCents<=0))throw reviewError(`${p.code}: thiếu ngày/mã/số tiền để thêm dịch vụ.`);
   if(p.tooth&&!/^(?:0?[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(p.tooth))throw reviewError(`${p.code}: chưa đọc rõ răng để thêm dịch vụ.`);
   const virtual={ProcNum:-(additions.length+1),ProcCode:p.code,ProcDate:p.date,ToothNum:anatomy(p).ToothNum,Surf:anatomy(p).Surf,ProcFee:(chargeCents/100).toFixed(2),Descript:p.description||p.desc||p.code};
   procs.push(virtual);additions.push({source:p,row:virtual});
  }
- return {procs,additions,sourceProcedures:procedures};
+ return {procs,additions,sourceProcedures:procedures,includeUnpaid};
 }
 
 async function columns(db,table){
@@ -87,7 +88,7 @@ export async function createMissingProcedures(pool,{plan,patient,claimNumber,car
    const matches=existing.filter(r=>procedureAreaMatches(p,r)&&Number(r.ProcStatus)!==6);
    if(matches.length>1||matches.some(r=>Number(r.ProcStatus)!==2))throw reviewError(`${p.code}: đã có dịch vụ cùng ngày/răng chưa xác định duy nhất; không thêm lặp.`);
    if(matches.length===1){Object.assign(row,matches[0]);result.push({oldId,procNum:row.ProcNum,code:p.code,reused:true});continue;}
-   const sourceCount=(plan.sourceProcedures||[p]).filter(r=>r.benefitCents>0&&r.code===p.code&&r.date===p.date).length;
+   const sourceCount=(plan.sourceProcedures||[p]).filter(r=>(plan.includeUnpaid?r.benefitCents>=0:r.benefitCents>0)&&r.code===p.code&&r.date===p.date).length;
    if(existing.filter(r=>Number(r.ProcStatus)!==6).length>=sourceCount)throw reviewError(`${p.code}: đã có dịch vụ cùng mã/ngày nhưng chưa khớp vùng hàm khi ghi; không thêm trùng.`);
    const [codes]=await conn.execute('SELECT CodeNum,ProcCode,Descript,TreatArea FROM procedurecode WHERE ProcCode=?',[p.code]);
    if(codes.length>1)throw reviewError(`${p.code}: danh mục có nhiều mã trùng nhau.`);

@@ -119,10 +119,10 @@ test('HANDOVER CIGNA: unsupported JPEG stops before database access',async()=>{
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
-test('HANDOVER METLIFE: multiple patients/claim summaries are refused before database access',async()=>{
+test('HANDOVER METLIFE: batch patient ambiguity stops before writes',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'metlife-multi-review-'));try{
   const file=path.join(root,'1279.txt');await fs.writeFile(file,metlifeText+'\f'+metlifeText.replaceAll('1234567890','1234567891'));
-  let queries=0;await assert.rejects(processSinglePdf({execute:async()=>{queries++;}},file),/một Claim Number/);assert.equal(queries,0);
+  const queries=[];await assert.rejects(processSinglePdf({execute:async(sql)=>{queries.push(sql);return [[]];}},file),/khớp duy nhất/);assert.ok(queries.length>0);assert.ok(queries.every(sql=>sql.startsWith('SELECT')));
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
@@ -136,10 +136,16 @@ for(const carrier of ['CIGNA','DELTA DENTAL']){
   const f=await insuranceLedger(root,parsed.claims.map((c,i)=>({patNum:500+i,firstName:c.patient.firstName,lastName:c.patient.lastName,memberId:c.patient.memberId,claimNumber:c.claimNumber,procedures:c.procedures,serviceDate:c.procedures[0].date})));
   const file=path.join(root,'batch.txt');await fs.writeFile(file,text);return {root,text,file,parsed,f};
  }
- test(`HANDOVER ${carrier}: unnamed multi-patient batch requires patient-number filenames before any write`,async()=>{
+ test(`HANDOVER ${carrier}: batch uses per-claim identity before any write`,async()=>{
   const x=await batchFixture(),{f}=x;try{
-   await assert.rejects(processSinglePdf(f.pool,x.file,{hashSplits:f.hashes}),e=>e.code==='EOB_REVIEW_REQUIRED'&&new RegExp(carrier==='CIGNA'?'Subscriber ID':'tên file').test(e.message));
-   assert.equal(f.payments.length,0);assert.equal(f.documents.length,0);assert.equal(f.history.length,0);assert.equal(f.events.length,0);
+   if(carrier==='CIGNA'){
+    await assert.rejects(processSinglePdf(f.pool,x.file,{hashSplits:f.hashes}),/Subscriber ID/);
+    assert.equal(f.payments.length,0);assert.equal(f.documents.length,0);
+   }else{
+    await processSinglePdf(f.pool,x.file,{hashSplits:f.hashes});
+    assert.equal(f.payments.length,2);assert.equal(f.documents.length,2);
+    assert.deepEqual([...new Set(f.payments.map(p=>p.PatNum))].sort(),[500,501]);
+   }
   }finally{await fs.rm(x.root,{recursive:true,force:true});}
  });
  test(`HANDOVER ${carrier}: unnamed batch with ambiguous services stops before the first payment or document`,async()=>{

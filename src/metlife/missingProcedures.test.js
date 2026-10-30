@@ -8,6 +8,20 @@ import {insuranceLedger} from './testSupport/insuranceLedger.js';
 
 const paid={code:'D0210',date:'2026-04-26',tooth:'',benefitCents:7300,feeCents:14300};
 const denied={...paid,code:'D0220',benefitCents:0};
+for(const carrier of ['MetLife','LIBERTY Dental Plan','CIGNA','DELTA DENTAL'])test(`${carrier}: confirmed incoming policy adds a missing zero-benefit EOB code once`,async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eob-unpaid-'));
+ try{
+  const f=await insuranceLedger(root,[{patNum:99,firstName:'TEST',lastName:'PERSON',procedures:[denied],serviceDate:denied.date}]);
+  f.procs.splice(0,1);
+  const plan=planMissingProcedures(f.procs,[denied],{carrier,includeUnpaid:true});
+  assert.equal(plan.additions.length,1);assert.equal(plan.additions[0].row.ProcFee,'0.00');
+  await createMissingProcedures(f.pool,{plan,patient:f.patients[0],claimNumber:'ZERO1',carrier});
+  const again=planMissingProcedures(f.procs,[denied],{carrier,includeUnpaid:true});
+  assert.equal(again.additions.length,0);assert.equal(f.addedAudit.length,1);
+  assert.equal(f.payments.length,0);assert.equal(f.splits.length,0);
+  const saved=f.procs.find(p=>p.ProcCode==='D0220');assert.equal(Number(saved.ProcFee),0);assert.equal(saved.ProcStatus,2);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 test('only paid missing services are planned; existing/ambiguous rows are not replaced',()=>{
  const p=planMissingProcedures([], [paid,denied]);assert.equal(p.additions.length,1);assert.equal(p.procs[0].ProcFee,'143.00');assert.ok(p.procs[0].ProcNum<0);
  const existing={...p.procs[0],ProcNum:123};assert.equal(planMissingProcedures([existing],[paid]).additions.length,0);
