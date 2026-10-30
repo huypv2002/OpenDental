@@ -5,7 +5,7 @@ import {procedureModelColumns,insertProcedureModel} from './missingProcedures.js
 import {insertFinancialRow,financialInsert,odSecurityLogHash} from './directPayment.js';
 
 const timestamp=v=>v instanceof Date
-  ? `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')} ${String(v.getHours()).padStart(2,'0')}:${String(v.getMinutes()).padStart(2,'0')}:${String(v.getSeconds()).padStart(2,'0')}`
+  ? `${String(v.getFullYear()).padStart(4,'0')}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')} ${String(v.getHours()).padStart(2,'0')}:${String(v.getMinutes()).padStart(2,'0')}:${String(v.getSeconds()).padStart(2,'0')}`
   : String(v||'');
 const day=v=>timestamp(v).slice(0,10);
 const same=(a,b)=>String(a)===String(b);
@@ -30,6 +30,20 @@ export function summarizeClaim690Catalog(state){
     return {CodeNum:c.CodeNum,ProcCode:c.ProcCode,Descript:c.Descript,
       ProcCat:c.ProcCat,Category:category?.ItemName,CategoryHidden:category?.IsHidden,TreatArea:c.TreatArea};
   });
+}
+
+export function inspectClaim690Repair(state,journal){
+  let plan,error;
+  try{plan=planClaim690Repair(state);}catch(e){error=e.message;}
+  const original=journal?.before;
+  const targets=state.procedures.filter(p=>state.codes.some(c=>c.ProcCode==='D0210'&&same(c.CodeNum,p.CodeNum))&&day(p.ProcDate)==='2025-09-19'&&Number(p.ProcStatus)!==6);
+  return {journalStatus:journal?.status||'none',liveStatus:plan?.status||'review-required',validationError:error,
+    currentBalance:state.patients[0]?.BalTotal,originalBalance:original?.patients?.[0]?.BalTotal,
+    intendedBalance:journal?.plan?.afterBalanceCents==null?null:(journal.plan.afterBalanceCents/100).toFixed(2),
+    paymentUnchanged:original?fingerprint(state.payments)===fingerprint(original.payments):null,
+    claimprocsUnchanged:original?fingerprint(state.claimprocs)===fingerprint(original.claimprocs):null,
+    d0210:targets.map(p=>({ProcNum:p.ProcNum,ProcStatus:p.ProcStatus,ProcDate:timestamp(p.ProcDate),ProcFee:p.ProcFee,BillingNote:p.BillingNote})),
+    splits:summarizeClaim690Splits(state)};
 }
 
 export async function readClaim690RepairState(db){
@@ -122,7 +136,7 @@ export async function repairClaim690(db,{apply=false,hashSplits,writeJournal,rea
   const [meta]=await execute("SELECT TABLE_NAME,COLUMN_NAME,COLUMN_DEFAULT,IS_NULLABLE,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('paysplit','securitylog','securityloghash')");
   requireThat(meta.some(c=>c.TABLE_NAME==='paysplit'&&c.COLUMN_NAME==='SecurityHash'),'Expected paysplit.SecurityHash.');
   // Validate both audit inserts before the first procedure/split write.
-  financialInsert('securitylog',{PermType:16,UserNum:0,LogText:'preflight',PatNum:690,CompName:os.hostname().slice(0,255),FKey:0,LogSource:0,DefNum:0,DefNumError:0,DateTPrevious:'0001-01-01 00:00:00'},meta.filter(c=>c.TABLE_NAME==='securitylog'));
+  financialInsert('securitylog',{PermType:16,UserNum:0,LogDateTime:'2000-01-01 00:00:00',LogText:'preflight',PatNum:690,CompName:os.hostname().slice(0,255),FKey:0,LogSource:0,DefNum:0,DefNumError:0,DateTPrevious:'0001-01-01 00:00:00'},meta.filter(c=>c.TABLE_NAME==='securitylog'));
   financialInsert('securityloghash',{SecurityLogNum:1,LogHash:'preflight'},meta.filter(c=>c.TABLE_NAME==='securityloghash'));
   const hashes=await hashSplits({patNum:690,date:plan.paymentDate,splits:[{amountCents:3920}]});
   requireThat(hashes?.length===1&&typeof hashes[0]==='string'&&hashes[0].length>0&&hashes[0].length<=4096&&!/\s|Exception$/.test(hashes[0]),'Native OD hash helper failed.');
@@ -134,6 +148,9 @@ export async function repairClaim690(db,{apply=false,hashSplits,writeJournal,rea
     await db.query('LOCK TABLES patient WRITE,payment READ,paysplit WRITE,procedurelog WRITE,procedurecode READ,claimproc READ,definition READ,provider READ,securitylog WRITE,securityloghash WRITE');locked=true;
     const fresh=await readClaim690RepairState(db);
     requireThat(fingerprint(fresh)===fingerprint(before),'Clinic data changed since preview. No repair was written; rerun preview.');
+    const [clock]=await execute("SELECT DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s') AS RepairAuditTime");
+    const auditTime=clock[0]?.RepairAuditTime;
+    requireThat(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(auditTime||''),'Could not read SQL audit time; no repair written.');
     await writeJournal(journal,{create:true}); // fsync before any MyISAM mutation.
     let target=plan.targetProcNum;
     writesStarted=true;
@@ -151,12 +168,12 @@ export async function repairClaim690(db,{apply=false,hashSplits,writeJournal,rea
       [target,hashes[0],plan.splitNum,1202,690,plan.oldProcNum,'39.20']);
     requireThat(updated.affectedRows===1,'Expected exactly one updated split.');
     const addLog=async(permType,text)=>{
-      const log={PermType:permType,UserNum:0,LogText:text,PatNum:690,CompName:os.hostname().slice(0,255),FKey:0,LogSource:0,DefNum:0,DefNumError:0,DateTPrevious:'0001-01-01 00:00:00'};
+      const log={PermType:permType,UserNum:0,LogDateTime:auditTime,LogText:text,PatNum:690,CompName:os.hostname().slice(0,255),FKey:0,LogSource:0,DefNum:0,DefNumError:0,DateTPrevious:'0001-01-01 00:00:00'};
       const id=await insertFinancialRow(db,'securitylog',log,meta.filter(c=>c.TABLE_NAME==='securitylog'));
-      const [rows]=await execute('SELECT * FROM securitylog WHERE SecurityLogNum=?',[id]);
+      const [rows]=await execute("SELECT *,DATE_FORMAT(LogDateTime,'%Y-%m-%d %H:%i:%s') AS HashLogDateTime,DATE_FORMAT(DateTPrevious,'%Y-%m-%d %H:%i:%s') AS HashDateTPrevious FROM securitylog WHERE SecurityLogNum=?",[id]);
       requireThat(rows.length===1,'Audit log readback failed.');
       const row=rows[0];
-      await insertFinancialRow(db,'securityloghash',{SecurityLogNum:id,LogHash:odSecurityLogHash({permType:row.PermType,userNum:row.UserNum,logDateTime:timestamp(row.LogDateTime),logText:row.LogText,patNum:row.PatNum,dateTPrevious:timestamp(row.DateTPrevious)})},meta.filter(c=>c.TABLE_NAME==='securityloghash'));
+      await insertFinancialRow(db,'securityloghash',{SecurityLogNum:id,LogHash:odSecurityLogHash({permType:row.PermType,userNum:row.UserNum,logDateTime:row.HashLogDateTime,logText:row.LogText,patNum:row.PatNum,dateTPrevious:row.HashDateTPrevious})},meta.filter(c=>c.TABLE_NAME==='securityloghash'));
     };
     if(!plan.targetProcNum)await addLog(23,`Completed D0210 created by clinic-approved claim 5101035732 89 repair, ProcNum ${target}, date 2025-09-19, fee $74.00.`);
     await addLog(16,`Payment 1202 split ${plan.splitNum} reallocated from D0120 ProcNum ${plan.oldProcNum} to D0210 ProcNum ${target}; amount $39.20, total payment $77.20 and other split unchanged. Clinic-approved repair.`);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {repairClaim690,planClaim690Repair,summarizeClaim690Splits} from './repairClaim690.js';
+import {repairClaim690,planClaim690Repair,summarizeClaim690Splits,inspectClaim690Repair} from './repairClaim690.js';
 const clone=v=>JSON.parse(JSON.stringify(v));
 function fixture({target=false}={}){
  const state={
@@ -31,8 +31,9 @@ function fixture({target=false}={}){
   if(sql.startsWith('SELECT')){
    if(sql.includes('INFORMATION_SCHEMA.COLUMNS'))return [clone(args[0]?columns(args[0]):['paysplit','securitylog','securityloghash'].flatMap(columns))];
    if(sql.includes('FROM preference'))return [[{PrefName:'ProgramVersion',ValueString:'24.3.88.0'},{PrefName:'DataBaseVersion',ValueString:'24.3.88.0'}]];
+   if(sql.includes('AS RepairAuditTime'))return [[{RepairAuditTime:'2026-10-30 12:00:00'}]];
    if(sql.includes('LAST_INSERT_ID'))return [[{id:String(lastId)}]];
-   if(sql.includes('FROM securitylog WHERE'))return [clone(tables.securitylog.filter(r=>String(r.SecurityLogNum)===String(args[0])))];
+   if(sql.includes('FROM securitylog WHERE'))return [clone(tables.securitylog.filter(r=>String(r.SecurityLogNum)===String(args[0])).map(r=>({...r,HashLogDateTime:r.LogDateTime,HashDateTPrevious:r.DateTPrevious})))];
    const key=sql.includes('FROM patient WHERE')?'patients':sql.includes('FROM payment WHERE')?'payments':sql.includes('PayNum<>')?'otherSplits':sql.includes('FROM paysplit WHERE')?'splits':sql.includes('FROM procedurecode')?'codes':sql.includes('FROM procedurelog')?'procedures':sql.includes('FROM claimproc')?'claimprocs':sql.includes('FROM definition WHERE Category=11')?'codeCategories':sql.includes('FROM definition')?'types':sql.includes('FROM provider')?'providers':null;
    if(key)return [clone(state[key])];
   }
@@ -42,7 +43,7 @@ function fixture({target=false}={}){
    const names=[...sql.slice(sql.indexOf('('),sql.indexOf(') VALUES')).matchAll(/`(\w+)`/g)].map(m=>m[1]);
    const row=Object.fromEntries(names.map((n,i)=>[n,args[i]]));lastId=table==='procedurelog'?100:table==='securitylog'?200+tables.securitylog.length:300+tables.securityloghash.length;
    const pk=table==='procedurelog'?'ProcNum':table==='securitylog'?'SecurityLogNum':'SecurityLogHashNum';row[pk]=lastId;
-   if(table==='securitylog')row.LogDateTime='2026-10-30 12:00:00';tables[table].push(row);
+   if(table==='securitylog')assert.equal(row.LogDateTime,'2026-10-30 12:00:00','audit timestamp must be explicitly supplied, not inherited from a DB default');tables[table].push(row);
    return [{insertId:lastId,affectedRows:1}];
   }
   if(sql.startsWith('UPDATE patient SET')){state.patients[0].BalTotal=args[0];state.patients[0].SecDateTEdit='2026-10-30 12:00:00';return [{affectedRows:1}];}
@@ -161,4 +162,8 @@ test('partial MyISAM write leaves intent and blocks automatic retry',async()=>{
  assert.equal(f.journal.status,'intent');assert.equal(f.state.procedures.filter(p=>p.CodeNum===103).length,1);
  assert.equal(f.state.splits[1].ProcNum,12);assert.equal(f.locked,false);
  await assert.rejects(repairClaim690(f.db,f.options),/earlier repair intent/);
+ const report=inspectClaim690Repair(f.state,f.journal);
+ assert.equal(report.journalStatus,'intent');assert.equal(report.paymentUnchanged,true);assert.equal(report.d0210.length,1);
+ assert.equal(report.currentBalance,'509.00');assert.equal(report.intendedBalance,'509.00');
+ assert.equal(report.splits.find(s=>s.Amount==='39.20').Code,'D0120');
 });

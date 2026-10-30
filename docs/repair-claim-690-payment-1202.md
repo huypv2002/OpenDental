@@ -68,6 +68,22 @@ force another run. Inspect it and the live rows before any manual recovery.
 The script never automatically deletes newly created procedures or payments.
 Completed reruns verify the already-correct split and perform no writes.
 
+If a prior apply stopped while writing `securitylog` time/hash, inspect first:
+
+```bat
+node scripts/repair-claim-690.mjs --inspect
+```
+
+This mode only reads the existing journal and live records. It prints whether
+payment/claimproc rows still match the backup, the original/current/intended
+balance, D0210 rows, current split destinations, repair audit entries and
+their hash presence. It neither edits the journal nor resumes the repair.
+Pending journals now also block the normal BAT preview/apply path. Audit
+creation explicitly supplies SQL server time and hashes DATE_FORMAT strings
+instead of relying on a schema timestamp default or driver Date conversion.
+The original pending journal and any incomplete audit entries must be retained
+until their exact state is reviewed for a separate guarded recovery.
+
 Open Dental/DB must be version 24.3, the procedure table must support normal
 auto-increment inserts without a separate procedure hash, and unsupported
 accounting/date-lock/random-key preferences stop apply. Direct-write disable

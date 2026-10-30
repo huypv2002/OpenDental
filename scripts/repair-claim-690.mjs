@@ -1,13 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {repairClaim690} from '../src/metlife/repairClaim690.js';
+import {repairClaim690,readClaim690RepairState,inspectClaim690Repair} from '../src/metlife/repairClaim690.js';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 process.chdir(root);
 const args=process.argv.slice(2);
-if(args.some(arg=>arg!=='--apply'))throw new Error('Usage: node scripts/repair-claim-690.mjs [--apply]');
+if(args.some(arg=>!['--apply','--inspect'].includes(arg))||args.includes('--apply')&&args.includes('--inspect'))throw new Error('Usage: node scripts/repair-claim-690.mjs [--apply | --inspect]');
 const apply=args.includes('--apply');
+const inspect=args.includes('--inspect');
 const {pool,closePool}=await import('../src/db.js');
 const {nativeSplitHashes}=await import('../src/metlife/nativeSplitHashes.js');
 const folder=path.join(root,'metlife-backups','repair-690-1202');
@@ -29,6 +30,25 @@ try{
     try{await handle.writeFile(JSON.stringify(value,null,2));await handle.sync();}finally{await handle.close();}
     if(!create)await fs.rename(file,journalPath);
   };
+  if(inspect){
+    const journal=await readJournal(),state=await readClaim690RepairState(db);
+    const report=inspectClaim690Repair(state,journal);
+    console.log('\n=== READ-ONLY RECOVERY INSPECTION: CLAIM 690 / PAYMENT 1202 ===');
+    console.log(JSON.stringify({...report,d0210:undefined,splits:undefined},null,2));
+    console.log('D0210 records:');console.table(report.d0210);
+    console.log('Current payment splits:');console.table(report.splits);
+    const [logs]=await db.execute({sql:"SELECT SecurityLogNum,PermType,UserNum,PatNum,DATE_FORMAT(LogDateTime,'%Y-%m-%d %H:%i:%s') AS LogDateTime,LogText FROM securitylog WHERE PatNum=? AND (LogText LIKE ? OR LogText LIKE ?) ORDER BY SecurityLogNum",dateStrings:true},[690,'Completed D0210 created by clinic-approved claim 5101035732 89 repair%','Payment 1202 split %Clinic-approved repair.']);
+    console.log('Repair audit entries:');console.table(logs);
+    const hashes=[];
+    for(const log of logs){
+      const [rows]=await db.execute('SELECT SecurityLogHashNum,SecurityLogNum,LogHash FROM securityloghash WHERE SecurityLogNum=?',[log.SecurityLogNum]);
+      hashes.push({SecurityLogNum:log.SecurityLogNum,HashRows:rows.length,HasHash:rows.length===1&&!!rows[0].LogHash});
+    }
+    console.log('Repair audit hash status:');console.table(hashes);
+    console.log('INSPECTION ONLY: no clinical records or repair journal were changed. Keep the journal. Do not rerun --apply while its status is intent.');
+  }else{
+  const pending=await readJournal();
+  if(pending&&pending.status!=='complete')throw new Error('Pending repair intent exists. Run node scripts/repair-claim-690.mjs --inspect first; no automatic retry.');
   const result=await repairClaim690(db,{apply,hashSplits:nativeSplitHashes,writeJournal,readJournal});
   const p=result.plan;
   console.log('\n=== CLAIM 690 / PAYMENT 1202 ===');
@@ -46,6 +66,7 @@ try{
     console.log('Reopen/refresh the OD account and review aging through the normal OD workflow.');
     console.log('Do not repost 690.pdf. This repaired the existing payment; it did not create a new payment.');
   }else if(!apply)console.log('PREVIEW ONLY: no clinical records were changed. Apply with --apply after reviewing the balance change.');
+  }
 }catch(error){
   console.error('\nSTOP:',error.message);
   if(error.repairSplits){
