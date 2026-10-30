@@ -4,11 +4,25 @@ import {cents} from './parser.js';
 import {procedureModelColumns,insertProcedureModel} from './missingProcedures.js';
 import {insertFinancialRow,financialInsert,odSecurityLogHash} from './directPayment.js';
 
-const day=v=>String(v||'').slice(0,10);
+const timestamp=v=>v instanceof Date
+  ? `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')} ${String(v.getHours()).padStart(2,'0')}:${String(v.getMinutes()).padStart(2,'0')}:${String(v.getSeconds()).padStart(2,'0')}`
+  : String(v||'');
+const day=v=>timestamp(v).slice(0,10);
 const same=(a,b)=>String(a)===String(b);
 const requireThat=(condition,message)=>{if(!condition)throw new Error(message);};
 const keys=['PayPlanNum','FSplitNum','AdjNum','PayPlanChargeNum','PayPlanDebitType','UnearnedType','IsDiscount','DiscountType'];
 const fingerprint=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+export function summarizeClaim690Splits(state){
+  return state.splits.map(s=>{
+    const proc=state.procedures.find(p=>same(p.ProcNum,s.ProcNum));
+    return {SplitNum:s.SplitNum,PatNum:s.PatNum,PayNum:s.PayNum,Amount:s.SplitAmt,
+      DatePay:timestamp(s.DatePay),SplitProcDate:timestamp(s.ProcDate),ProcNum:s.ProcNum,
+      Code:state.codes.find(c=>same(c.CodeNum,proc?.CodeNum))?.ProcCode||'(not found)',
+      ActualServiceDate:timestamp(proc?.ProcDate),ProcStatus:proc?.ProcStatus,
+      ProvNum:s.ProvNum,ClinicNum:s.ClinicNum};
+  });
+}
 
 export async function readClaim690RepairState(db){
   const query=async(sql,args=[])=> (await db.execute({sql,dateStrings:true},args))[0];
@@ -34,7 +48,10 @@ export function planClaim690Repair(state){
   requireThat(same(payment.PatNum,690)&&same(payment.PayNum,1202)&&cents(payment.PayAmt)===7720&&day(payment.PayDate)==='2025-10-15','Payment #1202 patient/date/amount changed.');
   requireThat(/(?:^|\D)5101035732(?:\D|$)/.test(payment.PayNote||'')||String(payment.ExternalId||'').startsWith('5101035732'),'Payment #1202 does not identify claim 5101035732.');
   requireThat(types.some(t=>same(t.DefNum,payment.PayType)&&/^insurance paid$/i.test(String(t.ItemName).trim())),'Payment #1202 is not Insurance Paid.');
-  requireThat(splits.length===2&&splits.every(s=>same(s.PatNum,690)&&same(s.PayNum,1202)&&day(s.DatePay)==='2025-10-15'&&day(s.ProcDate)==='2025-09-19'),'Expected two splits belonging only to patient #690 with the original dates.');
+  requireThat(splits.length===2,`Expected exactly 2 splits for Payment 1202; found ${splits.length}.`);
+  requireThat(splits.every(s=>same(s.PatNum,690)&&same(s.PayNum,1202)),'A split belongs to a different patient/payment.');
+  requireThat(splits.every(s=>day(s.DatePay)==='2025-10-15'),'A split DatePay differs from 2025-10-15; inspect Actual Split Values below.');
+  requireThat(splits.every(s=>day(s.ProcDate)==='2025-09-19'),'A split ProcDate differs from 2025-09-19; inspect Actual Split Values below.');
   requireThat(splits.every(s=>keys.every(k=>Number(s[k]||0)===0)),'Payment split has an adjustment, transfer, unearned or payment-plan link.');
   requireThat(splits.reduce((n,s)=>n+cents(s.SplitAmt),0)===7720,'Split total does not equal $77.20.');
   const fixed=splits.filter(s=>cents(s.SplitAmt)===3800),moving=splits.filter(s=>cents(s.SplitAmt)===3920);
@@ -70,7 +87,9 @@ export function planClaim690Repair(state){
 }
 
 export async function repairClaim690(db,{apply=false,hashSplits,writeJournal,readJournal=async()=>null}={}){
-  const before=await readClaim690RepairState(db),plan=planClaim690Repair(before);
+  const before=await readClaim690RepairState(db);
+  let plan;
+  try{plan=planClaim690Repair(before);}catch(error){error.repairSplits=summarizeClaim690Splits(before);throw error;}
   if(!apply)return {applied:false,plan};
   requireThat(typeof writeJournal==='function','A durable backup journal is required.');
   const previous=await readJournal();
@@ -119,7 +138,7 @@ export async function repairClaim690(db,{apply=false,hashSplits,writeJournal,rea
       const [rows]=await execute('SELECT * FROM securitylog WHERE SecurityLogNum=?',[id]);
       requireThat(rows.length===1,'Audit log readback failed.');
       const row=rows[0];
-      await insertFinancialRow(db,'securityloghash',{SecurityLogNum:id,LogHash:odSecurityLogHash({permType:row.PermType,userNum:row.UserNum,logDateTime:row.LogDateTime,logText:row.LogText,patNum:row.PatNum,dateTPrevious:row.DateTPrevious})},meta.filter(c=>c.TABLE_NAME==='securityloghash'));
+      await insertFinancialRow(db,'securityloghash',{SecurityLogNum:id,LogHash:odSecurityLogHash({permType:row.PermType,userNum:row.UserNum,logDateTime:timestamp(row.LogDateTime),logText:row.LogText,patNum:row.PatNum,dateTPrevious:timestamp(row.DateTPrevious)})},meta.filter(c=>c.TABLE_NAME==='securityloghash'));
     };
     if(!plan.targetProcNum)await addLog(23,`Completed D0210 created by clinic-approved claim 5101035732 89 repair, ProcNum ${target}, date 2025-09-19, fee $74.00.`);
     await addLog(16,`Payment 1202 split ${plan.splitNum} reallocated from D0120 ProcNum ${plan.oldProcNum} to D0210 ProcNum ${target}; amount $39.20, total payment $77.20 and other split unchanged. Clinic-approved repair.`);

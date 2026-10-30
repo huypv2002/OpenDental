@@ -48,6 +48,10 @@ try{
   }else if(!apply)console.log('PREVIEW ONLY: no clinical records were changed. Apply with --apply after reviewing the balance change.');
 }catch(error){
   console.error('\nSTOP:',error.message);
+  if(error.repairSplits){
+    console.error('ACTUAL SPLIT VALUES (read-only; nothing changed by this validation):');
+    console.table(error.repairSplits);
+  }
   console.error(`If a repair-journal.json exists, keep it for review: ${journalPath}`);
   process.exitCode=1;
 }finally{

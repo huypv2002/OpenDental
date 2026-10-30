@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {repairClaim690,planClaim690Repair} from './repairClaim690.js';
+import {repairClaim690,planClaim690Repair,summarizeClaim690Splits} from './repairClaim690.js';
 const clone=v=>JSON.parse(JSON.stringify(v));
 function fixture({target=false}={}){
  const state={
@@ -58,6 +58,20 @@ function fixture({target=false}={}){
 test('preview is SELECT-only and discloses the $74 balance increase',async()=>{
  const f=fixture();const result=await repairClaim690(f.db);
  assert.equal(result.applied,false);assert.equal(result.plan.balanceIncreaseCents,7400);assert.equal(result.plan.afterBalanceCents,50900);
+ assert(f.events.every(s=>s.startsWith('SELECT')));assert.equal(f.journal,null);
+});
+
+test('MySQL Date objects and SQL date strings produce the same repair plan',()=>{
+ const f=fixture();const expected=planClaim690Repair(f.state);
+ f.state.payments[0].PayDate=new Date(2025,9,15);
+ for(const split of f.state.splits){split.DatePay=new Date(2025,9,15);split.ProcDate=new Date(2025,8,19);}
+ for(const proc of f.state.procedures)proc.ProcDate=new Date(2025,8,19);
+ assert.deepEqual(planClaim690Repair(f.state),expected);
+ assert.equal(summarizeClaim690Splits(f.state)[0].SplitProcDate,'2025-09-19 00:00:00');
+});
+test('date mismatch reports actual rows without writes or loosening date guards',async()=>{
+ const f=fixture();f.state.splits[1].ProcDate='0001-01-01';
+ await assert.rejects(repairClaim690(f.db),e=>/split ProcDate differs/.test(e.message)&&e.repairSplits[1].SplitProcDate==='0001-01-01'&&e.repairSplits[1].ActualServiceDate==='2025-09-19');
  assert(f.events.every(s=>s.startsWith('SELECT')));assert.equal(f.journal,null);
 });
 for(const target of [false,true])test(`repair ${target?'reuses':'adds'} D0210, changes only the split link/hash and authorized balance, then replays without writes`,async()=>{
