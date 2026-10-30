@@ -35,7 +35,9 @@ node scripts/repair-claim-690.mjs --apply
 - Adds completed D0210 on 2025-09-19 with charge $74.00 if missing. An existing
   unique completed $74 D0210 with the same provider/clinic can be reused. It
   must not already have another allocated payment. The D0210 catalog code
-  must already exist and be visible, with Treatment Area None (0) or Mouth (3).
+  must already exist in a visible procedure-code category (`ProcCat` pointing
+  to `definition.Category=11`, `definition.IsHidden=0`), with Treatment Area
+  None (0) or Mouth (3). No `procedurecode.IsHidden` column is assumed.
   Neither requires a tooth/area entry; the catalog itself is never changed.
   Hidden codes or tooth/surface/quadrant/arch settings still stop apply and
   print the actual code-catalog values for review.

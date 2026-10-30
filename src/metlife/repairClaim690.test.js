@@ -9,7 +9,8 @@ function fixture({target=false}={}){
   splits:[{SplitNum:1,PatNum:690,PayNum:1202,ProcNum:11,SplitAmt:'38.00',ProcDate:'2025-09-19',DatePay:'2025-10-15',ProvNum:1,ClinicNum:0,SecurityHash:'old-fixed'},
     {SplitNum:2,PatNum:690,PayNum:1202,ProcNum:12,SplitAmt:'39.20',ProcDate:'2025-09-19',DatePay:'2025-10-15',ProvNum:1,ClinicNum:0,SecurityHash:'old-moving',SecDateTEdit:'2026-10-30 01:00:00'}],
   otherSplits:[{SplitNum:5,PatNum:690,PayNum:1500,ProcNum:12,SplitAmt:10}],
-  codes:[{CodeNum:101,ProcCode:'D0150'},{CodeNum:102,ProcCode:'D0120'},{CodeNum:103,ProcCode:'D0210',IsHidden:0,TreatArea:3}],
+  codes:[{CodeNum:101,ProcCode:'D0150',ProcCat:11},{CodeNum:102,ProcCode:'D0120',ProcCat:11},{CodeNum:103,ProcCode:'D0210',ProcCat:11,TreatArea:3}],
+  codeCategories:[{DefNum:11,ItemName:'Diagnostic',IsHidden:0}],
   procedures:[{ProcNum:11,PatNum:690,CodeNum:101,ProcDate:'2025-09-19',ProcStatus:2,ProcFee:'38.00',ProvNum:1,ClinicNum:0},
     {ProcNum:12,PatNum:690,CodeNum:102,ProcDate:'2025-09-19',ProcStatus:2,ProcFee:'74.00',ProvNum:1,ClinicNum:0}],
   claimprocs:[{ClaimProcNum:10,PatNum:690,ProcNum:12,InsPayAmt:0,ClaimPaymentNum:0,InsPayEst:99}],
@@ -32,7 +33,7 @@ function fixture({target=false}={}){
    if(sql.includes('FROM preference'))return [[{PrefName:'ProgramVersion',ValueString:'24.3.88.0'},{PrefName:'DataBaseVersion',ValueString:'24.3.88.0'}]];
    if(sql.includes('LAST_INSERT_ID'))return [[{id:String(lastId)}]];
    if(sql.includes('FROM securitylog WHERE'))return [clone(tables.securitylog.filter(r=>String(r.SecurityLogNum)===String(args[0])))];
-   const key=sql.includes('FROM patient WHERE')?'patients':sql.includes('FROM payment WHERE')?'payments':sql.includes('PayNum<>')?'otherSplits':sql.includes('FROM paysplit WHERE')?'splits':sql.includes('FROM procedurecode')?'codes':sql.includes('FROM procedurelog')?'procedures':sql.includes('FROM claimproc')?'claimprocs':sql.includes('FROM definition')?'types':sql.includes('FROM provider')?'providers':null;
+   const key=sql.includes('FROM patient WHERE')?'patients':sql.includes('FROM payment WHERE')?'payments':sql.includes('PayNum<>')?'otherSplits':sql.includes('FROM paysplit WHERE')?'splits':sql.includes('FROM procedurecode')?'codes':sql.includes('FROM procedurelog')?'procedures':sql.includes('FROM claimproc')?'claimprocs':sql.includes('FROM definition WHERE Category=11')?'codeCategories':sql.includes('FROM definition')?'types':sql.includes('FROM provider')?'providers':null;
    if(key)return [clone(state[key])];
   }
   assert(locked,'Clinical mutations must have table locks');assert(journal?.status==='intent','Durable intent must precede every mutation');
@@ -107,11 +108,21 @@ test('D0210 catalog None=0 and Mouth=3 both support area-free creation without c
   assert.deepEqual(f.state.codes,before);
  }
 });
-test('hidden, missing, tooth/arch/surface treatment areas still block and show actual catalog',async()=>{
- for(const override of [{IsHidden:1},{IsHidden:null},{TreatArea:1},{TreatArea:2},{TreatArea:4},{TreatArea:6},{TreatArea:null}]){
+test('missing catalog category and tooth/arch/surface treatment areas still block and show actual catalog',async()=>{
+ for(const override of [{ProcCat:999},{TreatArea:1},{TreatArea:2},{TreatArea:4},{TreatArea:6},{TreatArea:null}]){
   const f=fixture();Object.assign(f.state.codes[2],override);
   await assert.rejects(repairClaim690(f.db),e=>e.message.includes('D0210 catalog')&&e.repairCatalog.some(c=>c.ProcCode==='D0210'));
   assert(f.events.every(s=>s.startsWith('SELECT')));
+ }
+});
+test('procedurecode without IsHidden is supported; hidden or missing category remains blocked',async()=>{
+ const f=fixture();assert.equal(Object.hasOwn(f.state.codes[2],'IsHidden'),false);
+ f.state.codes[2].TreatArea=0;
+ assert.equal((await repairClaim690(f.db,f.options)).verified,true);
+ for(const value of [1,null]){
+  const blocked=fixture();blocked.state.codeCategories[0].IsHidden=value;
+  await assert.rejects(repairClaim690(blocked.db),e=>/category is hidden or unknown/.test(e.message)&&e.repairCatalog[2].CategoryHidden===value);
+  assert(blocked.events.every(s=>s.startsWith('SELECT')));
  }
 });
 for(const target of [false,true])test(`repair ${target?'reuses':'adds'} D0210, changes only the split link/hash and authorized balance, then replays without writes`,async()=>{
