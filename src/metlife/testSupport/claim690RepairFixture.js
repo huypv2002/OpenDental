@@ -59,4 +59,3 @@ export function fixture({target=false}={}){
  const options={apply:true,hashSplits:async p=>{assert.equal(p.date,'2025-10-15');assert.equal(p.splits[0].amountCents,3920);assert.equal(locked,false);return ['native-hash'];},readJournal:async()=>journal,writeJournal:async v=>{journal=clone(v);}};
  return {state,db,options,events,tables,get journal(){return journal;},setJournal:value=>{journal=clone(value);},onLock:f=>{mutateOnLock=f;},failUpdate:()=>{failUpdate=true;},get locked(){return locked;}};
 }
-
