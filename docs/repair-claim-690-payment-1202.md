@@ -26,7 +26,10 @@ node scripts/repair-claim-690.mjs --apply
 - Requires patient 690 MINH BUI, Insurance Paid payment 1202, amount $77.20,
   payment date 2025-10-15 and claim 5101035732 in the payment note/ExternalId.
 - Requires exactly two splits: completed D0150 $38.00 and D0120 $39.20, with
-  service dates 2025-09-19. Patient/provider/clinic must agree. Unexpected
+  linked service dates 2025-09-19. The split's own ProcDate may be
+  2025-09-19 or OD's empty sentinel 0001-01-01; that field is preserved.
+  A different non-empty split date still stops the repair.
+  Patient/provider/clinic must agree. Unexpected
   adjustment, transfer, payment-plan, unearned or actual claimproc insurance
   links stop the repair.
 - Adds completed D0210 on 2025-09-19 with charge $74.00 if missing. An existing

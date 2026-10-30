@@ -51,7 +51,10 @@ export function planClaim690Repair(state){
   requireThat(splits.length===2,`Expected exactly 2 splits for Payment 1202; found ${splits.length}.`);
   requireThat(splits.every(s=>same(s.PatNum,690)&&same(s.PayNum,1202)),'A split belongs to a different patient/payment.');
   requireThat(splits.every(s=>day(s.DatePay)==='2025-10-15'),'A split DatePay differs from 2025-10-15; inspect Actual Split Values below.');
-  requireThat(splits.every(s=>day(s.ProcDate)==='2025-09-19'),'A split ProcDate differs from 2025-09-19; inspect Actual Split Values below.');
+  // OD can leave the split's optional ProcDate at its empty sentinel even
+  // when ProcNum links to a dated procedure. Validate the linked service
+  // below and preserve the original split date in the UPDATE/readback.
+  requireThat(splits.every(s=>['2025-09-19','0001-01-01'].includes(day(s.ProcDate))),'A split ProcDate is neither 2025-09-19 nor the empty 0001-01-01 sentinel; inspect Actual Split Values below.');
   requireThat(splits.every(s=>keys.every(k=>Number(s[k]||0)===0)),'Payment split has an adjustment, transfer, unearned or payment-plan link.');
   requireThat(splits.reduce((n,s)=>n+cents(s.SplitAmt),0)===7720,'Split total does not equal $77.20.');
   const fixed=splits.filter(s=>cents(s.SplitAmt)===3800),moving=splits.filter(s=>cents(s.SplitAmt)===3920);

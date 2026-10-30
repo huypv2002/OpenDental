@@ -69,10 +69,34 @@ test('MySQL Date objects and SQL date strings produce the same repair plan',()=>
  assert.deepEqual(planClaim690Repair(f.state),expected);
  assert.equal(summarizeClaim690Splits(f.state)[0].SplitProcDate,'2025-09-19 00:00:00');
 });
-test('date mismatch reports actual rows without writes or loosening date guards',async()=>{
- const f=fixture();f.state.splits[1].ProcDate='0001-01-01';
- await assert.rejects(repairClaim690(f.db),e=>/split ProcDate differs/.test(e.message)&&e.repairSplits[1].SplitProcDate==='0001-01-01'&&e.repairSplits[1].ActualServiceDate==='2025-09-19');
+test('a conflicting non-empty split date reports actual rows without writes',async()=>{
+ const f=fixture();f.state.splits[1].ProcDate='2025-09-20';
+ await assert.rejects(repairClaim690(f.db),e=>/split ProcDate is neither/.test(e.message)&&e.repairSplits[1].SplitProcDate==='2025-09-20'&&e.repairSplits[1].ActualServiceDate==='2025-09-19');
  assert(f.events.every(s=>s.startsWith('SELECT')));assert.equal(f.journal,null);
+});
+test('live split IDs/order and empty ProcDate sentinel are preserved through repair and replay',async()=>{
+ const f=fixture();
+ f.state.procedures[0].ProcNum=5734;f.state.procedures[1].ProcNum=10646;
+ f.state.claimprocs[0].ProcNum=10646;
+ f.state.splits[0].SplitNum=3102;f.state.splits[0].ProcNum=5734;
+ f.state.splits[1].SplitNum=3101;f.state.splits[1].ProcNum=10646;
+ f.state.splits.reverse();
+ for(const split of f.state.splits)split.ProcDate='0001-01-01';
+ const fixed=clone(f.state.splits.find(s=>s.SplitNum===3102));
+ const preview=await repairClaim690(f.db);
+ assert.equal(preview.plan.splitNum,3101);assert.equal(preview.plan.oldProcNum,10646);
+ const result=await repairClaim690(f.db,f.options);assert(result.verified);
+ assert.equal(f.state.splits.find(s=>s.SplitNum===3101).ProcNum,100);
+ assert.deepEqual(f.state.splits.find(s=>s.SplitNum===3102),fixed);
+ assert(f.state.splits.every(s=>s.ProcDate==='0001-01-01'&&s.DatePay==='2025-10-15'));
+ assert.equal((await repairClaim690(f.db,f.options)).plan.status,'already-correct');
+});
+test('empty split ProcDate never bypasses linked service date checks',()=>{
+ for(const index of [0,1]){
+  const f=fixture();for(const split of f.state.splits)split.ProcDate='0001-01-01';
+  f.state.procedures[index].ProcDate='2025-09-20';
+  assert.throws(()=>planClaim690Repair(f.state),/completed D0150|completed service/);
+ }
 });
 for(const target of [false,true])test(`repair ${target?'reuses':'adds'} D0210, changes only the split link/hash and authorized balance, then replays without writes`,async()=>{
  const f=fixture({target}),before=clone(f.state);
