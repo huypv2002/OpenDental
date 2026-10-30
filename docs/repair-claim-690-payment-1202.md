@@ -102,6 +102,12 @@ It supplies SQL server time for the zero-time, unhashed script-created log,
 adds its missing hash and the missing PaymentEdit log/hash, verifies them,
 then marks the original repair journal complete. Existing conflicting hashes,
 duplicate audit entries or changed financial data stop before recovery writes.
+Later edits to non-identity patient fields (for example contact information or
+cached aging buckets) are preserved rather than requiring the entire patient
+row to equal the old backup. Changed field names are printed by inspect/recovery
+and retained in the recovery journal. PatNum/name/DOB and the exact intended
+BalTotal must still match. The full current snapshot, including later edits,
+is READ locked and verified unchanged after the audit writes.
 It never creates a procedure/payment or edits a split/balance. A completed
 rerun verifies the logs without writing. An interrupted audit-recovery intent
 requires inspection rather than an automatic retry.

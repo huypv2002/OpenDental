@@ -32,6 +32,12 @@ export function summarizeClaim690Catalog(state){
   });
 }
 
+export function changedClaim690PatientFields(current,original){
+  if(!current||!original)return [];
+  return [...new Set([...Object.keys(original),...Object.keys(current)])]
+    .filter(key=>JSON.stringify(current[key])!==JSON.stringify(original[key]));
+}
+
 export function inspectClaim690Repair(state,journal){
   let plan,error;
   try{plan=planClaim690Repair(state);}catch(e){error=e.message;}
@@ -42,6 +48,7 @@ export function inspectClaim690Repair(state,journal){
     intendedBalance:journal?.plan?.afterBalanceCents==null?null:(journal.plan.afterBalanceCents/100).toFixed(2),
     paymentUnchanged:original?fingerprint(state.payments)===fingerprint(original.payments):null,
     claimprocsUnchanged:original?fingerprint(state.claimprocs)===fingerprint(original.claimprocs):null,
+    patientChangedFields:changedClaim690PatientFields(state.patients[0],original?.patients?.[0]),
     d0210:targets.map(p=>({ProcNum:p.ProcNum,ProcStatus:p.ProcStatus,ProcDate:timestamp(p.ProcDate),ProcFee:p.ProcFee,BillingNote:p.BillingNote})),
     splits:summarizeClaim690Splits(state)};
 }

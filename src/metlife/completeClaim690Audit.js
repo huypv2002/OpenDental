@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import os from 'node:os';
 import {cents} from './parser.js';
-import {readClaim690RepairState,planClaim690Repair} from './repairClaim690.js';
+import {readClaim690RepairState,planClaim690Repair,changedClaim690PatientFields} from './repairClaim690.js';
 import {financialInsert,insertFinancialRow,odSecurityLogHash} from './directPayment.js';
 
 const fingerprint=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
@@ -16,9 +16,13 @@ export function validateClaim690AuditRecovery(state,journal){
   check(live.status==='already-correct','Financial repair is not complete; audit-only recovery cannot modify it.');
   check(fingerprint(state.payments)===fingerprint(before.payments)&&fingerprint(state.claimprocs)===fingerprint(before.claimprocs)&&fingerprint(state.otherSplits)===fingerprint(before.otherSplits),'Payment/claimproc/other splits differ from the original backup.');
   check(cents(state.patients[0].BalTotal)===plan.afterBalanceCents,'Balance differs from intended repair balance; no recovery write.');
-  const patient={...before.patients[0],BalTotal:state.patients[0].BalTotal};
-  if(Object.hasOwn(patient,'SecDateTEdit'))patient.SecDateTEdit=state.patients[0].SecDateTEdit;
-  check(fingerprint(patient)===fingerprint(state.patients[0]),'Other patient fields changed; review before recovering.');
+  const patientChangedFields=changedClaim690PatientFields(state.patients[0],before.patients[0]);
+  // Audit completion does not rewrite patient rows. Preserve later clinic
+  // edits/aging, while still binding the recovery to the original identity
+  // and exact intended balance. The entire current snapshot is READ locked
+  // and checked byte-for-byte unchanged again after audit writes below.
+  const identityChanges=patientChangedFields.filter(key=>['PatNum','FName','LName','Birthdate'].includes(key));
+  check(!identityChanges.length,`Patient identity changed since repair: ${identityChanges.join(', ')}; review before recovering.`);
   check(before.procedures.every(p=>fingerprint(state.procedures.find(r=>same(r.ProcNum,p.ProcNum)))===fingerprint(p)),'An original procedure changed.');
   const added=state.procedures.filter(p=>!before.procedures.some(r=>same(r.ProcNum,p.ProcNum)));
   check(added.length===(plan.targetProcNum?0:1),'Unexpected number of newly added procedures.');
@@ -30,7 +34,7 @@ export function validateClaim690AuditRecovery(state,journal){
     return {...s,ProcNum:current.ProcNum,SecurityHash:current.SecurityHash,...(Object.hasOwn(s,'SecDateTEdit')?{SecDateTEdit:current.SecDateTEdit}:{})};
   });
   check(fingerprint(expected)===fingerprint(state.splits),'A split field other than the repaired link/hash/edit time changed.');
-  return {plan,targetProcNum:live.targetProcNum,
+  return {plan,targetProcNum:live.targetProcNum,patientChangedFields,
     createText:`Completed D0210 created by clinic-approved claim 5101035732 89 repair, ProcNum ${live.targetProcNum}, date 2025-09-19, fee $74.00.`,
     editText:`Payment 1202 split ${plan.splitNum} reallocated from D0120 ProcNum ${plan.oldProcNum} to D0210 ProcNum ${live.targetProcNum}; amount $39.20, total payment $77.20 and other split unchanged. Clinic-approved repair.`};
 }
@@ -70,12 +74,12 @@ export async function completeClaim690Audit(db,{journal,writeRecovery,writeJourn
     }
     if(journal.status==='complete'){
       check(editRows.length===1&&rows.every(r=>isValidTime(r)&&auditHashes.some(h=>same(h.SecurityLogNum,r.SecurityLogNum)&&h.LogHash===expectedHash(r))),'Completed journal has incomplete audits.');
-      return {verified:true,alreadyComplete:true,targetProcNum:intent.targetProcNum};
+      return {verified:true,alreadyComplete:true,targetProcNum:intent.targetProcNum,patientChangedFields:intent.patientChangedFields};
     }
     const [clock]=await execute("SELECT DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s') AS RepairAuditTime");
     const now=clock[0]?.RepairAuditTime;
     check(/^20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(now||''),'Invalid SQL audit time.');
-    const recoveryIntent={status:'intent',kind:'690-1202-audit-only',createdAt:now,originalJournal:journal,before,logsBefore:JSON.parse(JSON.stringify(rows)),hashesBefore:JSON.parse(JSON.stringify(auditHashes))};
+    const recoveryIntent={status:'intent',kind:'690-1202-audit-only',createdAt:now,originalJournal:journal,before,patientChangedFields:intent.patientChangedFields,logsBefore:JSON.parse(JSON.stringify(rows)),hashesBefore:JSON.parse(JSON.stringify(auditHashes))};
     await writeRecovery(recoveryIntent,{create:true});started=true;
     for(const row of rows){
       if(!isValidTime(row)){
@@ -99,7 +103,7 @@ export async function completeClaim690Audit(db,{journal,writeRecovery,writeJourn
     }
     await writeRecovery({...recoveryIntent,status:'complete',logsAfter:saved,after});
     await writeJournal({...journal,status:'complete',completedAt:now,targetProcNum:intent.targetProcNum,after,auditRecovery:{completedAt:now,originalInvalidTimes:recoveryIntent.logsBefore.filter(r=>r.LogDateTime==='0000-00-00 00:00:00'||r.HashLogDateTime==='0000-00-00 00:00:00').map(r=>r.SecurityLogNum)}});
-    return {verified:true,alreadyComplete:false,targetProcNum:intent.targetProcNum,financialRecordsUnchanged:true};
+    return {verified:true,alreadyComplete:false,targetProcNum:intent.targetProcNum,financialRecordsUnchanged:true,patientChangedFields:intent.patientChangedFields};
   }catch(error){
     if(started)error.message+=' Audit recovery may be partial; keep both journals and inspect before retrying.';
     throw error;

@@ -45,6 +45,7 @@ try{
     const result=await completeClaim690Audit(db,{journal:await readJournal(),writeJournal,writeRecovery,readRecovery});
     console.log(result.alreadyComplete?'ALREADY COMPLETE: audit and financial repair verified; no writes.':'AUDIT RECOVERY COMPLETE: timestamps/hashes verified and original repair journal marked complete.');
     console.log(`D0210 ProcNum ${result.targetProcNum}; payment, splits, procedure fees and patient balance were NOT changed by recovery.`);
+    console.log(`Patient fields differing from the original backup, preserved as currently stored: ${(result.patientChangedFields||[]).join(', ')||'(none)'}`);
     console.log(`Recovery backup: ${recoveryPath}`);
   }else if(inspect){
     const journal=await readJournal(),state=await readClaim690RepairState(db);

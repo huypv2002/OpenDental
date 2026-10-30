@@ -53,6 +53,27 @@ test('backup failure and stale financial snapshot cause no audit writes',async()
   assert(f.events.slice(start).every(s=>!/^INSERT|^UPDATE|^DELETE/.test(s)));
  }
 });
+test('later patient contact/aging changes are preserved during audit-only completion',async()=>{
+ const x=await interrupted(),{f}=x;
+ f.state.patients[0].WirelessPhone='(202) 555-0111';
+ f.state.patients[0].BalOver90=509;
+ f.state.patients[0].SecDateTEntry='2026-10-30 12:30:00';
+ const before=copy(f.state);
+ const result=await completeClaim690Audit(f.db,x.options);
+ assert.equal(result.verified,true);assert.deepEqual(copy(f.state),before);
+ assert(result.patientChangedFields.includes('WirelessPhone'));
+ assert(result.patientChangedFields.includes('BalOver90'));
+ assert(x.recovery.patientChangedFields.includes('SecDateTEntry'));
+});
+test('birthdate or identity changes still stop audit recovery without writes',async()=>{
+ for(const field of ['Birthdate','FName','LName']){
+  const x=await interrupted(),{f}=x;
+  f.state.patients[0][field]=field==='Birthdate'?'1980-01-01':field==='FName'?'Minh':'Bui';
+  const count=f.events.length;
+  await assert.rejects(completeClaim690Audit(f.db,x.options),/identity changed/);
+  assert(f.events.slice(count).every(s=>s.startsWith('SELECT')));
+ }
+});
 test('an interrupted recovery keeps original journal pending and refuses an automatic retry',async()=>{
  const x=await interrupted(),{f}=x,base=f.db.execute;
  const db={...f.db,execute:async(input,args)=>{
