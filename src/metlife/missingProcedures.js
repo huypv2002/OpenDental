@@ -37,7 +37,7 @@ export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=fa
  return {procs,additions,sourceProcedures:procedures,includeUnpaid};
 }
 
-async function columns(db,table){
+export async function procedureModelColumns(db,table){
  const [rows]=await db.execute('SELECT COLUMN_NAME,DATA_TYPE,IS_NULLABLE,COLUMN_DEFAULT,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? ORDER BY ORDINAL_POSITION',[table]);
  const id=table==='procedurelog'?'ProcNum':'CodeNum';
  if(!rows.some(r=>r.COLUMN_NAME===id&&/auto_increment/i.test(r.EXTRA||'')))throw reviewError('Chưa hỗ trợ tự thêm dịch vụ với cấu hình mã số database này.');
@@ -49,7 +49,7 @@ async function columns(db,table){
 
 // OD schemas have required text/date columns without SQL defaults. Fill only
 // those required columns with their empty model values, preserving DB defaults.
-async function insertModel(db,table,metadata,values){
+export async function insertProcedureModel(db,table,metadata,values){
  const row={...values};
  for(const c of metadata){
   const name=c.COLUMN_NAME;
@@ -74,7 +74,7 @@ export async function createMissingProcedures(pool,{plan,patient,claimNumber,car
  if(!plan.additions.length)return [];
  const conn=await pool.getConnection();let locked=false;
  try{
-  const procColumns=await columns(conn,'procedurelog'),codeColumns=await columns(conn,'procedurecode');
+  const procColumns=await procedureModelColumns(conn,'procedurelog'),codeColumns=await procedureModelColumns(conn,'procedurecode');
   await conn.execute(`CREATE TABLE IF NOT EXISTS luk_eob_added_procedures (Id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,PatNum BIGINT NOT NULL,ProcNum BIGINT NOT NULL,CodeNum BIGINT NOT NULL,ClaimNumber VARCHAR(64) NOT NULL,Carrier VARCHAR(80) NOT NULL,Details LONGTEXT NOT NULL,CreatedAt DATETIME NOT NULL,UNIQUE KEY ProcNum (ProcNum))`);
   await conn.query('LOCK TABLES procedurelog WRITE,procedurecode WRITE,patient READ,provider READ,definition READ,luk_eob_added_procedures WRITE');locked=true;
   const [patients]=await conn.execute('SELECT PatNum,PriProv,ClinicNum FROM patient WHERE PatNum=?',[patient.PatNum]);
@@ -96,11 +96,11 @@ export async function createMissingProcedures(pool,{plan,patient,claimNumber,car
    if(!code){
     const [categories]=await conn.execute('SELECT DefNum FROM definition WHERE Category=11 AND IsHidden=0 ORDER BY ItemOrder,DefNum LIMIT 1');
     if(!categories.length)throw reviewError('Thiếu nhóm mã dịch vụ trong Open Dental.');
-    const codeNum=await insertModel(conn,'procedurecode',codeColumns,{ProcCode:p.code,Descript:row.Descript,AbbrDesc:p.code,ProcTime:'/X/',ProcCat:categories[0].DefNum,TreatArea:anatomy(p).TreatArea,IsHidden:0});
+    const codeNum=await insertProcedureModel(conn,'procedurecode',codeColumns,{ProcCode:p.code,Descript:row.Descript,AbbrDesc:p.code,ProcTime:'/X/',ProcCat:categories[0].DefNum,TreatArea:anatomy(p).TreatArea,IsHidden:0});
     code={CodeNum:codeNum,Descript:row.Descript};newCode=true;
    }
    const area=anatomy(p);
-   const procNum=await insertModel(conn,'procedurelog',procColumns,{PatNum:patient.PatNum,CodeNum:code.CodeNum,ProcStatus:2,ProcDate:p.date,DateTP:p.date,DateComplete:p.date,ProcFee:row.ProcFee,ProvNum:patient.PriProv,ClinicNum:patient.ClinicNum||0,ToothNum:area.ToothNum,Surf:area.Surf,UnitQty:1,BaseUnits:0,SecDateEntry:new Date(),SecDateTEdit:new Date(),BillingNote:`EOB ${carrier}; Claim number: ${claimNumber}`});
+   const procNum=await insertProcedureModel(conn,'procedurelog',procColumns,{PatNum:patient.PatNum,CodeNum:code.CodeNum,ProcStatus:2,ProcDate:p.date,DateTP:p.date,DateComplete:p.date,ProcFee:row.ProcFee,ProvNum:patient.PriProv,ClinicNum:patient.ClinicNum||0,ToothNum:area.ToothNum,Surf:area.Surf,UnitQty:1,BaseUnits:0,SecDateEntry:new Date(),SecDateTEdit:new Date(),BillingNote:`EOB ${carrier}; Claim number: ${claimNumber}`});
    const [saved]=await conn.execute('SELECT ProcNum,PatNum,CodeNum,ProcStatus,ProcDate,ToothNum,Surf,ProcFee,ProvNum,ClinicNum FROM procedurelog WHERE ProcNum=?',[procNum]);
    const s=saved[0];
    if(saved.length!==1||String(s.PatNum)!==String(patient.PatNum)||String(s.CodeNum)!==String(code.CodeNum)||Number(s.ProcStatus)!==2||procedureDay(s.ProcDate)!==p.date||!sameTooth(s.ToothNum,area.ToothNum)||String(s.Surf||'')!==area.Surf||Math.round(Number(s.ProcFee)*100)!==Math.round(Number(row.ProcFee)*100)||String(s.ProvNum)!==String(patient.PriProv)||String(s.ClinicNum||0)!==String(patient.ClinicNum||0))throw reviewError(`${p.code}: chưa xác minh dịch vụ vừa thêm; kiểm tra trước khi chạy lại.`);
