@@ -2,20 +2,22 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {repairClaim690,readClaim690RepairState,inspectClaim690Repair} from '../src/metlife/repairClaim690.js';
+import {completeClaim690Audit} from '../src/metlife/completeClaim690Audit.js';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 process.chdir(root);
 const args=process.argv.slice(2);
-if(args.some(arg=>!['--apply','--inspect'].includes(arg))||args.includes('--apply')&&args.includes('--inspect'))throw new Error('Usage: node scripts/repair-claim-690.mjs [--apply | --inspect]');
+if(args.length>1||args.some(arg=>!['--apply','--inspect','--complete-audit'].includes(arg)))throw new Error('Usage: node scripts/repair-claim-690.mjs [--apply | --inspect | --complete-audit]');
 const apply=args.includes('--apply');
 const inspect=args.includes('--inspect');
+const completeAudit=args.includes('--complete-audit');
 const {pool,closePool}=await import('../src/db.js');
 const {nativeSplitHashes}=await import('../src/metlife/nativeSplitHashes.js');
 const folder=path.join(root,'metlife-backups','repair-690-1202');
 const journalPath=path.join(folder,'repair-journal.json');
 let db;
 try{
-  if(apply&&process.env.METLIFE_DIRECT_DB_DISABLED==='true')throw new Error('Direct DB writes are disabled by the clinic configuration.');
+  if((apply||completeAudit)&&process.env.METLIFE_DIRECT_DB_DISABLED==='true')throw new Error('Direct DB writes are disabled by the clinic configuration.');
   db=await pool.getConnection();
   const [locks]=await db.execute("SELECT GET_LOCK('luk-repair-690-1202',0) AS acquired");
   if(Number(locks[0]?.acquired)!==1)throw new Error('Another repair is running. Nothing was changed.');
@@ -30,7 +32,21 @@ try{
     try{await handle.writeFile(JSON.stringify(value,null,2));await handle.sync();}finally{await handle.close();}
     if(!create)await fs.rename(file,journalPath);
   };
-  if(inspect){
+  if(completeAudit){
+    const recoveryPath=path.join(folder,'audit-recovery-journal.json');
+    const readRecovery=async()=>{try{return JSON.parse(await fs.readFile(recoveryPath,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
+    const writeRecovery=async(value,{create=false}={})=>{
+      await fs.mkdir(folder,{recursive:true,mode:0o700});
+      const file=create?recoveryPath:path.join(folder,'audit-recovery.complete.tmp');
+      const handle=await fs.open(file,'wx',0o600);
+      try{await handle.writeFile(JSON.stringify(value,null,2));await handle.sync();}finally{await handle.close();}
+      if(!create)await fs.rename(file,recoveryPath);
+    };
+    const result=await completeClaim690Audit(db,{journal:await readJournal(),writeJournal,writeRecovery,readRecovery});
+    console.log(result.alreadyComplete?'ALREADY COMPLETE: audit and financial repair verified; no writes.':'AUDIT RECOVERY COMPLETE: timestamps/hashes verified and original repair journal marked complete.');
+    console.log(`D0210 ProcNum ${result.targetProcNum}; payment, splits, procedure fees and patient balance were NOT changed by recovery.`);
+    console.log(`Recovery backup: ${recoveryPath}`);
+  }else if(inspect){
     const journal=await readJournal(),state=await readClaim690RepairState(db);
     const report=inspectClaim690Repair(state,journal);
     console.log('\n=== READ-ONLY RECOVERY INSPECTION: CLAIM 690 / PAYMENT 1202 ===');

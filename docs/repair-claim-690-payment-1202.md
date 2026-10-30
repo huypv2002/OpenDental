@@ -84,6 +84,28 @@ instead of relying on a schema timestamp default or driver Date conversion.
 The original pending journal and any incomplete audit entries must be retained
 until their exact state is reviewed for a separate guarded recovery.
 
+For the observed state where financial repair is already correct, balance
+equals the intended total, and the script-created audit has a zero timestamp
+and no hash, finish only its audit using:
+
+```bat
+node scripts/repair-claim-690.mjs --complete-audit
+node scripts/repair-claim-690.mjs --inspect
+```
+
+The audit-only recovery checks the original journal/before snapshot against
+live payment, splits, original procedures, patient fields and intended balance.
+It takes READ locks on every clinical/financial table and WRITE locks only on
+securitylog/securityloghash. It preserves a second durable backup in
+`audit-recovery-journal.json`, including the original malformed audit row.
+It supplies SQL server time for the zero-time, unhashed script-created log,
+adds its missing hash and the missing PaymentEdit log/hash, verifies them,
+then marks the original repair journal complete. Existing conflicting hashes,
+duplicate audit entries or changed financial data stop before recovery writes.
+It never creates a procedure/payment or edits a split/balance. A completed
+rerun verifies the logs without writing. An interrupted audit-recovery intent
+requires inspection rather than an automatic retry.
+
 Open Dental/DB must be version 24.3, the procedure table must support normal
 auto-increment inserts without a separate procedure hash, and unsupported
 accounting/date-lock/random-key preferences stop apply. Direct-write disable
