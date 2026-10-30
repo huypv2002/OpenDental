@@ -98,6 +98,22 @@ test('empty split ProcDate never bypasses linked service date checks',()=>{
   assert.throws(()=>planClaim690Repair(f.state),/completed D0150|completed service/);
  }
 });
+test('D0210 catalog None=0 and Mouth=3 both support area-free creation without changing catalog',async()=>{
+ for(const TreatArea of [0,3]){
+  const f=fixture();f.state.codes[2].TreatArea=TreatArea;
+  const before=clone(f.state.codes);
+  assert.equal(planClaim690Repair(f.state).status,'ready');
+  assert.equal((await repairClaim690(f.db,f.options)).verified,true);
+  assert.deepEqual(f.state.codes,before);
+ }
+});
+test('hidden, missing, tooth/arch/surface treatment areas still block and show actual catalog',async()=>{
+ for(const override of [{IsHidden:1},{IsHidden:null},{TreatArea:1},{TreatArea:2},{TreatArea:4},{TreatArea:6},{TreatArea:null}]){
+  const f=fixture();Object.assign(f.state.codes[2],override);
+  await assert.rejects(repairClaim690(f.db),e=>e.message.includes('D0210 catalog')&&e.repairCatalog.some(c=>c.ProcCode==='D0210'));
+  assert(f.events.every(s=>s.startsWith('SELECT')));
+ }
+});
 for(const target of [false,true])test(`repair ${target?'reuses':'adds'} D0210, changes only the split link/hash and authorized balance, then replays without writes`,async()=>{
  const f=fixture({target}),before=clone(f.state);
  const result=await repairClaim690(f.db,f.options);assert(result.verified);

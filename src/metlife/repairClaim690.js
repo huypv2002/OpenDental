@@ -24,6 +24,11 @@ export function summarizeClaim690Splits(state){
   });
 }
 
+export function summarizeClaim690Catalog(state){
+  return state.codes.map(c=>({CodeNum:c.CodeNum,ProcCode:c.ProcCode,Descript:c.Descript,
+    IsHidden:c.IsHidden,TreatArea:c.TreatArea}));
+}
+
 export async function readClaim690RepairState(db){
   const query=async(sql,args=[])=> (await db.execute({sql,dateStrings:true},args))[0];
   const patients=await query('SELECT * FROM patient WHERE PatNum=?',[690]);
@@ -68,7 +73,10 @@ export function planClaim690Repair(state){
   const d0210codes=codes.filter(c=>c.ProcCode==='D0210');
   requireThat(d0210codes.length===1,'Need exactly one D0210 in the OD code catalog.');
   const catalog=d0210codes[0];
-  requireThat(!Number(catalog.IsHidden||0)&&Number(catalog.TreatArea)===3,'D0210 catalog code is hidden or not a mouth-level service.');
+  requireThat(Number(catalog.IsHidden)===0&&catalog.IsHidden!=null,`D0210 catalog code is hidden or its visibility is unknown (IsHidden=${catalog.IsHidden}).`);
+  // OD treats None (0) as having no tooth/area requirement; Mouth (3)
+  // likewise requires no tooth. Retain the clinic's existing catalog setting.
+  requireThat(catalog.TreatArea!=null&&[0,3].includes(Number(catalog.TreatArea)),`D0210 catalog has an unsupported treatment area (TreatArea=${catalog.TreatArea}); expected None=0 or Mouth=3.`);
   const matches=procedures.filter(r=>same(r.CodeNum,catalog.CodeNum)&&day(r.ProcDate)==='2025-09-19'&&Number(r.ProcStatus)!==6);
   requireThat(matches.length<=1,'Multiple D0210 records exist on 2025-09-19.');
   const target=matches[0];
@@ -92,7 +100,7 @@ export function planClaim690Repair(state){
 export async function repairClaim690(db,{apply=false,hashSplits,writeJournal,readJournal=async()=>null}={}){
   const before=await readClaim690RepairState(db);
   let plan;
-  try{plan=planClaim690Repair(before);}catch(error){error.repairSplits=summarizeClaim690Splits(before);throw error;}
+  try{plan=planClaim690Repair(before);}catch(error){error.repairSplits=summarizeClaim690Splits(before);error.repairCatalog=summarizeClaim690Catalog(before);throw error;}
   if(!apply)return {applied:false,plan};
   requireThat(typeof writeJournal==='function','A durable backup journal is required.');
   const previous=await readJournal();

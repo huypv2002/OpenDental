@@ -35,7 +35,10 @@ node scripts/repair-claim-690.mjs --apply
 - Adds completed D0210 on 2025-09-19 with charge $74.00 if missing. An existing
   unique completed $74 D0210 with the same provider/clinic can be reused. It
   must not already have another allocated payment. The D0210 catalog code
-  must already exist and be a visible mouth-level service.
+  must already exist and be visible, with Treatment Area None (0) or Mouth (3).
+  Neither requires a tooth/area entry; the catalog itself is never changed.
+  Hidden codes or tooth/surface/quadrant/arch settings still stop apply and
+  print the actual code-catalog values for review.
 - Moves only the existing $39.20 split's ProcNum and recalculates SecurityHash
   using the installed native OD helper. SplitNum, amount, dates, patient,
   provider and clinic stay unchanged. The entire payment row and $38 split

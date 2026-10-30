@@ -52,6 +52,10 @@ try{
     console.error('ACTUAL SPLIT VALUES (read-only; nothing changed by this validation):');
     console.table(error.repairSplits);
   }
+  if(error.repairCatalog){
+    console.error('ACTUAL CODE CATALOG (read-only):');
+    console.table(error.repairCatalog);
+  }
   console.error(`If a repair-journal.json exists, keep it for review: ${journalPath}`);
   process.exitCode=1;
 }finally{
