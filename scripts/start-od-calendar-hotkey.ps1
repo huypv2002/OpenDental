@@ -44,7 +44,7 @@ if ($Inspect) {
 } elseif (-not $BuildOnly) {
  $process=Start-Process -FilePath $exe -PassThru
  Write-Host "Started process: $($process.Id)"
- Write-Host 'Select OD Appointments and press Ctrl+Alt+6. Exit through the tray icon.'
+ Write-Host 'Select OD Appointments and press Alt+6. Exit through the tray icon.'
  Write-Host "Result file: $(Join-Path $install 'last-result.txt')"
  Write-Host 'The file now includes Build and UTC time. WAITING means no hotkey has been received in this run; RUNNING means the shortcut reached the app.'
 }

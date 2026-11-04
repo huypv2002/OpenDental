@@ -1,6 +1,6 @@
 # OD Calendar Hotkey (standalone Windows utility)
 
-Ctrl+Alt+6 navigates the currently selected OD Appointments date back six calendar
+Alt+6 navigates the currently selected OD Appointments date back six calendar
 months. No plugin, SQL, DLL injection, elevated privileges or OD credentials.
 The previous calendar plugin should remain disabled in Program Links.
 
@@ -14,7 +14,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-od-calendar-
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-od-calendar-hotkey.ps1
 ```
 
-Select the OD main Appointments window, wait one second, press/release Ctrl+Alt+6.
+Select the OD main Appointments window, wait one second, press/release Alt+6.
 The utility opens the month/year date picker, reads the selected date using the
 Windows short-date format, computes AddMonths(-6), sets that date, and invokes
 only the date picker's OK button. It checks the entered date before submission
