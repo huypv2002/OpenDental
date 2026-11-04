@@ -1,0 +1,194 @@
+// Standalone Windows client. No Open Dental DLL loading, injection, or DB access.
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Automation;
+using System.Windows.Forms;
+using System.Drawing;
+
+namespace LukOdCalendarHotkey {
+ static class Native {
+  [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] internal static extern IntPtr GetLastActivePopup(IntPtr h);
+  [DllImport("user32.dll")] internal static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
+  [DllImport("user32.dll")] internal static extern IntPtr GetAncestor(IntPtr h,uint flags);
+  [DllImport("user32.dll")] internal static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] internal static extern bool SetCursorPos(int x,int y);
+  [DllImport("user32.dll")] internal static extern void mouse_event(uint flags,uint x,uint y,uint data,UIntPtr extra);
+  [DllImport("user32.dll")] internal static extern bool RegisterHotKey(IntPtr h,int id,uint modifiers,uint key);
+  [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(IntPtr h,int id);
+  [DllImport("user32.dll")] internal static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
+  [StructLayout(LayoutKind.Sequential)] internal struct POINT { public int X,Y; public POINT(int x,int y){X=x;Y=y;} }
+ }
+ static class Calendar {
+  internal static AutomationElement Unique(AutomationElement root,string id) {
+   var all=root.FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.AutomationIdProperty,id));
+   AutomationElement found=null;
+   foreach(AutomationElement e in all) if(!e.Current.IsOffscreen) {
+    if(found!=null) throw new InvalidOperationException("Multiple visible controls: "+id); found=e;
+   }
+   if(found==null) throw new InvalidOperationException("Control unavailable: "+id);
+   return found;
+  }
+  internal static IntPtr ActiveMain() {
+   IntPtr h=Native.GetForegroundWindow(); uint pid; Native.GetWindowThreadProcessId(h,out pid);
+   if(h==IntPtr.Zero || !String.Equals(Process.GetProcessById((int)pid).ProcessName,"OpenDental",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Select the OD Appointments window first.");
+   var process=Process.GetProcessById((int)pid);
+   if(process.MainWindowHandle!=h) throw new InvalidOperationException("Close the OD dialog before using this shortcut.");
+   IntPtr popup=Native.GetLastActivePopup(h);
+   if(popup!=h && Native.IsWindowVisible(popup)) throw new InvalidOperationException("An OD dialog is open.");
+   return h;
+  }
+  static void AssertForeground(IntPtr h) {
+   if(Native.GetForegroundWindow()!=h) throw new InvalidOperationException("Focus changed; navigation stopped.");
+  }
+  internal static AutomationElement CalendarControl(IntPtr main) {
+   var root=AutomationElement.FromHandle(main);
+   if(!root.Current.IsEnabled) throw new InvalidOperationException("OD is blocked by a dialog.");
+   var module=Unique(root,"ControlAppt");
+   Unique(module,"butBackMonth");
+   return Unique(module,"monthCalendarOD");
+  }
+  static AutomationElement OpenPicker(IntPtr main) {
+   AssertForeground(main);
+   var calendar=CalendarControl(main); var r=calendar.Current.BoundingRectangle;
+   if(r.Width<100 || r.Height<80) throw new InvalidOperationException("Unexpected calendar dimensions.");
+   // OD MonthCalendarOD source places the month/year header at (Width/2,16.5*scale).
+   int x=(int)(r.Left+r.Width/2), y=(int)(r.Top+r.Width*16.5/227.0);
+   if(Native.GetAncestor(Native.WindowFromPoint(new Native.POINT(x,y)),2)!=main) throw new InvalidOperationException("Calendar header is covered by another window.");
+   if(!Native.SetCursorPos(x,y)) throw new InvalidOperationException("Cannot move pointer to calendar header.");
+   Thread.Sleep(100); AssertForeground(main);
+   Native.mouse_event(2,0,0,0,UIntPtr.Zero); Native.mouse_event(4,0,0,0,UIntPtr.Zero);
+   for(int i=0;i<30;i++) {
+    Thread.Sleep(100);
+    IntPtr h=Native.GetForegroundWindow();
+    if(h==main) continue;
+    uint pid1,pid2; Native.GetWindowThreadProcessId(main,out pid1); Native.GetWindowThreadProcessId(h,out pid2);
+    if(pid1!=pid2) throw new InvalidOperationException("Focus moved to another application.");
+    if(Native.GetLastActivePopup(main)!=h) throw new InvalidOperationException("Unexpected OD popup.");
+    var popup=AutomationElement.FromHandle(h);
+    var box=DateBox(popup); Unique(popup,"butOK");
+    var bounds=popup.Current.BoundingRectangle;
+    if(bounds.Width<r.Width*0.7 || bounds.Width>r.Width*1.5 || bounds.Height>r.Height*1.5) throw new InvalidOperationException("Unexpected date-picker layout.");
+    return popup;
+   }
+   throw new InvalidOperationException("OD date picker did not open. No date was changed.");
+  }
+  static AutomationElement DateBox(AutomationElement popup) {
+   // TextVDate contains one WPF TextBox. Require its parent ID as well as one Edit.
+   var parent=Unique(popup,"textDate");
+   var edits=parent.FindAll(TreeScope.Subtree,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit));
+   AutomationElement box=null;
+   foreach(AutomationElement e in edits) if(!e.Current.IsOffscreen) {
+    if(box!=null) throw new InvalidOperationException("Ambiguous date field."); box=e;
+   }
+   if(box==null) throw new InvalidOperationException("Date field is not exposed to UI Automation.");
+   return box;
+  }
+  internal static DateTime ParseDate(string value) {
+   return DatePolicy.Parse(value,CultureInfo.CurrentCulture);
+  }
+  static string ReadDateText(AutomationElement popup) {
+   return ((ValuePattern)DateBox(popup).GetCurrentPattern(ValuePattern.Pattern)).Current.Value;
+  }
+  static void Cancel(AutomationElement popup) {
+   IntPtr h=(IntPtr)popup.Current.NativeWindowHandle;
+   AssertForeground(h);
+   ((WindowPattern)popup.GetCurrentPattern(WindowPattern.Pattern)).Close();
+  }
+  internal static string BackSixMonths() {
+   IntPtr main=ActiveMain(); AutomationElement popup=null;
+   try {
+    popup=OpenPicker(main);
+    DateTime before=ParseDate(ReadDateText(popup)), target=DatePolicy.BackSixMonths(before);
+    AssertForeground((IntPtr)popup.Current.NativeWindowHandle);
+    var value=(ValuePattern)DateBox(popup).GetCurrentPattern(ValuePattern.Pattern);
+    if(value.Current.IsReadOnly) throw new InvalidOperationException("Date field is read-only.");
+    value.SetValue(target.ToShortDateString());
+    if(ParseDate(ReadDateText(popup))!=target) throw new InvalidOperationException("Date entry readback failed.");
+    AssertForeground((IntPtr)popup.Current.NativeWindowHandle);
+    ((InvokePattern)Unique(popup,"butOK").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+    popup=null;
+    for(int i=0;i<30 && Native.GetForegroundWindow()!=main;i++) Thread.Sleep(100);
+    AssertForeground(main);
+    // Read the date back from OD itself, then cancel this verification dialog.
+    popup=OpenPicker(main); DateTime actual=ParseDate(ReadDateText(popup));
+    Cancel(popup); popup=null;
+    if(actual!=target) throw new InvalidOperationException("OD date verification failed. Inspect the displayed calendar; no automatic retry.");
+    return before.ToString("yyyy-MM-dd")+" -> "+actual.ToString("yyyy-MM-dd");
+   } finally {
+    if(popup!=null) { try { Cancel(popup); } catch {} }
+   }
+  }
+  internal static string Inspect() {
+   var processes=Process.GetProcessesByName("OpenDental");
+   if(processes.Length!=1) throw new InvalidOperationException("Expected exactly one running OpenDental process.");
+   var main=processes[0].MainWindowHandle;
+   if(main==IntPtr.Zero) throw new InvalidOperationException("OD main window is not available.");
+   CalendarControl(main);
+   return "READY: Appointments, butBackMonth and monthCalendarOD are exposed. No clicks or date changes. Date-picker controls still need live verification.";
+  }
+ }
+ sealed class HotkeyWindow : NativeWindow, IDisposable {
+  readonly NotifyIcon tray; readonly System.Windows.Forms.Timer timer;
+  bool registered; int busy;
+  readonly object resultLock=new object(); string pending; bool pendingOk; bool conflictShown;
+  internal HotkeyWindow() {
+   CreateHandle(new CreateParams());
+   tray=new NotifyIcon { Icon=SystemIcons.Application,Text="OD calendar: Ctrl+Alt+6",Visible=true };
+   tray.ContextMenu=new ContextMenu(new MenuItem[]{new MenuItem("Exit",delegate { Application.ExitThread(); })});
+   timer=new System.Windows.Forms.Timer { Interval=500 };
+   timer.Tick+=delegate {
+    lock(resultLock) {
+     if(pending!=null) { tray.ShowBalloonTip(5000,"OD Calendar",pending,pendingOk?ToolTipIcon.Info:ToolTipIcon.Warning); pending=null; }
+    }
+    bool active=false;
+    try { Calendar.ActiveMain(); active=true; } catch {}
+    if(active && !registered) {
+     registered=Native.RegisterHotKey(Handle,1,0x4003,0x36);
+     if(!registered && !conflictShown) { conflictShown=true; tray.ShowBalloonTip(5000,"OD Calendar","Cannot register Ctrl+Alt+6. Another application may already use it.",ToolTipIcon.Warning); }
+    }
+    if(!active && registered) { Native.UnregisterHotKey(Handle,1); registered=false; }
+   };
+   timer.Start(); tray.ShowBalloonTip(4000,"OD Calendar","Select Appointments, then press Ctrl+Alt+6. Exit from this tray icon.",ToolTipIcon.Info);
+  }
+  protected override void WndProc(ref Message m) {
+   if(m.Msg==0x312 && m.WParam.ToInt32()==1 && Interlocked.CompareExchange(ref busy,1,0)==0) {
+    ThreadPool.QueueUserWorkItem(delegate {
+     string result; bool ok;
+     try {
+      int waited=0;
+      while((Native.GetAsyncKeyState(0x11)<0 || Native.GetAsyncKeyState(0x12)<0 || Native.GetAsyncKeyState(0x36)<0) && waited<2000) { Thread.Sleep(50); waited+=50; }
+      if(waited>=2000) throw new InvalidOperationException("Release Ctrl, Alt and 6 before navigation.");
+      result=Calendar.BackSixMonths(); ok=true;
+     } catch(Exception e) { result=e.Message; ok=false; }
+     try { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"last-result.txt"),(ok?"VERIFIED: ":"STOP: ")+result); } catch {}
+     lock(resultLock) { pending=result; pendingOk=ok; }
+     Interlocked.Exchange(ref busy,0);
+    });
+   }
+   base.WndProc(ref m);
+  }
+  public void Dispose() { timer.Dispose(); Native.UnregisterHotKey(Handle,1); tray.Dispose(); DestroyHandle(); }
+ }
+ static class Program {
+  [STAThread] static void Main(string[] args) {
+   Native.SetProcessDPIAware();
+   if(args.Length==2 && args[0]=="--inspect") {
+    try { File.WriteAllText(args[1],Calendar.Inspect()); } catch(Exception e) { File.WriteAllText(args[1],"STOP: "+e.Message); }
+    return;
+   }
+   bool created; using(var mutex=new Mutex(true,"Local\\LukOdCalendarHotkey",out created)) {
+    if(!created) { MessageBox.Show("OD Calendar Hotkey is already running."); return; }
+    Application.EnableVisualStyles();
+    using(var window=new HotkeyWindow()) Application.Run();
+   }
+  }
+ }
+}
