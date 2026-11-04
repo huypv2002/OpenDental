@@ -17,8 +17,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-od-calendar-
 Select the OD main Appointments window, wait one second, press/release Ctrl+Alt+6.
 The utility opens the month/year date picker, reads the selected date using the
 Windows short-date format, computes AddMonths(-6), sets that date, and invokes
-only the date picker's OK button. It reopens the picker to verify the actual date,
-then cancels the verification picker. August 31 correctly clamps to February
+only the date picker's OK button. It checks the entered date before submission
+and that Appointments is available afterward. It opens the picker only once;
+there is no second dialog to reread the selected date. Success is logged as
+`NAVIGATED` (submitted and returned to calendar), not independent date readback.
+August 31 correctly clamps to February
 28/29; it does not approximate by repeatedly clicking the previous-month button.
 A repeated hotkey starts from the newly selected date.
 

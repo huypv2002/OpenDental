@@ -109,7 +109,7 @@ namespace LukOdCalendarHotkey {
    if(popup.TryGetCurrentPattern(WindowPattern.Pattern,out pattern)) { ((WindowPattern)pattern).Close(); return; }
    // Close this identified date-picker window only; never send a generic Escape.
    DateBox(popup); Unique(popup,"butOK");
-   if(!Native.PostMessage(h,0x10,IntPtr.Zero,IntPtr.Zero)) throw new InvalidOperationException("Could not close verification date picker.");
+   if(!Native.PostMessage(h,0x10,IntPtr.Zero,IntPtr.Zero)) throw new InvalidOperationException("Could not close date picker.");
   }
   static void ConfirmPicker(AutomationElement popup) {
    IntPtr h=(IntPtr)popup.Current.NativeWindowHandle;
@@ -148,13 +148,11 @@ namespace LukOdCalendarHotkey {
     popup=null;
     for(int i=0;i<30 && Native.GetForegroundWindow()!=main;i++) Thread.Sleep(100);
     AssertForeground(main);
-    // Read the date back from OD itself, then cancel this verification dialog.
-    stage="verify calendar date";
-    popup=OpenPicker(main); DateTime actual=ParseDate(ReadDateText(popup));
-    stage="close verification picker";
-    Cancel(popup); popup=null;
-    if(actual!=target) throw new InvalidOperationException("OD date verification failed. Inspect the displayed calendar; no automatic retry.");
-    return before.ToString("yyyy-MM-dd")+" -> "+actual.ToString("yyyy-MM-dd");
+    stage="wait for calendar";
+    CalendarControl(main);
+    // Keep navigation to a single picker. The entered date was checked before
+    // OK; after submission only confirm that OD returned to Appointments.
+    return before.ToString("yyyy-MM-dd")+" -> "+target.ToString("yyyy-MM-dd")+" (submitted; calendar available)";
    } catch(Exception e) {
     throw new InvalidOperationException("Stage="+stage+": "+e.Message+(confirmed?" Calendar may already have moved; inspect before retrying.":""));
    } finally {
@@ -213,7 +211,7 @@ namespace LukOdCalendarHotkey {
       if(waited>=2000) throw new InvalidOperationException("Release Ctrl, Alt and 6 before navigation.");
       result=Calendar.BackSixMonths(); ok=true;
      } catch(Exception e) { result=e.Message; ok=false; }
-     Program.WriteResult(ok?"VERIFIED":"STOP",result);
+     Program.WriteResult(ok?"NAVIGATED":"STOP",result);
      lock(resultLock) { pending=result; pendingOk=ok; }
      Interlocked.Exchange(ref busy,0);
     });
@@ -223,7 +221,7 @@ namespace LukOdCalendarHotkey {
   public void Dispose() { timer.Dispose(); Native.UnregisterHotKey(Handle,1); tray.Dispose(); DestroyHandle(); }
  }
  static class Program {
-  internal const string Build="2026.11.05.3";
+  internal const string Build="2026.11.05.4";
   internal static void WriteResult(string status,string message) {
    try {
     File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"last-result.txt"),
