@@ -174,6 +174,7 @@ namespace LukOdCalendarHotkey {
   }
   protected override void WndProc(ref Message m) {
    if(m.Msg==0x312 && m.WParam.ToInt32()==1 && Interlocked.CompareExchange(ref busy,1,0)==0) {
+    Program.WriteResult("RUNNING","Hotkey received; checking OD.");
     ThreadPool.QueueUserWorkItem(delegate {
      string result; bool ok;
      try {
@@ -182,7 +183,7 @@ namespace LukOdCalendarHotkey {
       if(waited>=2000) throw new InvalidOperationException("Release Ctrl, Alt and 6 before navigation.");
       result=Calendar.BackSixMonths(); ok=true;
      } catch(Exception e) { result=e.Message; ok=false; }
-     try { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"last-result.txt"),(ok?"VERIFIED: ":"STOP: ")+result); } catch {}
+     Program.WriteResult(ok?"VERIFIED":"STOP",result);
      lock(resultLock) { pending=result; pendingOk=ok; }
      Interlocked.Exchange(ref busy,0);
     });
@@ -192,6 +193,13 @@ namespace LukOdCalendarHotkey {
   public void Dispose() { timer.Dispose(); Native.UnregisterHotKey(Handle,1); tray.Dispose(); DestroyHandle(); }
  }
  static class Program {
+  internal const string Build="2026.11.05.2";
+  internal static void WriteResult(string status,string message) {
+   try {
+    File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"last-result.txt"),
+     "Build: "+Build+Environment.NewLine+"UTC: "+DateTime.UtcNow.ToString("o")+Environment.NewLine+status+": "+message);
+   } catch {}
+  }
   [STAThread] static void Main(string[] args) {
    Native.SetProcessDPIAware();
    if(args.Length==2 && args[0]=="--inspect") {
@@ -201,7 +209,12 @@ namespace LukOdCalendarHotkey {
    bool created; using(var mutex=new Mutex(true,"Local\\LukOdCalendarHotkey",out created)) {
     if(!created) { MessageBox.Show("OD Calendar Hotkey is already running."); return; }
     Application.EnableVisualStyles();
-    using(var window=new HotkeyWindow()) Application.Run();
+    using(var window=new HotkeyWindow()) {
+     string log=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"last-result.txt");
+     try { if(File.Exists(log)) File.Copy(log,log+"."+DateTime.UtcNow.Ticks+".bak",false); } catch {}
+     WriteResult("WAITING","Select OD Appointments and press Ctrl+Alt+6.");
+     Application.Run();
+    }
    }
   }
  }
