@@ -85,3 +85,18 @@ Offline checks: `powershell -NoProfile -File .\scripts\test-whitelist-manager.ps
 Native crypto, shared DB readback and the actual button still require Windows
 client verification. Success should say `applied-and-verified` or, on a repeat,
 `already-allowed`. Fully restart OD clients after applying.
+
+The whitelist planner now follows OD's `ODDataTable` reader: XML document root,
+direct row elements, and six required named cells. The earlier nested
+`ODDataTable/Rows/Row` assumption was incorrect. Before preview or apply can
+succeed, the installed `OpenDentBusiness.ODDataTable` must read the planned XML
+and the requested allow rule. Leading Unicode BOM/whitespace is normalized;
+arbitrary encodings and invalid encrypted values are never replaced. If native
+decryption returns non-XML, the error reports only lengths, whether the value
+was unchanged, and its first Unicode code point, never the stored contents.
+`TryDecrypt` can return its input when decryption fails, so a nonempty return
+value alone is not proof that decoding succeeded.
+
+Evidence: 17 offline checks pass; the C# helper compiled and accepted planned
+XML using the public 24.3 `ODDataTable`/`ODDataRow` source. Exact installed-client
+crypto and loader behavior remain to be verified on Windows.

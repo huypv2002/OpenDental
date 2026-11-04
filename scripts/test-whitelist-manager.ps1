@@ -5,17 +5,22 @@ $script:passed=0
 function Assert($condition,[string]$message) { if (-not $condition) { throw $message } }
 function Test([string]$name,[scriptblock]$body) { & $body; $script:passed++; Write-Host "PASS $name" }
 function MustThrow([scriptblock]$body) { $threw=$false; try { & $body | Out-Null } catch { $threw=$true }; Assert $threw 'Expected failure' }
-$original='<ODDataTable><Meta>preserve me</Meta><Rows><Row><DatabaseIntegrityNum>999</DatabaseIntegrityNum><WarningIntegrityType>PluginOverride</WarningIntegrityType><PluginName>LukMetlifeHash.dll</PluginName><Behavior>PluginAllow</Behavior><Extra>original</Extra></Row></Rows></ODDataTable>'
+$original='<NewDataSet><Table><DatabaseIntegrityNum>999</DatabaseIntegrityNum><WarningIntegrityType>PluginOverride</WarningIntegrityType><PluginName>LukMetlifeHash.dll</PluginName><Behavior>PluginAllow</Behavior><Message/><Note/><Extra>original</Extra></Table></NewDataSet>'
 $target='LukCalendarNavigation.dll'
 Test 'preserves existing row and unknown metadata exactly' {
  $plan=New-PluginWhitelistPlan $original $target
  [xml]$before=$original; [xml]$after=$plan.Xml
- Assert ($before.ODDataTable.Rows.Row.OuterXml -ceq $after.ODDataTable.Rows.Row[0].OuterXml) 'Old row changed'
- Assert ($after.ODDataTable.Meta -eq 'preserve me') 'Metadata lost'
+ Assert ($before.NewDataSet.Table.OuterXml -ceq $after.NewDataSet.Table[0].OuterXml) 'Old row changed'
+ Assert ($after.NewDataSet.Table[0].Extra -eq 'original') 'Metadata lost'
  Assert ($plan.NewCount -eq 2) 'Expected two rows'
- Assert ($after.ODDataTable.Rows.Row[1].DatabaseIntegrityNum -eq '1000') 'ID collision'
+ Assert ($after.NewDataSet.Table[1].DatabaseIntegrityNum -eq '1000') 'ID collision'
 }
-Test 'idempotent and case insensitive name' {
+Test 'accepts Unicode BOM and validates through native callback before any write' {
+ $plan=New-PluginWhitelistPlan (([string][char]0xFEFF)+$original) $target
+ Assert ($plan.NewCount -eq 2) 'BOM normalization failed'
+ MustThrow { Invoke-PluginWhitelistChange -PluginName $target -Apply -ReadValue { $original } -Decrypt { param($v) $v } -ValidateNative { throw 'native rejected' } -CompareExchange { throw 'must not write' } }
+}
+Test 'idempotent and case insensitive name'  {
  $plan=New-PluginWhitelistPlan $original $target
  $again=New-PluginWhitelistPlan $plan.Xml 'lukcalendarnavigation.DLL'
  Assert (-not $again.Changed) 'Duplicate would be inserted'

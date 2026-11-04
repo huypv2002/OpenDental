@@ -68,18 +68,34 @@ using System.IO;
 using System.Reflection;
 public static class LukWhitelistCrypto {
  static MethodInfo decrypt, encrypt;
+ static Type tableType;
  public static void Init(string dir) {
   AppDomain.CurrentDomain.AssemblyResolve += delegate(object sender, ResolveEventArgs args) {
    string path=Path.Combine(dir, new AssemblyName(args.Name).Name+".dll");
    return File.Exists(path) ? Assembly.LoadFrom(path) : null;
   };
   Type t=Assembly.LoadFrom(Path.Combine(dir,"CDT.dll")).GetType("CDT.Class1",true);
+  tableType=Assembly.LoadFrom(Path.Combine(dir,"OpenDentBusiness.dll")).GetType("OpenDentBusiness.ODDataTable",true);
   decrypt=t.GetMethod("TryDecrypt",BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,null,new Type[]{typeof(string)},null);
   encrypt=t.GetMethod("TryEncrypt",BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,null,new Type[]{typeof(string)},null);
   if(decrypt==null || encrypt==null) throw new InvalidOperationException("Unsupported OD crypto signature.");
  }
  public static string Decrypt(string value) { return ConvertValue(decrypt,value); }
  public static string Encrypt(string value) { return ConvertValue(encrypt,value); }
+ public static void ValidateTable(string xml,string plugin,int expectedRows) {
+  object table=Activator.CreateInstance(tableType,new object[]{xml});
+  System.Collections.IEnumerable rows=(System.Collections.IEnumerable)tableType.GetField("Rows").GetValue(table);
+  int count=0, matches=0;
+  string[] columns={"DatabaseIntegrityNum","WarningIntegrityType","PluginName","Behavior","Message","Note"};
+  foreach(object row in rows) {
+   count++;
+   System.Collections.Generic.IDictionary<string,string> cells=(System.Collections.Generic.IDictionary<string,string>)row;
+   foreach(string column in columns) if(!cells.ContainsKey(column)) throw new InvalidOperationException("Native ODDataTable is missing required columns.");
+   if(String.Equals(cells["PluginName"],plugin,StringComparison.OrdinalIgnoreCase)
+    && cells["WarningIntegrityType"]=="PluginOverride" && cells["Behavior"]=="PluginAllow") matches++;
+  }
+  if(count!=expectedRows || matches!=1) throw new InvalidOperationException("Native ODDataTable row/allow-rule validation failed.");
+ }
  static string ConvertValue(MethodInfo method,string value) {
   object result=method.Invoke(null,new object[]{value});
   string text=result as string;
@@ -148,7 +164,8 @@ public static class LukWhitelistCrypto {
    -ReadValue { Read-WhitelistValue } -Decrypt { param($value) [LukWhitelistCrypto]::Decrypt($value) } `
    -Encrypt { param($value) [LukWhitelistCrypto]::Encrypt($value) } `
    -SaveBackup { param($old,$new) Save-WhitelistBackup $old $new } `
-   -CompareExchange { param($old,$new) Set-WhitelistCompareExchange $old $new }
+   -CompareExchange { param($old,$new) Set-WhitelistCompareExchange $old $new } `
+   -ValidateNative { param($xml,$plugin,$count) [LukWhitelistCrypto]::ValidateTable($xml,$plugin,$count) }
   Write-Host "Result: $($result.Status); whitelist rows: $($result.Plan.OriginalCount) -> $($result.Plan.NewCount)"
   if ($result.Status -eq 'preview') { Write-Host 'No changes. Run the same command with -Apply to add this DLL only.' }
   else { Write-Host 'Restart OD clients to reload the whitelist. Verify the plugin loads and the -6 button works.' }
