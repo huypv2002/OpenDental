@@ -100,3 +100,33 @@ value alone is not proof that decoding succeeded.
 Evidence: 17 offline checks pass; the C# helper compiled and accepted planned
 XML using the public 24.3 `ODDataTable`/`ODDataRow` source. Exact installed-client
 crypto and loader behavior remain to be verified on Windows.
+
+### Native caller context (explicit opt-in)
+
+If decode diagnostics show `unchanged=True` and non-XML, `TryDecrypt` has not
+decoded the stored value. The public 24.3 CDT implementation checks the calling
+assembly while obtaining the V2 key; PowerShell can fail this check silently
+because `TryDecrypt` returns its input on failure. This is a possible cause,
+not proof that the stored preference itself is damaged.
+
+The clinic already uses a caller-verifier memory patch in its standalone hash
+helper. Whitelist maintenance can explicitly use that mechanism with
+`-UseNativeCallerHelper`. It temporarily changes the verifier's entry byte in
+the **PowerShell process**, restores the byte/page protection after each crypto
+call, and checks instruction-cache operations. It does not open the OD process
+or modify any installed executable/DLL on disk. It is restricted to OD 24.3 and
+does not change the financial hash helper. Without the flag the original native
+caller check remains in effect. This option is not vendor whitelist approval.
+
+```powershell
+# Read-only DB preview with the opt-in local helper:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\whitelist-manager.ps1 -PluginToAllow LukCalendarNavigation.dll -UseNativeCallerHelper
+# Only after the correct target and preview are confirmed:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\whitelist-manager.ps1 -PluginToAllow LukCalendarNavigation.dll -UseNativeCallerHelper -Apply
+```
+
+The helper C# compiles; its Windows memory operations have not been verified on
+the current clinic client. Decode/restore failures still stop before any DB
+write. A valid decode must pass the installed ODDataTable reader before preview
+or backed-up apply is permitted. Never substitute a new blank whitelist when
+the stored nonempty value cannot be decoded.

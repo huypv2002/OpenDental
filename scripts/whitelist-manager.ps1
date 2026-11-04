@@ -2,7 +2,8 @@
 param(
  [string]$InstallDir, [string]$DbHost, [string]$DbPort, [string]$DbName,
  [string]$DbUser, [string]$DbPassword,
- [string]$PluginToAllow='LukMetlifeHash.dll', [string]$BackupDir, [switch]$Apply
+ [string]$PluginToAllow='LukMetlifeHash.dll', [string]$BackupDir, [switch]$Apply,
+ [switch]$UseNativeCallerHelper
 )
 $ErrorActionPreference='Stop'
 # Native powershell.exe -File in PS 5.1 needs switches as bare flags.
@@ -11,8 +12,8 @@ if ([IntPtr]::Size -eq 8 -and $env:SystemRoot) {
  if (Test-Path -LiteralPath $ps32) {
   $forwardArguments=@()
   foreach ($key in $PSBoundParameters.Keys) {
-   if ($key -eq 'Apply') {
-    if ($Apply) { $forwardArguments+='-Apply' }
+   if ($PSBoundParameters[$key] -is [Management.Automation.SwitchParameter]) {
+    if ($PSBoundParameters[$key].IsPresent) { $forwardArguments+=('-'+$key) }
    } else {
     $forwardArguments+=('-'+$key)
     $forwardArguments+=[string]$PSBoundParameters[$key]
@@ -69,12 +70,15 @@ using System.Reflection;
 public static class LukWhitelistCrypto {
  static MethodInfo decrypt, encrypt;
  static Type tableType;
+ static Assembly cdtAssembly;
+ public static bool UseNativeCallerHelper;
  public static void Init(string dir) {
   AppDomain.CurrentDomain.AssemblyResolve += delegate(object sender, ResolveEventArgs args) {
    string path=Path.Combine(dir, new AssemblyName(args.Name).Name+".dll");
    return File.Exists(path) ? Assembly.LoadFrom(path) : null;
   };
-  Type t=Assembly.LoadFrom(Path.Combine(dir,"CDT.dll")).GetType("CDT.Class1",true);
+  cdtAssembly=Assembly.LoadFrom(Path.Combine(dir,"CDT.dll"));
+  Type t=cdtAssembly.GetType("CDT.Class1",true);
   tableType=Assembly.LoadFrom(Path.Combine(dir,"OpenDentBusiness.dll")).GetType("OpenDentBusiness.ODDataTable",true);
   decrypt=t.GetMethod("TryDecrypt",BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,null,new Type[]{typeof(string)},null);
   encrypt=t.GetMethod("TryEncrypt",BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,null,new Type[]{typeof(string)},null);
@@ -97,14 +101,65 @@ public static class LukWhitelistCrypto {
   if(count!=expectedRows || matches!=1) throw new InvalidOperationException("Native ODDataTable row/allow-rule validation failed.");
  }
  static string ConvertValue(MethodInfo method,string value) {
-  object result=method.Invoke(null,new object[]{value});
+  object result;
+  if(UseNativeCallerHelper) {
+   using(var scope=new TemporaryNativeCallerScope(cdtAssembly)) {
+    result=method.Invoke(null,new object[]{value});
+   }
+  } else { result=method.Invoke(null,new object[]{value}); }
   string text=result as string;
   if(String.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("OD crypto returned no value.");
   return text;
  }
+ // Same caller-verifier mechanism as the existing local hash helper, scoped
+ // to this temporary PS process. Never opens or patches OpenDental.exe/files.
+ sealed class TemporaryNativeCallerScope : IDisposable {
+  [System.Runtime.InteropServices.DllImport("kernel32.dll",SetLastError=true)]
+  static extern bool VirtualProtect(IntPtr address,UIntPtr length,uint protection,out uint old);
+  [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+  static extern IntPtr GetCurrentProcess();
+  [System.Runtime.InteropServices.DllImport("kernel32.dll",SetLastError=true)]
+  static extern bool FlushInstructionCache(IntPtr process,IntPtr address,UIntPtr size);
+  IntPtr address;
+  byte original;
+  bool changed;
+  public TemporaryNativeCallerScope(Assembly assembly) {
+   if(IntPtr.Size!=4 && IntPtr.Size!=8) throw new InvalidOperationException("Unsupported helper architecture.");
+   MethodInfo method=assembly.GetType("CDT.Class1",true).GetMethod("VerifyCallingAssembly",BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static,null,Type.EmptyTypes,null);
+   if(method==null || method.ReturnType!=typeof(void)) throw new InvalidOperationException("Unsupported caller-verifier signature.");
+   System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(method.MethodHandle);
+   address=method.MethodHandle.GetFunctionPointer();
+   original=System.Runtime.InteropServices.Marshal.ReadByte(address);
+   try { WriteByte(0xC3); changed=true; }
+   catch {
+    // A failed protection/cache operation may follow the byte write.
+    WriteByte(original);
+    throw;
+   }
+  }
+  void WriteByte(byte value) {
+   uint old;
+   if(!VirtualProtect(address,(UIntPtr)1,0x40,out old)) throw new InvalidOperationException("Helper memory protection change failed.");
+   bool restored;
+   try { System.Runtime.InteropServices.Marshal.WriteByte(address,value); }
+   finally { uint ignored; restored=VirtualProtect(address,(UIntPtr)1,old,out ignored); }
+   if(!restored || !FlushInstructionCache(GetCurrentProcess(),address,(UIntPtr)1)) throw new InvalidOperationException("Helper memory restoration/cache operation failed.");
+  }
+  public void Dispose() {
+   if(changed) {
+    WriteByte(original);
+    changed=false;
+    if(System.Runtime.InteropServices.Marshal.ReadByte(address)!=original) throw new InvalidOperationException("Helper original byte was not restored.");
+   }
+  }
+ }
 }
 '@
  [LukWhitelistCrypto]::Init($InstallDir)
+ [LukWhitelistCrypto]::UseNativeCallerHelper=$UseNativeCallerHelper.IsPresent
+ if ($UseNativeCallerHelper) {
+  Write-Host 'Using temporary native caller helper in this PowerShell process only; original verifier restored after each crypto call.'
+ }
  $conn=$null
  foreach ($provider in @(
   @{File='MySqlConnector.dll'; Type='MySqlConnector.MySqlConnection'},
