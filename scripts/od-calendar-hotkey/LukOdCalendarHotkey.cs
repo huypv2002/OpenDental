@@ -128,11 +128,20 @@ namespace LukOdCalendarHotkey {
   }
   internal static string Inspect() {
    var processes=Process.GetProcessesByName("OpenDental");
-   if(processes.Length!=1) throw new InvalidOperationException("Expected exactly one running OpenDental process.");
-   var main=processes[0].MainWindowHandle;
-   if(main==IntPtr.Zero) throw new InvalidOperationException("OD main window is not available.");
-   CalendarControl(main);
-   return "READY: Appointments, butBackMonth and monthCalendarOD are exposed. No clicks or date changes. Date-picker controls still need live verification.";
+   int visible=0, ready=0; var details=new List<string>();
+   foreach(var process in processes) {
+    try {
+     var main=process.MainWindowHandle;
+     // Other logon sessions/background processes need not expose a desktop window.
+     if(main==IntPtr.Zero || !Native.IsWindowVisible(main)) continue;
+     visible++;
+     try { CalendarControl(main); ready++; details.Add("PID "+process.Id+": Appointments ready"); }
+     catch(Exception e) { details.Add("PID "+process.Id+": "+e.Message); }
+    } catch { /* Process may exit during enumeration. */ }
+    finally { process.Dispose(); }
+   }
+   if(ready==0) throw new InvalidOperationException("No ready Appointments window. OD processes="+processes.Length+", visible windows="+visible+". "+String.Join("; ",details));
+   return "READY: "+ready+" Appointments window(s); "+String.Join("; ",details)+". No clicks or date changes. Hotkey targets only the foreground OD main window. Date-picker controls still need live verification.";
   }
  }
  sealed class HotkeyWindow : NativeWindow, IDisposable {
