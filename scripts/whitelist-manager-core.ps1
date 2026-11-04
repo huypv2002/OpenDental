@@ -1,4 +1,16 @@
 # Pure planning and guarded write workflow. No connections are opened here.
+function ConvertFrom-LukSecurePassword {
+ param([Security.SecureString]$SecurePassword)
+ if ($null -eq $SecurePassword) { throw 'Password entry was cancelled; nothing changed.' }
+ $pointer=[IntPtr]::Zero
+ try {
+  $pointer=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecurePassword)
+  return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+ } finally {
+  if ($pointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+ }
+}
+
 function Read-ODDatabaseConfigXml {
  param([string]$Xml)
  $doc=New-Object System.Xml.XmlDocument

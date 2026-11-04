@@ -42,9 +42,6 @@ try {
  $settings=@{}
  if ($configPath) {
   $settings=Read-ODDatabaseConfigXml -Xml (Get-Content -LiteralPath $configPath -Raw)
-  if ($settings.HasEncryptedPassword) {
-   if (-not $PSBoundParameters.ContainsKey('DbPassword')) { throw 'Encrypted DB password detected; supply DB credentials explicitly.' }
-  }
  }
  if ($DbHost) { $settings.Host=$DbHost }; if ($DbName) { $settings.Name=$DbName }
  if ($DbUser) { $settings.User=$DbUser }
@@ -56,6 +53,15 @@ try {
  if ($port -lt 1 -or $port -gt 65535) { throw 'Invalid DB port.' }
  Write-Host "Target: $($settings.Host):$port / $($settings.Name); plugin: $PluginToAllow"
  Write-Host ('Mode: '+$(if ($Apply) { 'APPLY (backup + guarded update)' } else { 'PREVIEW ONLY (no writes)' }))
+ if ($settings.HasEncryptedPassword -and -not $PSBoundParameters.ContainsKey('DbPassword')) {
+  Write-Host 'OD stores an encrypted DB password. Enter the MariaDB password, not the OD login password. Input is hidden.'
+  $securePassword=Read-Host "MariaDB password for $($settings.User)" -AsSecureString
+  try {
+   $settings.Password=ConvertFrom-LukSecurePassword $securePassword
+  } finally {
+   if ($securePassword) { $securePassword.Dispose() }
+  }
+ }
  Add-Type -TypeDefinition @'
 using System;
 using System.IO;

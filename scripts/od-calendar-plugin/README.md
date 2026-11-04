@@ -76,6 +76,10 @@ The existing clinic DB preference workflow is separate from vendor approval.
 The script requires OD 24.3, its installed native crypto/ADO.NET driver and
 valid FreeDentalConfig.xml or explicit DB settings. It never guesses a local
 DB or falls back to sending a password to mysql.exe.
+If OD stores an encrypted database password, the script prompts with hidden
+input for the MariaDB password of the displayed database user. This is separate
+from the OD application login. Do not paste passwords into chat or the command.
+Preview and apply each open a new process and may each prompt once.
 
 Offline checks: `powershell -NoProfile -File .\scripts\test-whitelist-manager.ps1`.
 Native crypto, shared DB readback and the actual button still require Windows

@@ -102,6 +102,14 @@ Test 'unknown config diagnostics show tags without credential values' {
   Assert ($_.Exception.Message -notlike '*secret-fixture*') 'Secret leaked'
  }
 }
+Test 'secure password input preserves special characters without output other than the return value' {
+ $secure=ConvertTo-SecureString 'fixture;&"special' -AsPlainText -Force
+ try {
+  $values=@(ConvertFrom-LukSecurePassword $secure)
+  Assert ($values.Count -eq 1 -and $values[0] -ceq 'fixture;&"special') 'Password conversion changed or printed data'
+ } finally { $secure.Dispose() }
+ MustThrow { ConvertFrom-LukSecurePassword $null }
+}
 # Parse the Windows entry point without executing it.
 Test 'Windows entry script parses' {
  $tokens=$null; $errors=$null
