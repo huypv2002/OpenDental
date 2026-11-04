@@ -73,7 +73,11 @@ namespace LukOdCalendarHotkey {
     if(pid1!=pid2) throw new InvalidOperationException("Focus moved to another application.");
     if(Native.GetLastActivePopup(main)!=h) throw new InvalidOperationException("Unexpected OD popup.");
     var popup=AutomationElement.FromHandle(h);
-    var box=DateBox(popup); Unique(popup,"butOK");
+    // WPF exposes its window before Loaded has populated textDate.
+    try {
+     DateBox(popup); Unique(popup,"butOK");
+     if(String.IsNullOrWhiteSpace(ReadDateText(popup))) continue;
+    } catch(InvalidOperationException) { continue; }
     var bounds=popup.Current.BoundingRectangle;
     if(bounds.Width<r.Width*0.7 || bounds.Width>r.Width*1.5 || bounds.Height>r.Height*1.5) throw new InvalidOperationException("Unexpected date-picker layout.");
     return popup;
@@ -106,11 +110,12 @@ namespace LukOdCalendarHotkey {
    IntPtr main=ActiveMain(); AutomationElement popup=null;
    try {
     popup=OpenPicker(main);
-    DateTime before=ParseDate(ReadDateText(popup)), target=DatePolicy.BackSixMonths(before);
+    string originalDateText=ReadDateText(popup);
+    DateTime before=ParseDate(originalDateText), target=DatePolicy.BackSixMonths(before);
     AssertForeground((IntPtr)popup.Current.NativeWindowHandle);
     var value=(ValuePattern)DateBox(popup).GetCurrentPattern(ValuePattern.Pattern);
     if(value.Current.IsReadOnly) throw new InvalidOperationException("Date field is read-only.");
-    value.SetValue(target.ToShortDateString());
+    value.SetValue(DatePolicy.Format(target,originalDateText,CultureInfo.CurrentCulture));
     if(ParseDate(ReadDateText(popup))!=target) throw new InvalidOperationException("Date entry readback failed.");
     AssertForeground((IntPtr)popup.Current.NativeWindowHandle);
     ((InvokePattern)Unique(popup,"butOK").GetCurrentPattern(InvokePattern.Pattern)).Invoke();

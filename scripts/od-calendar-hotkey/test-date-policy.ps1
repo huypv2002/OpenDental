@@ -11,10 +11,21 @@ foreach ($case in $cases) {
 }
 $culture=[Globalization.CultureInfo]::GetCultureInfo('en-US')
 if ([LukOdCalendarHotkey.DatePolicy]::Parse('11/4/2026',$culture).ToString('yyyy-MM-dd') -ne '2026-11-04') { throw 'US parsing failed' }
+foreach ($value in @('11-04-2026','11.04.2026','2026-11-04',(([string][char]0x200E)+'11/04/2026'))) {
+ if ([LukOdCalendarHotkey.DatePolicy]::Parse($value,$culture).ToString('yyyy-MM-dd') -ne '2026-11-04') { throw 'Date separator/ISO normalization failed' }
+}
+$uk=[Globalization.CultureInfo]::GetCultureInfo('en-GB')
+if ([LukOdCalendarHotkey.DatePolicy]::Parse('04-11-2026',$uk).ToString('yyyy-MM-dd') -ne '2026-11-04') { throw 'UK date order failed' }
+$date=[DateTime]::new(2026,5,4)
+if ([LukOdCalendarHotkey.DatePolicy]::Format($date,'11-04-2026',$culture) -cne '05-04-2026') { throw 'US write format failed' }
+if ([LukOdCalendarHotkey.DatePolicy]::Format($date,'04-11-2026',$uk) -cne '04-05-2026') { throw 'UK write format failed' }
+$badOrder=$false
+try { [LukOdCalendarHotkey.DatePolicy]::Parse('31-08-2026',$culture) | Out-Null } catch { $badOrder=$true }
+if (-not $badOrder) { throw 'Guessed a different date order' }
 $failed=$false
 try { [LukOdCalendarHotkey.DatePolicy]::Parse('not a date',$culture) | Out-Null } catch { $failed=$true }
 if (-not $failed) { throw 'Invalid date accepted' }
 $tokens=$null; $errors=$null
 [void][Management.Automation.Language.Parser]::ParseFile((Join-Path (Split-Path $PSScriptRoot -Parent) 'start-od-calendar-hotkey.ps1'),[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-Write-Host 'PASS: 6 date transitions, US date parsing, invalid-date rejection and launcher syntax. Not a Windows UI test.'
+Write-Host 'PASS: month-end/leap dates, US/UK date order, separators/ISO/bidi marks, matching write format, invalid-date rejection and launcher syntax. Not a Windows UI test.'
