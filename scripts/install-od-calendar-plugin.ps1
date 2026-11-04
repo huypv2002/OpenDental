@@ -32,6 +32,8 @@ try {
  }
  Copy-Item -LiteralPath $dll -Destination $dest -Force
  Write-Host "Installed: $dest"
+ Write-Host 'Preview whitelist: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\whitelist-manager.ps1 -PluginToAllow "LukCalendarNavigation.dll"'
+ Write-Host 'Review the target DB and preview, then repeat with -Apply. Keep the backup and restart OD clients.'
  Write-Host 'After distributing this DLL to all OD clients, register LukCalendarNavigation.dll in Setup > Program Links, then reopen OD.'
 } finally {
  Remove-Item -LiteralPath $buildDir -Recurse -Force -ErrorAction SilentlyContinue

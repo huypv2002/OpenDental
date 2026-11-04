@@ -22,10 +22,21 @@ No SQL, Bridge endpoint, appointment edit, or hash-agent changes.
 3. The DLL must be present in the OD installation on **every client** before
    enabling the shared Program Link; installing on SERVER alone does not install
    it on R5/FD2. Restart any client already running after distributing the DLL.
-4. In OD, Setup → Program Links → Add: description `LUK Calendar Navigation`,
+4. Preview the whitelist change against the shared clinic database, then apply it once.
+   The installed clinic client blocks this DLL until it is whitelisted; merely
+   copying the DLL and enabling a Program Link is insufficient:
+
+   ```powershell
+   cd C:\open-dental-bridge
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\whitelist-manager.ps1 -PluginToAllow "LukCalendarNavigation.dll"
+   # Check target server/database and preview before applying:
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\whitelist-manager.ps1 -PluginToAllow "LukCalendarNavigation.dll" -Apply
+   ```
+
+5. In OD, Setup → Program Links → Add: description `LUK Calendar Navigation`,
    plug-in DLL name `LukCalendarNavigation.dll`, Enabled checked. Save and reopen OD.
    Do not change the existing MetLife hash plugin entry.
-5. Open Appointments. Look for `-6` to the left of Clear. Example: selected
+6. Open Appointments. Look for `-6` to the left of Clear. Example: selected
    November 4, 2026 → May 4, 2026. Click again → November 4, 2025.
 
 Check Day/Week views, month-end/leap dates, Today, resizing and Windows display
@@ -49,3 +60,24 @@ Public source:
 - https://github.com/OpenDental/opendental/blob/d804c19546233593d8a66af0591ed118a9e2c794/OpenDental/Main%20Modules/ControlAppt.cs
 - https://github.com/OpenDental/opendental/blob/d804c19546233593d8a66af0591ed118a9e2c794/OpenDental/Main%20Modules/ControlAppt.Designer.cs
 - https://github.com/OpenDental/opendental/blob/d804c19546233593d8a66af0591ed118a9e2c794/OpenDentBusiness/Plugins/PluginBase.cs
+
+## Whitelist maintenance safeguards
+
+`scripts/whitelist-manager.ps1` defaults to read-only preview. Apply backs up the
+original encrypted preference under `%LOCALAPPDATA%\LUKDental\Backups\plugin-whitelist`,
+adds only the requested DLL rule, compares the original stored value before
+writing, and verifies the entire encrypted value and decrypted XML afterward.
+Existing rules and unknown metadata are preserved. Decryption, unknown XML,
+conflicting/duplicate rules, failed backup, concurrent edits, and failed
+readback stop the script. Keep the backup on any failure; no automatic rollback
+is performed. It does not change payments, Program Links, or executables.
+
+The existing clinic DB preference workflow is separate from vendor approval.
+The script requires OD 24.3, its installed native crypto/ADO.NET driver and
+valid FreeDentalConfig.xml or explicit DB settings. It never guesses a local
+DB or falls back to sending a password to mysql.exe.
+
+Offline checks: `powershell -NoProfile -File .\scripts\test-whitelist-manager.ps1`.
+Native crypto, shared DB readback and the actual button still require Windows
+client verification. Success should say `applied-and-verified` or, on a repeat,
+`already-allowed`. Fully restart OD clients after applying.
