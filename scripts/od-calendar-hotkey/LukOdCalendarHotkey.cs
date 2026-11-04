@@ -180,25 +180,22 @@ namespace LukOdCalendarHotkey {
  sealed class HotkeyWindow : NativeWindow, IDisposable {
   readonly NotifyIcon tray; readonly System.Windows.Forms.Timer timer;
   bool registered; int busy;
-  readonly object resultLock=new object(); string pending; bool pendingOk; bool conflictShown;
+  bool conflictShown;
   internal HotkeyWindow() {
    CreateHandle(new CreateParams());
    tray=new NotifyIcon { Icon=SystemIcons.Application,Text="OD calendar: Alt+6",Visible=true };
    tray.ContextMenu=new ContextMenu(new MenuItem[]{new MenuItem("Exit",delegate { Application.ExitThread(); })});
    timer=new System.Windows.Forms.Timer { Interval=500 };
    timer.Tick+=delegate {
-    lock(resultLock) {
-     if(pending!=null) { tray.ShowBalloonTip(5000,"OD Calendar",pending,pendingOk?ToolTipIcon.Info:ToolTipIcon.Warning); pending=null; }
-    }
     bool active=false;
     try { Calendar.ActiveMain(); active=true; } catch {}
     if(active && !registered) {
      registered=Native.RegisterHotKey(Handle,1,0x4001,0x36);
-     if(!registered && !conflictShown) { conflictShown=true; tray.ShowBalloonTip(5000,"OD Calendar","Cannot register Alt+6. Another application may already use it.",ToolTipIcon.Warning); }
+     if(!registered && !conflictShown) { conflictShown=true; Program.WriteResult("STOP","Cannot register Alt+6. Another application may already use it."); }
     }
     if(!active && registered) { Native.UnregisterHotKey(Handle,1); registered=false; }
    };
-   timer.Start(); tray.ShowBalloonTip(4000,"OD Calendar","Select Appointments, then press Alt+6. Exit from this tray icon.",ToolTipIcon.Info);
+   timer.Start();
   }
   protected override void WndProc(ref Message m) {
    if(m.Msg==0x312 && m.WParam.ToInt32()==1 && Interlocked.CompareExchange(ref busy,1,0)==0) {
@@ -212,7 +209,6 @@ namespace LukOdCalendarHotkey {
       result=Calendar.BackSixMonths(); ok=true;
      } catch(Exception e) { result=e.Message; ok=false; }
      Program.WriteResult(ok?"NAVIGATED":"STOP",result);
-     lock(resultLock) { pending=result; pendingOk=ok; }
      Interlocked.Exchange(ref busy,0);
     });
    }
@@ -221,7 +217,7 @@ namespace LukOdCalendarHotkey {
   public void Dispose() { timer.Dispose(); Native.UnregisterHotKey(Handle,1); tray.Dispose(); DestroyHandle(); }
  }
  static class Program {
-  internal const string Build="2026.11.05.5";
+  internal const string Build="2026.11.05.6";
   internal static void WriteResult(string status,string message) {
    try {
     File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"last-result.txt"),
@@ -235,7 +231,7 @@ namespace LukOdCalendarHotkey {
     return;
    }
    bool created; using(var mutex=new Mutex(true,"Local\\LukOdCalendarHotkey",out created)) {
-    if(!created) { MessageBox.Show("OD Calendar Hotkey is already running."); return; }
+    if(!created) return;
     Application.EnableVisualStyles();
     using(var window=new HotkeyWindow()) {
      string log=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"last-result.txt");

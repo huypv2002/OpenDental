@@ -25,7 +25,8 @@ August 31 correctly clamps to February
 28/29; it does not approximate by repeatedly clicking the previous-month button.
 A repeated hotkey starts from the newly selected date.
 
-A tray balloon reports success/failure. The same result is saved to:
+The utility runs silently: no startup, success, error or duplicate-instance
+popup notifications. Results/errors are saved to:
 `%LOCALAPPDATA%\LUKDental\ODCalendarHotkey\last-result.txt`.
 Quit via the tray icon's Exit menu. There is no automatic startup registration.
 To opt into startup without a shortcut, run the installer with `-Startup -Restart`.
