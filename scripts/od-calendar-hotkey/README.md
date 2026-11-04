@@ -28,6 +28,24 @@ A repeated hotkey starts from the newly selected date.
 A tray balloon reports success/failure. The same result is saved to:
 `%LOCALAPPDATA%\LUKDental\ODCalendarHotkey\last-result.txt`.
 Quit via the tray icon's Exit menu. There is no automatic startup registration.
+To opt into startup without a shortcut, run the installer with `-Startup -Restart`.
+It compiles first, stops only this profile's installed utility in the current
+session, replaces it, registers its quoted executable path as
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run\LUKOdCalendarHotkey`,
+verifies the registry value and starts the utility immediately. It starts at
+login for this Windows account, not before login. Repeating the command updates
+the same entry. Unrelated Run entries are untouched; an existing differing value
+for this app's entry is backed up under the app installation directory.
+
+One PowerShell command to pull, update, enable startup, and launch:
+
+```powershell
+& { Set-Location 'C:\OpenDental'; git pull --ff-only; if ($LASTEXITCODE -ne 0) { throw 'git pull failed' }; powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-od-calendar-hotkey.ps1 -Startup -Restart; if ($LASTEXITCODE -ne 0) { throw 'Hotkey setup failed' } }
+```
+
+Disable startup only:
+`Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LUKOdCalendarHotkey -ErrorAction SilentlyContinue`.
+
 The script builds locally using the Windows .NET Framework compiler, verifies
 the repository's UIA3 library checksums, and installs under the current profile.
 Exit the running tray app before rebuilding/updating it.
