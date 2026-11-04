@@ -24,6 +24,7 @@ namespace LukOdCalendarHotkey {
   [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(IntPtr h,int id);
   [DllImport("user32.dll")] internal static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
+  [DllImport("user32.dll",SetLastError=true)] internal static extern bool PostMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
   [StructLayout(LayoutKind.Sequential)] internal struct POINT { public int X,Y; public POINT(int x,int y){X=x;Y=y;} }
  }
  static class Calendar {
@@ -104,29 +105,58 @@ namespace LukOdCalendarHotkey {
   static void Cancel(AutomationElement popup) {
    IntPtr h=(IntPtr)popup.Current.NativeWindowHandle;
    AssertForeground(h);
-   ((WindowPattern)popup.GetCurrentPattern(WindowPattern.Pattern)).Close();
+   object pattern;
+   if(popup.TryGetCurrentPattern(WindowPattern.Pattern,out pattern)) { ((WindowPattern)pattern).Close(); return; }
+   // Close this identified date-picker window only; never send a generic Escape.
+   DateBox(popup); Unique(popup,"butOK");
+   if(!Native.PostMessage(h,0x10,IntPtr.Zero,IntPtr.Zero)) throw new InvalidOperationException("Could not close verification date picker.");
+  }
+  static void ConfirmPicker(AutomationElement popup) {
+   IntPtr h=(IntPtr)popup.Current.NativeWindowHandle;
+   AssertForeground(h);
+   var button=Unique(popup,"butOK");
+   if(!button.Current.IsEnabled) throw new InvalidOperationException("Date picker OK is disabled.");
+   object pattern;
+   if(button.TryGetCurrentPattern(InvokePattern.Pattern,out pattern)) { ((InvokePattern)pattern).Invoke(); return; }
+   // OD's WPF custom Button can expose bounds without an Invoke provider.
+   var r=button.Current.BoundingRectangle;
+   var p=popup.Current.BoundingRectangle;
+   if(r.Width<10 || r.Height<10 || !p.Contains(r)) throw new InvalidOperationException("Invalid OK button bounds.");
+   int x=(int)(r.Left+r.Width/2), y=(int)(r.Top+r.Height/2);
+   if(Native.GetAncestor(Native.WindowFromPoint(new Native.POINT(x,y)),2)!=h) throw new InvalidOperationException("Date picker OK is covered by another window.");
+   if(!Native.SetCursorPos(x,y)) throw new InvalidOperationException("Could not reach date picker OK.");
+   AssertForeground(h);
+   Native.mouse_event(2,0,0,0,UIntPtr.Zero); Native.mouse_event(4,0,0,0,UIntPtr.Zero);
   }
   internal static string BackSixMonths() {
    IntPtr main=ActiveMain(); AutomationElement popup=null;
+   string stage="open date picker"; bool confirmed=false;
    try {
     popup=OpenPicker(main);
+    stage="read selected date";
     string originalDateText=ReadDateText(popup);
     DateTime before=ParseDate(originalDateText), target=DatePolicy.BackSixMonths(before);
     AssertForeground((IntPtr)popup.Current.NativeWindowHandle);
+    stage="fill target date";
     var value=(ValuePattern)DateBox(popup).GetCurrentPattern(ValuePattern.Pattern);
     if(value.Current.IsReadOnly) throw new InvalidOperationException("Date field is read-only.");
     value.SetValue(DatePolicy.Format(target,originalDateText,CultureInfo.CurrentCulture));
     if(ParseDate(ReadDateText(popup))!=target) throw new InvalidOperationException("Date entry readback failed.");
     AssertForeground((IntPtr)popup.Current.NativeWindowHandle);
-    ((InvokePattern)Unique(popup,"butOK").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+    stage="confirm date picker OK";
+    ConfirmPicker(popup); confirmed=true;
     popup=null;
     for(int i=0;i<30 && Native.GetForegroundWindow()!=main;i++) Thread.Sleep(100);
     AssertForeground(main);
     // Read the date back from OD itself, then cancel this verification dialog.
+    stage="verify calendar date";
     popup=OpenPicker(main); DateTime actual=ParseDate(ReadDateText(popup));
+    stage="close verification picker";
     Cancel(popup); popup=null;
     if(actual!=target) throw new InvalidOperationException("OD date verification failed. Inspect the displayed calendar; no automatic retry.");
     return before.ToString("yyyy-MM-dd")+" -> "+actual.ToString("yyyy-MM-dd");
+   } catch(Exception e) {
+    throw new InvalidOperationException("Stage="+stage+": "+e.Message+(confirmed?" Calendar may already have moved; inspect before retrying.":""));
    } finally {
     if(popup!=null) { try { Cancel(popup); } catch {} }
    }
@@ -193,7 +223,7 @@ namespace LukOdCalendarHotkey {
   public void Dispose() { timer.Dispose(); Native.UnregisterHotKey(Handle,1); tray.Dispose(); DestroyHandle(); }
  }
  static class Program {
-  internal const string Build="2026.11.05.2";
+  internal const string Build="2026.11.05.3";
   internal static void WriteResult(string status,string message) {
    try {
     File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"last-result.txt"),
