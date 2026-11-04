@@ -1,4 +1,31 @@
 # Pure planning and guarded write workflow. No connections are opened here.
+function Read-ODDatabaseConfigXml {
+ param([string]$Xml)
+ $doc=New-Object System.Xml.XmlDocument
+ $doc.XmlResolver=$null
+ if ($Xml -match '<!DOCTYPE') { throw 'DOCTYPE is not permitted in OD config.' }
+ $doc.LoadXml($Xml)
+ $root=$doc.DocumentElement
+ if ($root.LocalName -notin @('ConnectionSettings','ConnectionData')) {
+  $names=@($root.ChildNodes | Where-Object { $_.NodeType -eq [Xml.XmlNodeType]::Element } | ForEach-Object { $_.LocalName })
+  throw "Unknown FreeDentalConfig.xml layout. Root=$($root.LocalName); child tags=$($names -join ','). Values omitted."
+ }
+ $connections=@($root.SelectNodes("*[local-name()='DatabaseConnection']"))
+ if ($connections.Count -gt 1) { throw 'Multiple DB connections in config; inspect before choosing a target.' }
+ if ($connections.Count -eq 1) { $connection=$connections[0] }
+ elseif ($root.LocalName -eq 'ConnectionData') { $connection=$root }
+ else { throw 'ConnectionSettings has no DatabaseConnection; no server-connection fallback is used.' }
+ $settings=@{}
+ foreach ($pair in @(@{Key='Host';Tag='ComputerName'},@{Key='Name';Tag='Database'},@{Key='User';Tag='User'},@{Key='Password';Tag='Password'})) {
+  $nodes=@($connection.SelectNodes("*[local-name()='$($pair.Tag)']"))
+  if ($nodes.Count -gt 1) { throw "Duplicate $($pair.Tag) config fields; target is ambiguous." }
+  if ($nodes.Count -eq 1) { $settings[$pair.Key]=$nodes[0].InnerText }
+ }
+ $hashes=@($connection.SelectNodes("*[local-name()='MySQLPassHash']"))
+ $settings.HasEncryptedPassword=(@($hashes | Where-Object { -not [string]::IsNullOrWhiteSpace($_.InnerText) }).Count -gt 0)
+ return $settings
+}
+
 function New-PluginWhitelistPlan {
  param([string]$Xml, [string]$PluginName)
  if ($PluginName -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*\.dll$') { throw 'Expected a DLL filename, without a directory.' }

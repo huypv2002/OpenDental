@@ -41,15 +41,8 @@ try {
   Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
  $settings=@{}
  if ($configPath) {
-  [xml]$config=Get-Content -LiteralPath $configPath -Raw
-  $root=$config.SelectSingleNode('/ConnectionData')
-  if (-not $root) { throw 'Unknown FreeDentalConfig.xml layout.' }
-  $connections=@($root.SelectNodes('DatabaseConnection'))
-  if ($connections.Count -gt 1) { throw 'Multiple DB connections in config; inspect before choosing a target.' }
-  if ($connections.Count -eq 1) { $connection=$connections[0] } else { $connection=$root }
-  $settings.Host=[string]$connection.ComputerName; $settings.Name=[string]$connection.Database
-  $settings.User=[string]$connection.User; $settings.Password=[string]$connection.Password
-  if ($connection.SelectSingleNode('MySQLPassHash') -and [string]$connection.MySQLPassHash) {
+  $settings=Read-ODDatabaseConfigXml -Xml (Get-Content -LiteralPath $configPath -Raw)
+  if ($settings.HasEncryptedPassword) {
    if (-not $PSBoundParameters.ContainsKey('DbPassword')) { throw 'Encrypted DB password detected; supply DB credentials explicitly.' }
   }
  }

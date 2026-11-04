@@ -78,6 +78,30 @@ Test 'missing preference or encryption mismatch blocks write' {
  MustThrow { Invoke-PluginWhitelistChange -PluginName $target -Apply -ReadValue { $null } }
  MustThrow { Invoke-PluginWhitelistChange -PluginName $target -Apply -ReadValue { $original } -Decrypt { param($v) $v } -Encrypt { 'bad-roundtrip' } -CompareExchange { throw 'must not write' } }
 }
+Test 'reads official ConnectionSettings config and ignores ServerConnection' {
+ $xml='<ConnectionSettings><DatabaseConnection><ComputerName>SERVER</ComputerName><Database>clinic</Database><User>reader</User><Password>test&amp;;value</Password></DatabaseConnection><ServerConnection><ComputerName>wrong</ComputerName><Database>wrong</Database></ServerConnection></ConnectionSettings>'
+ $settings=Read-ODDatabaseConfigXml $xml
+ Assert ($settings.Host -eq 'SERVER' -and $settings.Name -eq 'clinic' -and $settings.User -eq 'reader') 'Wrong DB selected'
+ Assert ($settings.Password -ceq 'test&;value') 'Password XML decoding changed'
+}
+Test 'reads legacy direct and namespaced config' {
+ foreach ($xml in @('<ConnectionData><ComputerName>SERVER</ComputerName><Database>clinic</Database><User>root</User><Password/></ConnectionData>', '<ConnectionSettings xmlns="urn:test"><DatabaseConnection><ComputerName>SERVER</ComputerName><Database>clinic</Database><User>root</User><Password/></DatabaseConnection></ConnectionSettings>')) {
+  $settings=Read-ODDatabaseConfigXml $xml
+  Assert ($settings.Host -eq 'SERVER' -and $settings.Password -eq '') 'Config read failed'
+ }
+}
+Test 'rejects ambiguous DB configs and remote-only config' {
+ MustThrow { Read-ODDatabaseConfigXml '<ConnectionSettings><DatabaseConnection/><DatabaseConnection/></ConnectionSettings>' }
+ MustThrow { Read-ODDatabaseConfigXml '<ConnectionSettings><ServerConnection/></ConnectionSettings>' }
+ MustThrow { Read-ODDatabaseConfigXml '<ConnectionData><Database>one</Database><Database>two</Database></ConnectionData>' }
+}
+Test 'unknown config diagnostics show tags without credential values' {
+ try { Read-ODDatabaseConfigXml '<Unexpected><Password>secret-fixture</Password></Unexpected>'; throw 'Expected failure' }
+ catch {
+  Assert ($_.Exception.Message -like '*Root=Unexpected*child tags=Password*') 'No structural diagnostic'
+  Assert ($_.Exception.Message -notlike '*secret-fixture*') 'Secret leaked'
+ }
+}
 # Parse the Windows entry point without executing it.
 Test 'Windows entry script parses' {
  $tokens=$null; $errors=$null
