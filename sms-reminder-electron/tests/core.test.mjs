@@ -447,12 +447,15 @@ test("legacy Bridge Recall lookup shows only documented visits and deduplicates 
     assert.equal(byPatient.rows[0].ProcedureCodes, "D1110");
     assert.equal(byPatient.rows[0].RecallSentCount, 0);
     assert.equal(byPatient.rows[0]._RecallLookup, true);
-    await assert.rejects(f.service.compose(byPatient.rows[0], "recall"), /preview only/);
+    const draft = await f.service.compose(byPatient.rows[0], "recall");
+    assert.equal(draft.row.PatNum, 70);
+    assert.equal(f.native[0].mode, "draft");
+    await f.service.confirmDraft(draft.id, false);
     f.requests.length = 0;
     const byDate = await f.service.load("recall", { lookup: { serviceDate: "2026-05-07" }, codes: "D1110" });
     assert.deepEqual(byDate.rows.map((row) => row.PatNum), [70, 71]);
     assert.deepEqual(f.requests.filter((r) => r.route.endsWith("/patient-history")).map((r) => r.params.patNum), [70, 71, 72]);
-    assert.equal(f.native.length, 0);
+    assert.equal(f.native.length, 1);
   }));
 test("old Bridge and missing-language Recall templates block automatic sending",()=>using({request:async()=>({patients:[]})},async f=>{
   await assert.rejects(f.service.loadDailyRecall("2026-10-23"),/Update SERVER/);assert.equal(f.native.length,0);

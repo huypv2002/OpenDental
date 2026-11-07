@@ -411,7 +411,7 @@ function cell(kind, row, key) {
   if (key === "template") {
     const category = categoryFor(kind),
       current = prepared(kind, row)._TemplateKey;
-    return `<select class="row-template flag-select" data-template aria-label="Patient template" ${row._RecallLookup ? "disabled" : ""}>${flagOptions(Object.keys(S.library.templates[category] || {}).map(k => [k, S.library.countries[category]?.[k] || k.slice(0, 2), ({US:"US - English",VI:"Vietnamese",ES:"Spanish"})[k] || k]), current)}</select>`;
+    return `<select class="row-template flag-select" data-template aria-label="Patient template">${flagOptions(Object.keys(S.library.templates[category] || {}).map(k => [k, S.library.countries[category]?.[k] || k.slice(0, 2), ({US:"US - English",VI:"Vietnamese",ES:"Spanish"})[k] || k]), current)}</select>`;
   }
   if (key === "view" || key === "history")
     return `<button class="small" data-row-action="${key}">${key === "view" ? "View" : "Logs"}</button>`;
@@ -454,9 +454,8 @@ function renderTable(kind) {
   }
   const rowCount = `${rows.length} row${rows.length === 1 ? "" : "s"} · ${selected(kind).length} selected`;
   $(`count-${kind}`).textContent =
-    lookupTarget ? `${rowCount} · ${lookupTarget.label} · Preview only${lookup?.legacy ? " · Limited to follow-up and available recall logs" : ""}`
+    lookupTarget ? `${rowCount} · ${lookupTarget.label}${lookup?.legacy ? " · Limited to follow-up and available recall logs" : ""}`
       : `${rowCount}${S.loading[kind] ? " · Loading…" : ""}`;
-  if (kind === "recall") updateRecallFillButton(lookupTarget);
   if (kind === "dashboard") {
     const values = [
       rows.length,
@@ -888,8 +887,6 @@ async function customRecipient(edit = false) {
   renderTable("holiday");
 }
 async function draftBatch(kind, all = false) {
-  if (kind === "recall" && recallLookupTarget())
-    throw new Error("Recall lookup results are available for preview only.");
   const rows = all
     ? visibleRows(kind).map((row) => prepared(kind, row))
     : selected(kind);
@@ -953,6 +950,7 @@ async function resolveDraft(pending = S.status.pendingDraft) {
     id: pending.id,
     sent: answer === "sent",
   });
+  if (answer === "sent" && pending.row._Kind === "recall") S.recallLookup = null;
   updateStatus();
   if (answer === "sent" && S.batch.length) {
     S.batchIndex++;
@@ -1008,11 +1006,6 @@ async function saveSettings() {
     await load("dashboard");
   }
 }
-function updateRecallFillButton(lookupTarget = recallLookupTarget()) {
-  const button = $("compose-recall");
-  button.disabled = !!(lookupTarget || S.status.busy || S.status.pendingDraft || S.status.monitorBusy);
-  button.title = lookupTarget ? "Recall lookup results are available for preview only." : "";
-}
 function updateStatus() {
   $("workstation").textContent =
     `${S.status.machine || ""} · ${S.status.mode === "fd2" ? "FD2 · Drafts" : "R5 · Reminders"}${S.status.demo ? " · DEMO" : ""}`;
@@ -1046,7 +1039,6 @@ function updateStatus() {
   for (const button of document.querySelectorAll("[data-send]"))
     button.disabled =
       S.status.busy || !!S.status.pendingDraft || S.status.monitorBusy;
-  updateRecallFillButton();
   for (const id of ["send-dashboard", "send-all", "test-sms"])
     if (S.status.mode === "fd2") $(id).disabled = true;
   const banner = $("draft-banner");

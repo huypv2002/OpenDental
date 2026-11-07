@@ -109,7 +109,7 @@ async function run() {
         await row.waitFor();
         assert.match(await row.innerText(), /05\/07\/2026.*Example 70.*D1110/s);
         assert.equal(await row.locator("[data-select]").isEnabled(), true);
-        assert.equal(await row.locator("[data-template]").isDisabled(), true);
+        assert.equal(await row.locator("[data-template]").isEnabled(), true);
         await row.locator('[data-row-action="history"]').click();
         await page.waitForSelector("#modal[open]");
         assert.match(await page.locator("#modal").innerText(), /Synthetic Phone Link focus failure/);
@@ -134,12 +134,17 @@ async function run() {
     assert.equal(await page.locator("#table-recall [data-select]:checked").count(), 3);
     await selectAllRecall.uncheck();
     await page.locator("#table-recall [data-select]").first().check();
-    assert.match(await page.locator("#count-recall").innerText(), /1 selected.*Preview only/);
-    assert.equal(await page.isDisabled("#compose-recall"), true);
+    assert.match(await page.locator("#count-recall").innerText(), /1 selected/);
+    assert.equal(await page.isEnabled("#compose-recall"), true);
     await page.click("#preview-recall");
     await page.waitForSelector("#modal[open]");
     assert.match(await page.locator("#modal").innerText(), /SMS preview.*Example 70/s);
     await page.click('[data-modal-result="close"]');
+    await page.click("#compose-recall");
+    await page.waitForSelector("#modal[open]");
+    assert.match(await page.locator("#modal").innerText(), /Confirm SMS sent.*Example 70/s);
+    await page.click('[data-modal-result="not-sent"]');
+    await page.waitForSelector("#modal", { state: "hidden" });
     await page.fill("#recall-visit-date", "");
     await page.waitForSelector("#table-recall [data-select]:enabled");
     assert.equal(await page.locator("#table-recall [data-select]:checked").count(), 0);

@@ -314,8 +314,6 @@ class SmsService {
     }
   }
   async compose(row, category = "appointment", loggable = true, testOnly = false) {
-    if (row._RecallLookup)
-      throw new Error("Recall lookup results are available for preview only.");
     return this.exclusive(async () => {
       if (!Object.keys(this.library.templates).length) await this.templates();
       const prepared = this.rowWithTemplate(row, category);
