@@ -90,8 +90,12 @@ async function run() {
         if(method==='GET'&&route==='/api/sms-reminders/patient-history'&&params.patNum===70) {
           return {history:[{MessageType:"recall",Status:"needs-review",Context:"Synthetic D1110 recall",ErrorMessage:"Synthetic Phone Link focus failure"}]};
         }
-        if(method==='GET'&&route==='/api/sms-reminders/recall-history'&&params.serviceDate==='2026-05-07') {
-          return {history:[70, 71, 72].map(PatNum => ({PatNum, LogNum:PatNum+1, Status:"needs-review", Context:"D1110"}))};
+        if(method==='GET'&&route==='/api/sms-reminders/recall-candidates'&&params.mode==='lookup') {
+          const ids = params.serviceDate === '2026-05-07' ? [70, 71, 72] : params.patNum === 70 ? [70] : [];
+          return {contract:"recall-patient-lookup-v1", patients:ids.map(PatNum => ({
+            PatNum, FName:"Example", LName:String(PatNum), LastProcDate:"2026-05-07", ProcedureCodes:"D1110",
+            Language:"Vietnamese", WirelessPhone:"2815550070",
+          }))};
         }
         return original.call(this,method,route,params,...rest);
       };
@@ -101,10 +105,15 @@ async function run() {
       await page.getByRole("button", { name: tab, exact: true }).first().click();
       await page.fill(`#search-${kind}`, "#70");
       if (kind === "recall") {
-        const attempt = page.locator("#table-recall [data-recall-history]");
-        await attempt.waitFor();
-        assert.match(await attempt.innerText(), /Synthetic Phone Link focus failure/);
-        assert.equal(await page.locator("#table-recall [data-select]").count(), 0);
+        const row = page.locator("#table-recall tr[data-row]");
+        await row.waitFor();
+        assert.match(await row.innerText(), /05\/07\/2026.*Example 70.*D1110/s);
+        assert.equal(await row.locator("[data-select]").isDisabled(), true);
+        assert.equal(await row.locator("[data-template]").isDisabled(), true);
+        await row.locator('[data-row-action="history"]').click();
+        await page.waitForSelector("#modal[open]");
+        assert.match(await page.locator("#modal").innerText(), /Synthetic Phone Link focus failure/);
+        await page.click('[data-modal-result="close"]');
       }
       await page.click(`#history-${kind}`);
       await page.waitForSelector("#modal[open]");
@@ -117,11 +126,11 @@ async function run() {
       await page.fill(`#search-${kind}`, "");
     }
     await page.getByRole("button", { name: "Recall", exact: true }).first().click();
-    await page.fill("#recall-history-date", "2026-05-07");
-    await page.waitForFunction(() => document.querySelectorAll("#table-recall [data-recall-history]").length === 3);
-    assert.equal(await page.locator("#table-recall [data-select]").count(), 0);
-    await page.fill("#recall-history-date", "");
-    await page.waitForSelector("#table-recall [data-select]");
+    await page.fill("#recall-visit-date", "2026-05-07");
+    await page.waitForFunction(() => document.querySelectorAll("#table-recall tr[data-row]").length === 3);
+    assert.equal(await page.locator("#table-recall [data-select]:enabled").count(), 0);
+    await page.fill("#recall-visit-date", "");
+    await page.waitForSelector("#table-recall [data-select]:enabled");
     await page.getByRole("button", { name: "Patient", exact: true }).first().click();
     await page.fill('#search-patient','#70');
     await page.click('#refresh-patient');

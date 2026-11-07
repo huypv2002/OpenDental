@@ -331,14 +331,41 @@ export async function getSmsBirthdayCandidates(query = {}) {
 }
 
 export async function getSmsRecallCandidates(query = {}) {
+  if (query.mode === 'daily') {
+    await ensureSmsRecallLogTable();
+    return dailyRecallCandidates(pool, query);
+  }
+  const lookup = query.mode === 'lookup';
+  const lookupPatient = lookup && query.patNum != null;
+  const lookupDate = lookup && query.serviceDate != null;
+  if (lookup && lookupPatient === lookupDate) {
+    throw Object.assign(new Error('Specify a patient number or visit date.'), { status: 400 });
+  }
+  const patNum = lookupPatient ? Number(query.patNum) : null;
+  if (lookupPatient && (!Number.isSafeInteger(patNum) || patNum <= 0)) {
+    throw Object.assign(new Error('A valid patient number is required.'), { status: 400 });
+  }
+  const serviceDate = lookupDate ? parseVisitDate(query.serviceDate) : null;
   await ensureSmsRecallLogTable();
-  if(query.mode==='daily')return dailyRecallCandidates(pool,query);
   const months = parseMonths(query.months, 6);
   const codes = parseProcedureCodes(query.codes);
   const statuses = parseStatuses(query.statuses);
   const codePlaceholders = codes.map(() => '?').join(',');
   const statusPlaceholders = statuses.map(() => '?').join(',');
   const limit = parseLimit(query.limit, 250);
+
+  const lookupFilter = lookupPatient ? 'AND p.PatNum = ?'
+    : lookupDate ? 'AND pl.ProcDate = ?' : 'AND p.PatStatus = 0';
+  const eligibility = lookup ? '' : `
+      HAVING MAX(pl.ProcDate) <= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM appointment a
+          WHERE a.PatNum = p.PatNum
+            AND a.AptStatus IN (${statusPlaceholders})
+            AND a.AptDateTime >= NOW()
+        )`;
+  const params = lookup ? [...codes, patNum ?? serviceDate] : [...codes, months, ...statuses, limit];
 
   const [rows] = await pool.execute(
     `
@@ -371,7 +398,7 @@ export async function getSmsRecallCandidates(query = {}) {
       ) rl ON rl.PatNum = p.PatNum
       WHERE pc.ProcCode IN (${codePlaceholders})
         AND pl.ProcStatus = 2
-        AND p.PatStatus = 0
+        ${lookupFilter}
       GROUP BY
         p.PatNum,
         p.FName,
@@ -384,22 +411,16 @@ export async function getSmsRecallCandidates(query = {}) {
         p.Gender,
         p.Birthdate,
         rl.RecallSentCount,
-        rl.LastRecallSentAt
-      HAVING MAX(pl.ProcDate) <= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
-        AND NOT EXISTS (
-          SELECT 1
-          FROM appointment a
-          WHERE a.PatNum = p.PatNum
-            AND a.AptStatus IN (${statusPlaceholders})
-            AND a.AptDateTime >= NOW()
-        )
-      ORDER BY MAX(pl.ProcDate), p.LName, p.FName
-      LIMIT ?
+        rl.LastRecallSentAt${lookupPatient ? ', pl.ProcDate' : ''}
+      ${eligibility}
+      ORDER BY MAX(pl.ProcDate) ${lookupPatient ? 'DESC' : 'ASC'}, p.LName, p.FName
+      ${lookupPatient ? 'LIMIT 1' : lookupDate ? '' : 'LIMIT ?'}
     `,
-    [...codes, months, ...statuses, limit]
+    params
   );
 
   return {
+    ...(lookup ? { contract: 'recall-patient-lookup-v1' } : {}),
     months,
     codes,
     patients: rows.map((row) => ({
@@ -783,12 +804,17 @@ export async function getSmsPatientLogs(query = {}) {
   return { logs: rows };
 }
 
-export async function getSmsRecallHistoryByVisitDate(query = {}) {
-  const serviceDate = parseDate(query.serviceDate);
+function parseVisitDate(value) {
+  const serviceDate = parseDate(value);
   const date = new Date(`${serviceDate}T00:00:00Z`);
   if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== serviceDate) {
     throw Object.assign(new Error('A valid visit date is required.'), { status: 400 });
   }
+  return serviceDate;
+}
+
+export async function getSmsRecallHistoryByVisitDate(query = {}) {
+  const serviceDate = parseVisitDate(query.serviceDate);
   await ensureSmsRecallLogTable();
   const [history] = await pool.execute(
     `

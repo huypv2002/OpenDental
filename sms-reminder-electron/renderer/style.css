@@ -324,10 +324,6 @@ tr:hover td {
   text-align: center;
   color: #758596;
 }
-.recall-history-details {
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
 .loading {
   position: absolute;
   inset: 38px 0 0;

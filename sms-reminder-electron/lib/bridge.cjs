@@ -3,7 +3,6 @@ const GETS = new Set([
   "/api/admin/patients",
   "/api/sms-reminders/appointments",
   "/api/sms-reminders/recall-candidates",
-  "/api/sms-reminders/recall-history",
   "/api/sms-reminders/treatment-candidates",
   "/api/sms-reminders/birthday-candidates",
   "/api/sms-reminders/patient-logs",

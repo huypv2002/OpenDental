@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { pool } from './db.js';
-import { getSmsPatientHistory, getSmsRecallHistoryByVisitDate, getSmsReminderAppointments, isRecallOperatory } from './smsReminders.js';
+import { getSmsPatientHistory, getSmsRecallCandidates, getSmsRecallHistoryByVisitDate, getSmsReminderAppointments, isRecallOperatory } from './smsReminders.js';
 
 test('recall operatory is excluded by exact name or abbreviation', () => {
   assert.equal(isRecallOperatory({ OpName: 'RECALL' }), true);
@@ -62,6 +62,40 @@ test('appointment feed keeps only Wireless phone and excludes recall defensively
     assert.equal(result.appointments[0].PatNum, 93);
     assert.equal(result.appointments[0].Phone, '');
     assert.equal(result.appointments[0].WorkPhoneFormatted, '(281) 333-3333');
+  } finally {
+    pool.execute = originalExecute;
+  }
+});
+
+test('recall lookup returns procedure rows independently of follow-up eligibility', async () => {
+  const originalExecute = pool.execute;
+  pool.execute = async (sql, params) => {
+    const statement = String(sql).replace(/\s+/g, ' ').trim();
+    if (statement.startsWith('CREATE TABLE IF NOT EXISTS')) return [{ affectedRows: 0 }];
+    const row = { PatNum: 70, FName: 'Example', LastProcDate: '2026-05-07', ProcedureCodes: 'D1110' };
+    if (params[1] === 70) {
+      assert.match(statement, /pl.ProcStatus = 2 AND p.PatNum = \?/);
+      assert.match(statement, /rl.LastRecallSentAt, pl.ProcDate ORDER BY MAX\(pl.ProcDate\) DESC, p.LName, p.FName LIMIT 1/);
+      return [[row]];
+    }
+    if (params[1] === '2026-05-07') {
+      assert.match(statement, /pl.ProcStatus = 2 AND pl.ProcDate = \?/);
+      assert.doesNotMatch(statement, /NOT EXISTS|LIMIT/);
+      return [[row, { ...row, PatNum: 71 }, { ...row, PatNum: 72 }]];
+    }
+    assert.match(statement, /AND p.PatStatus = 0.*HAVING MAX\(pl.ProcDate\).*NOT EXISTS.*a.AptDateTime >= NOW\(\)/);
+    assert.deepEqual(params, ['D1110', 6, 1, 250]);
+    return [[{ ...row, PatNum: 72 }]];
+  };
+  try {
+    const byPatient = await getSmsRecallCandidates({ mode: 'lookup', codes: 'D1110', patNum: 70 });
+    assert.equal(byPatient.contract, 'recall-patient-lookup-v1');
+    assert.equal(byPatient.patients[0].LastProcDate, '2026-05-07');
+    const byDate = await getSmsRecallCandidates({ mode: 'lookup', codes: 'D1110', serviceDate: '2026-05-07' });
+    assert.deepEqual(byDate.patients.map((row) => row.PatNum), [70, 71, 72]);
+    const followUp = await getSmsRecallCandidates({ codes: 'D1110', statuses: '1' });
+    assert.deepEqual(followUp.patients.map((row) => row.PatNum), [72]);
+    await assert.rejects(getSmsRecallCandidates({ mode: 'lookup', patNum: 70, serviceDate: '2026-05-07' }), { status: 400 });
   } finally {
     pool.execute = originalExecute;
   }

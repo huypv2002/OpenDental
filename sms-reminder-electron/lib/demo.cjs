@@ -90,7 +90,6 @@ class DemoBridge {
       return { settings: this.settings };
     }
     if (path.endsWith("/logs")) return { logs: this.logs };
-    if (path === "/api/sms-reminders/recall-history") return { serviceDate: params.serviceDate, history: [] };
     if (path.endsWith("/patient-history"))
       return {
         history: [
@@ -107,6 +106,12 @@ class DemoBridge {
     if (path.endsWith("/patient-logs")) return { logs: [] };
     const date = params.date || this.model.clinicClock().date;
     let rows = this.patients(date);
+    if (path === "/api/sms-reminders/recall-candidates" && params.mode === "lookup") {
+      const patients = params.serviceDate
+        ? rows.slice(0, 3).map(row => ({ ...row, LastProcDate: params.serviceDate }))
+        : rows.filter(row => row.PatNum === params.patNum);
+      return { contract: "recall-patient-lookup-v1", patients };
+    }
     if (path === "/api/admin/patients" && params.q === "noappointment")
       return { patients: [{ ...rows[0], PatNum: 9997, AptNum: null, AptDateTime: "", FName: "Noappointment", LName: "Demo" }] };
     if (path === "/api/sms-reminders/recall-candidates" && params.mode === "daily") {

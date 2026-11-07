@@ -165,6 +165,22 @@ class SmsService {
             })
           ).logs || [],
       };
+    if (kind === "recall" && options.lookup) {
+      const { patNum, serviceDate } = options.lookup;
+      const data = await this.bridge.request("GET", "/api/sms-reminders/recall-candidates", {
+        mode: "lookup",
+        patNum,
+        serviceDate,
+        codes: options.codes || this.config.recall_codes,
+      });
+      if (data.contract !== "recall-patient-lookup-v1")
+        throw new Error("Update SERVER Bridge to look up recall patients by number or visit date.");
+      return {
+        rows: (data.patients || []).map((row) => ({
+          ...row, _Kind: "recall", _RecallLookup: true, Phone: this.model.phoneFor(row),
+        })),
+      };
+    }
     if (kind === "recall" || kind === "treatment") {
       const params =
         kind === "recall"
