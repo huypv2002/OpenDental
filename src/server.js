@@ -97,6 +97,7 @@ import {
   saveSmsSetting,
   clearSmsDryRunLogs,
   getSmsRecallCandidates,
+  getSmsRecallHistoryByVisitDate,
   getSmsReminderAppointments,
   getSmsReminderLogs,
   getSmsPatientHistory,
@@ -719,6 +720,15 @@ app.get('/api/sms-reminders/appointments', requireApiToken, async (req, res, nex
 app.get('/api/sms-reminders/recall-candidates', requireApiToken, async (req, res, next) => {
   try {
     const data = await getSmsRecallCandidates(req.query);
+    res.json({ ok: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/sms-reminders/recall-history', requireApiToken, async (req, res, next) => {
+  try {
+    const data = await getSmsRecallHistoryByVisitDate(req.query);
     res.json({ ok: true, data });
   } catch (error) {
     next(error);

@@ -50,6 +50,7 @@ const S = {
   loading: {},
   loadErrors: {},
   loadedQueries: {},
+  recallHistory: null,
 };
 const kinds = [
   "dashboard",
@@ -130,7 +131,7 @@ function build() {
     dashboard: `${hero("LUK DENTAL", "SMS appointment reminders", "Review tomorrow's Open Dental appointments from the bridge, send reminder texts, and keep an audit log.", true)}<div class="banner" id="draft-banner" hidden></div><div class="stats">${["Appointments loaded", "Pending reminders", "Already sent", "Missing phone"].map((v, i) => `<div class="stat"><b id="stat-${i}">0</b><span>${v}</span></div>`).join("")}</div><div class="card toolbar"><label for="appointment-date">Reminder date</label><input id="appointment-date" type="date">${btn("refresh-dashboard", "Load appointments")}${btn("preview-dashboard", "Preview selected")}<span class="grow"></span>${btn("open-phone", "Open Phone Link")}${btn("test-sms", "Send test SMS", false, "data-send")}${btn("clear-dry-run", "Clear dry-run")}${btn("reset-dashboard", "Reset not sent")}${btn("mark-dashboard", "Mark sent")}${btn("test-dashboard", "Test selected (no send)", false, "data-send")}${btn("send-dashboard", "Send selected", true, "data-send")}${btn("send-all", "Send all not sent", true, "data-send")}</div>${search("dashboard", "Patient, phone, email, appointment #…")}${tableShell("dashboard")}`,
     patient: `${hero("PATIENT SMS", "Manual patient messages", "Search any patient, choose a template, then fill a draft in Phone Link for staff to send.")}<div class="card toolbar"><label for="search-patient">Patient search</label><input type="search" id="search-patient" class="grow" placeholder="Patient, phone, email, #patient number…">${btn("refresh-patient", "Search")}${btn("preview-patient", "Preview selected")}${btn("test-patient", "Test selected (no send)", false, "data-send")}${btn("fd2-patient", "Create FD2 draft", false, "data-send")}${btn("compose-patient", "Fill selected draft", true, "data-send")}</div>${tableShell("patient")}`,
     monitoring: `${hero("DAILY AUTOMATION", "SMS monitoring", "One daily schedule sends Appointment reminders and 6-month Recall for D1110 / D4341 / D4342, using patient-language DB templates.")}<div class="two-col"><div class="card"><h2 class="section-title">Daily Appointment + 6-month Recall monitoring</h2><div class="monitor-row"><span>Status</span><span class="monitor-state" id="monitor-state">Stopped</span><span>Workstation</span><span id="monitor-machine"></span><span>Reminder dates</span><span id="monitor-dates"></span><span>Send time</span><span id="monitor-time"></span><span>Behavior</span><span class="muted">Send pending reminders sequentially within 30 minutes after the configured time. Sent and needs-review records are skipped.</span></div><div class="toolbar">${btn("stop-monitoring", "Stop Monitoring")}${btn("start-monitoring", "Start Monitoring", true)}${btn("sync-logs", "Sync pending logs")}</div><div class="info" style="margin-top:16px">Stop finishes the current SMS operation and prevents the next patient from starting. Windows must remain signed in, paired with Phone Link, and unlocked while sending.</div></div><div class="card"><h2 class="section-title">Windows scheduler</h2><div class="scheduler-grid"><label>Enable auto-login<input type="time" id="scheduler-enable" value="08:59"></label><label>Restart Windows<input type="time" id="scheduler-restart" value="09:00"></label><label>Open tool<input type="time" id="scheduler-start" value="10:55"></label><label>Lock Windows<input type="time" id="scheduler-lock" value="12:05"></label></div><p class="muted">Task times follow the Windows time zone. Disable the old Python scheduler before enabling Electron tasks.</p><div class="toolbar">${btn("reload-scheduler-times", "Reload BAT times")}${btn("save-scheduler-times", "Save BAT times")}${btn("scheduler-off", "Disable scheduler")}<label><input type="checkbox" id="scheduler-auto-monitor" checked> Auto start Appointment + 6M Recall monitoring</label>${btn("scheduler-on", "Set up Windows scheduler", true)}</div></div></div><div class="card grow"><h2 class="section-title">Activity</h2><div id="activity" class="activity">Ready.</div></div>`,
-    recall: `${hero("RECALL SMS", "Recall follow-up", "Find patients due for recall or enter #patient number to view SMS history.")}<div class="card toolbar"><label>Recall after</label><input type="number" id="recall-months" min="1" max="60"><span>months</span><label>Procedure codes</label><input id="recall-codes" style="width:230px">${genericActions("recall", "Refresh recall list", "Fill selected template")}</div>${search("recall", "Patient, phone, email, code, patient #…", btn("history-recall", "View SMS history"))}${tableShell("recall")}`,
+    recall: `${hero("RECALL SMS", "Recall follow-up", "Find patients due for recall. Use a patient number or visit date to look up recorded recall attempts.")}<div class="card toolbar"><label>Recall after</label><input type="number" id="recall-months" min="1" max="60"><span>months</span><label>Procedure codes</label><input id="recall-codes" style="width:230px">${genericActions("recall", "Refresh recall list", "Fill selected template")}</div>${search("recall", "Patient, phone, email, code, patient #…", `${btn("history-recall", "View SMS history")}<label for="recall-history-date">Visit date history</label><input type="date" id="recall-history-date">`)}${tableShell("recall")}`,
     treatment: `${hero("TREATMENT", "Pending treatment SMS", "Find planned procedures before the miss window, with no future appointment.")}<div class="card"><div class="toolbar"><label>Procedure date before</label><input type="number" id="treatment-days" min="0" max="365"><span>days</span><label>Procedure codes</label><input id="treatment-codes" class="grow" placeholder="Optional, e.g. D3310,D2392. Blank = all planned codes"><label>Proc status</label><input id="treatment-statuses" style="width:80px"></div><div class="toolbar">${genericActions("treatment", "Refresh treatment list")}</div></div>${search("treatment", "Patient, phone, email, pending code, patient #…")}${tableShell("treatment")}`,
     review: `${hero("GOOGLE REVIEW", "Google review requests", "Fill a review request in Phone Link. Review messages are manual and excluded from monitoring.")}<div class="card"><div class="toolbar"><label>Review link</label><input id="review-link" class="grow" placeholder="Google review URL">${btn("save-review-link", "Save review link")}</div><div class="toolbar"><input type="search" id="search-review" class="grow" placeholder="Patient, phone, email, #patient number…">${genericActions("review", "Refresh patients", "Fill selected template")}</div></div>${tableShell("review")}`,
     holiday: `${hero("HOLIDAY & BIRTHDAY", "Holiday promotion and birthday SMS", "Build a custom patient list, review the message, then fill drafts for manual sending.")}<div class="card"><div class="toolbar"><label>Campaign</label><select id="campaign-type"><option value="holiday">Holiday promotion</option><option value="birthday">Birthday</option></select><label>Holiday</label><select id="holiday-event"></select>${btn("add-holiday", "Add holiday")}${btn("edit-holiday", "Edit holiday")}${btn("delete-holiday", "Delete holiday")}</div><div class="toolbar"><label>Send date</label><input id="birthday-date" type="date"><label>Patient filter</label><input type="search" id="search-holiday" class="grow" placeholder="Patient, phone, email, #patient number…">${btn("refresh-holiday", "Refresh patients")}</div><div class="toolbar">${btn("add-custom", "Add custom")}${btn("edit-custom", "Edit selected")}${btn("remove-holiday", "Remove selected")}${btn("templates-holiday", "Templates")}<span class="grow"></span>${btn("preview-holiday", "Preview selected")}${btn("compose-holiday", "Fill selected draft", true, "data-send")}${btn("compose-all-holiday", "Fill all in list", false, "data-send")}</div></div>${tableShell("holiday")}`,
@@ -185,23 +186,43 @@ function build() {
     $(`table-${kind}`).addEventListener("pointerdown", (event) =>
       resizeColumn(kind, event),
     );
-    on(`refresh-${kind}`, () => load(kind));
+    on(`refresh-${kind}`, () => {
+      if (kind === "recall") {
+        S.recallHistory = null;
+        if ($("recall-history-date").value) {
+          renderTable("recall");
+          return loadRecallHistory();
+        }
+      }
+      return load(kind);
+    });
     on(`search-${kind}`, () => load(kind), "search");
     const canLookUpHistory = kind === "recall" || kind === "logs";
+    let debounce;
     if (canLookUpHistory) on(`history-${kind}`, () => historyFromSearch(kind));
     on(`search-${kind}`, (event) => {
       if (event.key !== "Enter") return;
       if (canLookUpHistory && event.target.value.trim().startsWith("#")) {
         event.preventDefault();
+        if (kind === "recall" && recallSearchPatNum(event.target.value)) {
+          clearTimeout(debounce);
+          if (S.recallHistory?.error) S.recallHistory = null;
+          filterRecall(event.target.value);
+          if (!visibleRows("recall").length) return loadRecallHistory();
+        }
         return historyFromSearch(kind);
       }
       return load(kind);
     }, "keydown");
-    let debounce;
     on(
       `search-${kind}`,
       () => {
         clearTimeout(debounce);
+        if (kind === "recall") {
+          filterRecall($("search-recall").value);
+          debounce = setTimeout(loadRecallHistory, 180);
+          return;
+        }
         debounce = setTimeout(
           handle(() => {
             if (["patient", "review", "holiday"].includes(kind)) {
@@ -223,6 +244,16 @@ function build() {
     on(`compose-${kind}`, () => draftBatch(kind));
     renderTable(kind);
   }
+  on("recall-history-date", () => {
+    if ($("recall-history-date").value) {
+      $("search-recall").value = "";
+      S.filters.recall = "";
+    }
+    S.recallHistory = null;
+    $("scroll-recall").scrollTop = 0;
+    renderTable("recall");
+    return loadRecallHistory();
+  }, "change");
 }
 function activate(kind) {
   S.tab = kind;
@@ -326,6 +357,7 @@ function columnDefinitions(kind) {
   return cols[kind];
 }
 function visibleRows(kind) {
+  if (kind === "recall" && $("recall-history-date").value) return [];
   return S.rows[kind].filter((r) => matchesSearch(r, S.filters[kind] || ""));
 }
 function prepared(kind, row) {
@@ -383,8 +415,10 @@ function cell(kind, row, key) {
 function renderTable(kind) {
   const scroll = $(`scroll-${kind}`),
     table = $(`table-${kind}`),
-    rows = visibleRows(kind),
-    cols = columnDefinitions(kind),
+    rows = visibleRows(kind);
+  const historyTarget = kind === "recall" && recallHistoryTarget(rows);
+  if (historyTarget) return renderRecallHistory(table, historyTarget);
+  const cols = columnDefinitions(kind),
     widths = S.columns[kind] || {};
   const start = Math.max(0, Math.floor((scroll.scrollTop - 38) / 38) - 8),
     count = Math.ceil((scroll.clientHeight || 500) / 38) + 16,
@@ -548,6 +582,7 @@ async function load(kind, append = false) {
       S.loading[kind] = false;
       $(`loading-${kind}`).hidden = true;
       renderTable(kind);
+      if (kind === "recall") void loadRecallHistory();
     }
   }
 }
@@ -605,11 +640,63 @@ async function preview(kind) {
     `<h2>SMS preview</h2><p>${escape(patientName(row))} · ${escape(phoneFor(row))}<br>Template: ${flag(row._TemplateCountry)}${escape(row._TemplateKey)}</p>${!row.AptDateTime && hasAppointmentFields(row._TemplateText) ? '<p class="context-warning">No active appointment today. Date/time fields are empty. Use a template without appointment fields for a manual message.</p>' : ''}<pre>${escape(message)}</pre>${kind === "dashboard" ? `<div class="two-col"><div><h3>Default template</h3><pre>${escape(S.library.templates.appointment?.US || "")}</pre></div><div><h3>Activity</h3><pre>${escape(S.activity.slice(-200).join("\n"))}</pre></div></div>` : ""}<div class="actions"><button data-modal-result="close">Close</button></div>`,
   );
 }
+function patientNumber(query) {
+  const match = query.trim().match(/^#?(\d+)$/);
+  const patNum = Number(match?.[1]);
+  return Number.isSafeInteger(patNum) && patNum > 0 ? patNum : null;
+}
+function recallSearchPatNum(query) {
+  return query.trim().startsWith("#") ? patientNumber(query) : null;
+}
+function filterRecall(query) {
+  $("recall-history-date").value = "";
+  S.filters.recall = query;
+  if (S.recallHistory?.key !== recallSearchPatNum(query)) S.recallHistory = null;
+  $("scroll-recall").scrollTop = 0;
+  renderTable("recall");
+}
+function recallHistoryTarget(rows = visibleRows("recall")) {
+  const serviceDate = $("recall-history-date").value;
+  if (serviceDate) return { key: serviceDate, label: `visit ${formatDate(serviceDate)}`, serviceDate };
+  const patNum = recallSearchPatNum(S.filters.recall);
+  if (patNum && !rows.length) return { key: patNum, label: `#${patNum}`, patNum };
+  return null;
+}
+async function loadRecallHistory() {
+  const target = recallHistoryTarget();
+  if (!target || S.recallHistory?.key === target.key) return;
+  const lookup = { key: target.key };
+  S.recallHistory = lookup;
+  try {
+    lookup.records = target.serviceDate
+      ? await api("recall-history", { serviceDate: target.serviceDate })
+      : (await api("history", { patNum: target.patNum })).filter((record) => record.MessageType === "recall");
+  } catch (error) {
+    lookup.error = error.message;
+  }
+  if (S.recallHistory === lookup) renderTable("recall");
+}
+function historyDetails(record) {
+  return [record.Context, record.ErrorMessage].filter(Boolean).map(escape).join("<br>");
+}
+function renderRecallHistory(table, target) {
+  const lookup = S.recallHistory?.key === target.key ? S.recallHistory : null;
+  const records = lookup?.records;
+  const columns = [["Log ID", 75], ["Pat #", 80], ["Recorded at", 170], ["Status", 125], ["Sent at", 170], ["Details"]];
+  const rows = records?.map((record) => {
+    const values = [record.LogNum, record.PatNum || target.patNum, record.CreatedAt || record.ActivityAt, record.Status, record.SentAt || "—"];
+    return `<tr data-recall-history>${values.map((value) => `<td>${escape(value)}</td>`).join("")}<td class="recall-history-details">${historyDetails(record)}</td></tr>`;
+  }).join("");
+  const empty = lookup?.error ? `History lookup failed: ${lookup.error}`
+    : records ? `No recall history for ${target.label}.` : `Loading recall history for ${target.label}…`;
+  table.style.minWidth = "850px";
+  table.innerHTML = `<colgroup>${columns.map(([, width]) => width ? `<col style="width:${width}px">` : "<col>").join("")}</colgroup><thead><tr>${columns.map(([label]) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="${columns.length}" class="empty">${escape(empty)}</td></tr>`}</tbody>`;
+  $("count-recall").textContent = `Recall history for ${target.label} · View only`;
+}
 async function historyFromSearch(kind) {
   const input = $(`search-${kind}`);
-  const match = input.value.trim().match(/^#?(\d+)$/);
-  const patNum = Number(match?.[1]);
-  if (!Number.isSafeInteger(patNum) || patNum <= 0) {
+  const patNum = patientNumber(input.value);
+  if (!patNum) {
     input.focus();
     throw new Error("Enter a patient number, for example #1234.");
   }
@@ -619,8 +706,7 @@ async function history(row) {
   const records = await api("history", { patNum: row.PatNum });
   const rows = records.map((record) => {
     const values = [record.ActivityAt || record.SentAt || record.CreatedAt, record.MessageType, record.Phone, record.Status, record.Message];
-    const details = [record.Context, record.ErrorMessage].filter(Boolean).map(escape).join("<br>");
-    return `<tr>${values.map((value) => `<td>${escape(value)}</td>`).join("")}<td>${details}</td></tr>`;
+    return `<tr>${values.map((value) => `<td>${escape(value)}</td>`).join("")}<td>${historyDetails(record)}</td></tr>`;
   }).join("");
   await modal(
     `<h2>SMS history · ${escape(patientName(row))}</h2><div class="dialog-table"><table><thead><tr>${["Date/time", "Type", "Phone", "Status", "Message", "Details"].map((s) => `<th>${s}</th>`).join("")}</tr></thead><tbody>${rows || '<tr><td colspan="6">No SMS history.</td></tr>'}</tbody></table></div><div class="actions"><button data-modal-result="close">Close</button></div>`,

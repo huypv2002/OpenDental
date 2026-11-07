@@ -90,6 +90,9 @@ async function run() {
         if(method==='GET'&&route==='/api/sms-reminders/patient-history'&&params.patNum===70) {
           return {history:[{MessageType:"recall",Status:"needs-review",Context:"Synthetic D1110 recall",ErrorMessage:"Synthetic Phone Link focus failure"}]};
         }
+        if(method==='GET'&&route==='/api/sms-reminders/recall-history'&&params.serviceDate==='2026-05-07') {
+          return {history:[70, 71, 72].map(PatNum => ({PatNum, LogNum:PatNum+1, Status:"needs-review", Context:"D1110"}))};
+        }
         return original.call(this,method,route,params,...rest);
       };
     });
@@ -97,9 +100,13 @@ async function run() {
     for (const [tab, kind] of [["Recall", "recall"], ["Logs", "logs"]]) {
       await page.getByRole("button", { name: tab, exact: true }).first().click();
       await page.fill(`#search-${kind}`, "#70");
-      await page.waitForSelector(`#table-${kind} .empty`);
-      if (kind === "recall") await page.press("#search-recall", "Enter");
-      else await page.click("#history-logs");
+      if (kind === "recall") {
+        const attempt = page.locator("#table-recall [data-recall-history]");
+        await attempt.waitFor();
+        assert.match(await attempt.innerText(), /Synthetic Phone Link focus failure/);
+        assert.equal(await page.locator("#table-recall [data-select]").count(), 0);
+      }
+      await page.click(`#history-${kind}`);
       await page.waitForSelector("#modal[open]");
       const contents = await page.locator("#modal").innerText();
       assert.match(contents, /Patient #70/);
@@ -109,6 +116,12 @@ async function run() {
       await page.click('[data-modal-result="close"]');
       await page.fill(`#search-${kind}`, "");
     }
+    await page.getByRole("button", { name: "Recall", exact: true }).first().click();
+    await page.fill("#recall-history-date", "2026-05-07");
+    await page.waitForFunction(() => document.querySelectorAll("#table-recall [data-recall-history]").length === 3);
+    assert.equal(await page.locator("#table-recall [data-select]").count(), 0);
+    await page.fill("#recall-history-date", "");
+    await page.waitForSelector("#table-recall [data-select]");
     await page.getByRole("button", { name: "Patient", exact: true }).first().click();
     await page.fill('#search-patient','#70');
     await page.click('#refresh-patient');

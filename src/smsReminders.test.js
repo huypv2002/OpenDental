@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { pool } from './db.js';
-import { getSmsPatientHistory, getSmsReminderAppointments, isRecallOperatory } from './smsReminders.js';
+import { getSmsPatientHistory, getSmsRecallHistoryByVisitDate, getSmsReminderAppointments, isRecallOperatory } from './smsReminders.js';
 
 test('recall operatory is excluded by exact name or abbreviation', () => {
   assert.equal(isRecallOperatory({ OpName: 'RECALL' }), true);
@@ -62,6 +62,31 @@ test('appointment feed keeps only Wireless phone and excludes recall defensively
     assert.equal(result.appointments[0].PatNum, 93);
     assert.equal(result.appointments[0].Phone, '');
     assert.equal(result.appointments[0].WorkPhoneFormatted, '(281) 333-3333');
+  } finally {
+    pool.execute = originalExecute;
+  }
+});
+
+test('visit date history includes every logged recall attempt, including needs-review', async () => {
+  const originalExecute = pool.execute;
+  const history = [
+    { LogNum: 3, PatNum: 73, Status: 'needs-review', SentAt: null },
+    { LogNum: 2, PatNum: 72, Status: 'sent' },
+    { LogNum: 1, PatNum: 71, Status: 'needs-review', SentAt: null },
+  ];
+  pool.execute = async (sql, params) => {
+    const statement = String(sql).replace(/\s+/g, ' ').trim();
+    if (statement.startsWith('CREATE TABLE IF NOT EXISTS')) return [{ affectedRows: 0 }];
+    assert.match(statement, /FROM luk_sms_recall_log WHERE LastProcDate = \? ORDER BY RecallLogNum DESC$/);
+    assert.deepEqual(params, ['2026-05-07']);
+    return [history];
+  };
+  try {
+    await assert.rejects(getSmsRecallHistoryByVisitDate({ serviceDate: '2026-02-30' }), { status: 400 });
+    assert.deepEqual(await getSmsRecallHistoryByVisitDate({ serviceDate: '2026-05-07' }), {
+      serviceDate: '2026-05-07',
+      history,
+    });
   } finally {
     pool.execute = originalExecute;
   }

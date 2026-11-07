@@ -90,6 +90,7 @@ class DemoBridge {
       return { settings: this.settings };
     }
     if (path.endsWith("/logs")) return { logs: this.logs };
+    if (path === "/api/sms-reminders/recall-history") return { serviceDate: params.serviceDate, history: [] };
     if (path.endsWith("/patient-history"))
       return {
         history: [

@@ -216,6 +216,9 @@ main {
 .search input {
   flex: 1;
 }
+.search input[type="date"] {
+  flex: 0 0 auto;
+}
 .table-card {
   padding: 0;
   flex: 1;
@@ -320,6 +323,10 @@ tr:hover td {
   padding: 50px 20px;
   text-align: center;
   color: #758596;
+}
+.recall-history-details {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .loading {
   position: absolute;

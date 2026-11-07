@@ -783,6 +783,28 @@ export async function getSmsPatientLogs(query = {}) {
   return { logs: rows };
 }
 
+export async function getSmsRecallHistoryByVisitDate(query = {}) {
+  const serviceDate = parseDate(query.serviceDate);
+  const date = new Date(`${serviceDate}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== serviceDate) {
+    throw Object.assign(new Error('A valid visit date is required.'), { status: 400 });
+  }
+  await ensureSmsRecallLogTable();
+  const [history] = await pool.execute(
+    `
+      SELECT RecallLogNum AS LogNum, PatNum, Status, ErrorMessage,
+        DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt,
+        DATE_FORMAT(SentAt, '%Y-%m-%d %H:%i:%s') AS SentAt,
+        ProcedureCodes AS Context
+      FROM ${RECALL_LOG_TABLE}
+      WHERE LastProcDate = ?
+      ORDER BY RecallLogNum DESC
+    `,
+    [serviceDate]
+  );
+  return { serviceDate, history };
+}
+
 export async function getSmsPatientHistory(query = {}) {
   const patNum = Number.parseInt(String(query.patNum ?? ''), 10);
   const limit = parseLimit(query.limit, 200);

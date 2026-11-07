@@ -411,6 +411,12 @@ async function dispatch(action, p, resources) {
       service.smsSettings[p.key] = p.value;
       return {};
     }
+    case "recall-history":
+      return (
+        await service.bridge.request("GET", "/api/sms-reminders/recall-history", {
+          serviceDate: p.serviceDate,
+        })
+      ).history || [];
     case "history":
       return (
         (
