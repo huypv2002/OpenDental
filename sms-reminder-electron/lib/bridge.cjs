@@ -1,6 +1,7 @@
 const GETS = new Set([
   "/health",
   "/api/admin/patients",
+  "/api/admin/appointments",
   "/api/sms-reminders/appointments",
   "/api/sms-reminders/recall-candidates",
   "/api/sms-reminders/treatment-candidates",

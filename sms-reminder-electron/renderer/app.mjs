@@ -421,6 +421,7 @@ function renderTable(kind) {
     table = $(`table-${kind}`),
     rows = visibleRows(kind);
   const lookupTarget = kind === "recall" && recallLookupTarget();
+  const lookup = lookupTarget && recallLookupResult(lookupTarget);
   const cols = columnDefinitions(kind),
     widths = S.columns[kind] || {};
   const start = Math.max(0, Math.floor((scroll.scrollTop - 38) / 38) - 8),
@@ -441,7 +442,6 @@ function renderTable(kind) {
       "",
     )}${end < rows.length ? `<tr class="viewport-spacer"><td colspan="${cols.length + 1}" style="height:${(rows.length - end) * 38}px"></td></tr>` : ""}</tbody>`;
   if (!rows.length) {
-    const lookup = lookupTarget && recallLookupResult(lookupTarget);
     const emptyMessage = kind === "recall"
       ? "No matching recall patients. Enter #patient number or choose a code visit date."
       : "No records loaded. Refresh the list or check Bridge settings.";
@@ -451,7 +451,7 @@ function renderTable(kind) {
       `<tr><td colspan="${cols.length + 1}" class="empty">${lookupTarget ? escape(lookupMessage) : S.loading[kind] ? "Loading…" : S.loadErrors[kind] ? `Search failed: ${escape(S.loadErrors[kind])}` : kind === "patient" ? S.loadedQueries[kind] ? `SERVER returned no patient matching ${escape(S.loadedQueries[kind])}. Check the Patient Number and Bridge connection in Settings.` : "Search for a patient to load results." : emptyMessage}</td></tr>`;
   }
   $(`count-${kind}`).textContent =
-    lookupTarget ? `${rows.length} · ${lookupTarget.label} · View only`
+    lookupTarget ? `${rows.length} · ${lookupTarget.label} · View only${lookup?.legacy ? " · Limited to follow-up and available recall logs" : ""}`
       : `${rows.length} row${rows.length === 1 ? "" : "s"} · ${selected(kind).length} selected${S.loading[kind] ? " · Loading…" : ""}`;
   if (kind === "dashboard") {
     const values = [
@@ -686,6 +686,7 @@ async function loadRecallLookup() {
       options: { lookup: { patNum, serviceDate }, codes: $("recall-codes").value },
     });
     lookup.rows = data.rows;
+    lookup.legacy = data.legacyRecallLookup;
   } catch (error) {
     lookup.error = error.message;
   }

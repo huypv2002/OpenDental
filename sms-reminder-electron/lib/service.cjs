@@ -1,4 +1,5 @@
 const { randomUUID } = require("node:crypto");
+const { lookupLegacyRecall } = require("./recall-lookup.cjs");
 class SmsService {
   constructor({ store, bridge, windows, model, machine, emit, demo = false }) {
     Object.assign(this, { store, bridge, windows, model, machine, emit, demo });
@@ -166,17 +167,34 @@ class SmsService {
           ).logs || [],
       };
     if (kind === "recall" && options.lookup) {
-      const { patNum, serviceDate } = options.lookup;
+      const { serviceDate } = options.lookup;
+      const patNum = options.lookup.patNum == null ? null : Number(options.lookup.patNum);
+      if ((patNum == null) === (serviceDate == null) ||
+          (patNum != null && (!Number.isSafeInteger(patNum) || patNum <= 0)) ||
+          (serviceDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(serviceDate))) {
+        throw new Error("Enter a valid patient number or visit date.");
+      }
+      const codes = options.codes || this.config.recall_codes || this.model.DEFAULTS.recall_codes;
       const data = await this.bridge.request("GET", "/api/sms-reminders/recall-candidates", {
         mode: "lookup",
         patNum,
         serviceDate,
-        codes: options.codes || this.config.recall_codes,
+        codes,
+        limit: 500,
       });
-      if (data.contract !== "recall-patient-lookup-v1")
+      if (data.contract && data.contract !== "recall-patient-lookup-v1")
         throw new Error("Update SERVER Bridge to look up recall patients by number or visit date.");
+      const legacyRecallLookup = !data.contract;
+      const patients = legacyRecallLookup
+        ? await lookupLegacyRecall(this.bridge, {
+            patNum,
+            serviceDate,
+            codes: data.codes || codes.split(",").map((code) => code.trim().toUpperCase()),
+          }, data.patients || [])
+        : data.patients || [];
       return {
-        rows: (data.patients || []).map((row) => ({
+        legacyRecallLookup,
+        rows: patients.map((row) => ({
           ...row, _Kind: "recall", _RecallLookup: true, Phone: this.model.phoneFor(row),
         })),
       };

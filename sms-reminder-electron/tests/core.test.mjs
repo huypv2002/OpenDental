@@ -420,6 +420,39 @@ test("daily Recall loads exact-date contract, all pages, and language templates 
   assert.deepEqual(f.requests.map(r=>r.params.afterPatNum),[0,500]);
   assert.ok(rows.every(r=>r._Kind==="recall"&&r._DailyRecallDate==="2026-10-23"));
 }));
+test("legacy Bridge Recall lookup shows only documented visits and deduplicates appointments", () =>
+  using({
+    request: async (method, route, params) => {
+      assert.equal(method, "GET");
+      if (route.endsWith("/recall-candidates")) return { codes: ["D1110"], patients: [] };
+      if (route.endsWith("/admin/patients")) return { patients: [row(1, { PatNum: 70 })] };
+      if (route.endsWith("/admin/appointments")) {
+        assert.equal(params.date, "2026-05-07");
+        return { appointments: [70, 70, 71, 72].map((PatNum, i) => row(i + 1, { PatNum })) };
+      }
+      if (route.endsWith("/patient-history")) {
+        const context = {
+          70: "Recall - D1110, D4341 - last visit 05/07/2026",
+          71: "Recall - D1110 - last visit 05/07/2026",
+          72: "Recall - D1110 - last visit 05/08/2026",
+        }[params.patNum];
+        return { history: [{ MessageType: "recall", Context: context, Status: "needs-review" }] };
+      }
+      throw new Error("Unexpected Bridge request");
+    },
+  }, async (f) => {
+    const byPatient = await f.service.load("recall", { lookup: { patNum: 70 }, codes: "D1110" });
+    assert.equal(byPatient.legacyRecallLookup, true);
+    assert.equal(byPatient.rows[0].LastProcDate, "2026-05-07");
+    assert.equal(byPatient.rows[0].ProcedureCodes, "D1110");
+    assert.equal(byPatient.rows[0].RecallSentCount, 0);
+    assert.equal(byPatient.rows[0]._RecallLookup, true);
+    f.requests.length = 0;
+    const byDate = await f.service.load("recall", { lookup: { serviceDate: "2026-05-07" }, codes: "D1110" });
+    assert.deepEqual(byDate.rows.map((row) => row.PatNum), [70, 71]);
+    assert.deepEqual(f.requests.filter((r) => r.route.endsWith("/patient-history")).map((r) => r.params.patNum), [70, 71, 72]);
+    assert.equal(f.native.length, 0);
+  }));
 test("old Bridge and missing-language Recall templates block automatic sending",()=>using({request:async()=>({patients:[]})},async f=>{
   await assert.rejects(f.service.loadDailyRecall("2026-10-23"),/Update SERVER/);assert.equal(f.native.length,0);
   f.service.bridge.request=async()=>({contract:"calendar-6-month-v2",date:"2026-10-23",patients:[row(1,{Language:"Spanish",LastProcDate:"2026-04-23"})]});
