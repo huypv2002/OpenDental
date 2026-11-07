@@ -190,6 +190,7 @@ test("R5 sends sequentially, persists needs-review, and skips later stale repeat
   using({}, async (f) => {
     await f.service.send([row(1), row(2)]);
     assert.equal(f.native.length, 2);
+    assert.ok(f.native.every(payload => !Object.hasOwn(payload, "dailyRecall")));
     assert.equal(f.requests.filter((r) => r.route.endsWith("/log")).length, 2);
     assert.equal(f.requests[0].body.status, "needs-review");
     await f.service.send([row(1)]);
@@ -433,6 +434,7 @@ test("daily Recall reserves before Phone Link, logs Recall token and reuses loca
  f.service.recallMonitoring=true;
  const result=await f.service.send([target],true);assert.equal(result.completed,1);assert.equal(f.native.length,1);
  assert.equal(f.native[0].message,"Recall Alex");
+ assert.equal(f.native[0].dailyRecall,true);
  assert.equal(f.requests[0].route,"/api/sms-reminders/recall-claim");
  assert.equal(f.requests[1].route,"/api/sms-reminders/recall-log");
  assert.equal(f.requests[1].body.dispatchToken,"dispatch-test");assert.equal(f.requests[1].body.dailyRecall,true);

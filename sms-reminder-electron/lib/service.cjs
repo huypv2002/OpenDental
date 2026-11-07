@@ -465,6 +465,7 @@ class SmsService {
           await this.windows.run({
             action: "sms",
             mode: "send",
+            ...(dailyRecall ? { dailyRecall: true } : {}),
             phone: this.model.phoneFor(row),
             message,
           });

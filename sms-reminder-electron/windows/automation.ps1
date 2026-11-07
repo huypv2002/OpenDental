@@ -41,26 +41,45 @@ function Wait-Window([string]$Pattern, [int]$Seconds=15) {
   } while ([DateTime]::UtcNow -lt $until)
   throw 'Could not find the application window. Keep it signed in on an unlocked desktop.'
 }
-function Foreground($Window) {
+function Foreground($Window, [switch]$WaitForRecall) {
   $handle = [IntPtr]$Window.Current.NativeWindowHandle
   [void][LukNative]::ShowWindow($handle,9)
   [void][LukNative]::SetForegroundWindow($handle)
   try { $Window.SetFocus() } catch {}
+  if ($WaitForRecall) {
+    Wait-RecallFocus $Window 'opening Phone Link'
+    return
+  }
   Start-Sleep -Milliseconds 250
   Assert-Focus $Window
 }
-function Assert-Focus($Window) {
+function Test-AppFocus($Window) {
   $focus = $AE::FocusedElement
-  if ($null -eq $focus -or $focus.Current.ProcessId -ne $Window.Current.ProcessId) { throw 'Focus moved outside the target app. Automation stopped.' }
+  return $null -ne $focus -and $focus.Current.ProcessId -eq $Window.Current.ProcessId
+}
+function Assert-Focus($Window) {
+  if (-not (Test-AppFocus $Window)) { throw 'Focus moved outside the target app. Automation stopped.' }
+}
+function Wait-RecallFocus($Window, [string]$Stage) {
+  # UIA focus may lag shell activation or be unavailable while the UI changes.
+  $timer = [Diagnostics.Stopwatch]::StartNew()
+  do {
+    try {
+      if (Test-AppFocus $Window) {return}
+    } catch [System.Windows.Automation.ElementNotAvailableException] {}
+    Start-Sleep -Milliseconds 150
+  } while ($timer.ElapsedMilliseconds -lt 3000)
+  throw "Daily Recall could not verify Phone Link focus while ${Stage}. No Send pressed."
 }
 function Keys($Window,[string]$Keys,[int]$Delay=180) {
   Assert-Focus $Window
   [System.Windows.Forms.SendKeys]::SendWait($Keys)
   Start-Sleep -Milliseconds $Delay
 }
-function Click-Element($Element) {
+function Click-Element($Element, $FocusWindow) {
   $rect = $Element.Current.BoundingRectangle
   if ($rect.IsEmpty -or $rect.Width -le 0) { throw 'The target control is not visible.' }
+  if ($null -ne $FocusWindow) {Assert-Focus $FocusWindow}
   [void][LukNative]::SetCursorPos([int]($rect.Left + $rect.Width/2),[int]($rect.Top + $rect.Height/2))
   [LukNative]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
   [LukNative]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
@@ -149,8 +168,8 @@ function Compose-Controls($Window) {
   } | Sort-Object @{Expression={$_.score};Descending=$true},@{Expression={$_.top};Descending=$true})
   return @($scored | ForEach-Object {$_.element})
 }
-function Focus-Compose($Window) {
-  Foreground $Window
+function Focus-Compose($Window, [bool]$DailyRecall=$false) {
+  if ($DailyRecall) {Wait-RecallFocus $Window 'loading the message field'} else {Foreground $Window}
   foreach ($e in @(Compose-Controls $Window | Select-Object -First 8)) {
     try {
       if(Is-MessageInput $Window $e){$focus=Focus-MessageInput $Window $e;if($null -ne $focus){return $focus}}
@@ -182,9 +201,11 @@ function Is-Recipient($Window,$Element) {
   $c=$Element.Current;$w=$Window.Current.BoundingRectangle;$r=$c.BoundingRectangle
   return -not $c.IsOffscreen -and $c.IsEnabled -and $r.Top -lt ($w.Top+$w.Height*0.55) -and $r.Left -gt ($w.Left+$w.Width*0.25) -and $c.Name -notmatch '(?i)Search|Tìm kiếm' -and ($c.ControlType -eq $EditType -or $c.AutomationId -match '(?i)Recipient|Contact|ToTextBox')
 }
-function Open-PhoneLink {
+function Open-PhoneLink([switch]$WaitForRecall) {
   Start-Process explorer.exe 'shell:AppsFolder\Microsoft.YourPhone_8wekyb3d8bbwe!App'
-  return Wait-Window '(?i)Phone Link|Your Phone|Liên kết Điện thoại' 20
+  $window = Wait-Window '(?i)Phone Link|Your Phone|Liên kết Điện thoại' 20
+  if ($WaitForRecall) {Foreground $window -WaitForRecall}
+  return $window
 }
 function Close-Window($Window) {
   try {
@@ -195,19 +216,28 @@ function Close-Window($Window) {
 function Compose-Sms($Request) {
   if ([string]$Request.phone -notmatch '\d') {throw 'Missing phone number.'}
   if ([string]::IsNullOrWhiteSpace([string]$Request.message)) {throw 'The template message is empty.'}
+  $dailyRecall = $Request.dailyRecall -eq $true
   foreach ($old in @(Windows '(?i)Phone Link|Your Phone|Liên kết Điện thoại')) {Close-Window $old}
   Start-Sleep -Milliseconds 2000
-  try {$window = Open-PhoneLink} catch {Trace 'Retrying Phone Link launch.';$window = Open-PhoneLink}
-  Foreground $window
+  # Only retry startup. Once input starts, a failed attempt must never be replayed.
+  try {$window = Open-PhoneLink -WaitForRecall:$dailyRecall} catch {
+    Trace 'Retrying Phone Link launch.'
+    $window = Open-PhoneLink -WaitForRecall:$dailyRecall
+  }
+  if (-not $dailyRecall) {Foreground $window}
+  $focusWindow = if ($dailyRecall) {$window}
   Keys $window '{ESC}'
   $messages = @(Elements $window | Where-Object { ($_.Current.AutomationId -eq 'MessagingNodeAutomationId' -or $_.Current.Name -match '(?i)^(Messages|Tin nhắn|Mensajes)$') -and -not $_.Current.IsOffscreen })
-  if ($messages.Count -gt 0) {Click-Element $messages[0];Start-Sleep -Milliseconds 350}
+  if ($messages.Count -gt 0) {Click-Element $messages[0] $focusWindow;Start-Sleep -Milliseconds 350}
   # Start a fresh conversation, preserving the same sequential workflow as Python.
   $new = @(Elements $window | Where-Object { ($_.Current.AutomationId -eq 'NewMessageButton' -or $_.Current.Name -match '(?i)^(New message|New Message|Tin nhắn mới|Nuevo mensaje)$') -and -not $_.Current.IsOffscreen })
-  if ($new.Count -gt 0) {Click-Element $new[0]} else {Keys $window '^n' 700}
+  if ($new.Count -gt 0) {Click-Element $new[0] $focusWindow} else {Keys $window '^n' 700}
   Start-Sleep -Milliseconds $(if($Request.fd2){1100}else{3000})
   $window = Wait-Window '(?i)Phone Link|Your Phone|Liên kết Điện thoại' 8
-  Assert-Focus $window
+  if ($dailyRecall) {
+    Wait-RecallFocus $window 'loading the recipient field'
+    $focusWindow = $window
+  } else {Assert-Focus $window}
   $recipient = $AE::FocusedElement
   if (-not (Is-Recipient $window $recipient)) {
     $wr=$window.Current.BoundingRectangle
@@ -215,7 +245,7 @@ function Compose-Sms($Request) {
       Is-Recipient $window $_
     })
     if ($recipientControls.Count -eq 0) {throw 'New message did not focus a recipient input. Capture the UI snapshot.'}
-    $recipient=$recipientControls[0];Click-Element $recipient
+    $recipient=$recipientControls[0];Click-Element $recipient $focusWindow
   }
   Paste $window ([string]$Request.phone)
   $expectedPhone = ([string]$Request.phone -replace '\D','')
@@ -227,7 +257,7 @@ function Compose-Sms($Request) {
   # The compose control can change after selecting a recipient. Refresh the entire UIA tree.
   $verified = $false
   for ($attempt=0; $attempt -lt 3; $attempt++) {
-    $field = Focus-Compose $window
+    $field = Focus-Compose $window $dailyRecall
     if ($null -ne $field) {
       $field=Focus-MessageInput $window $field
       if ($null -eq $field) {throw 'Phone Link lost the compose input focus. No SMS sent.'}
