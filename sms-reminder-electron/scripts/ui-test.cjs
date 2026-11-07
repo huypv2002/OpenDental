@@ -87,9 +87,29 @@ async function run() {
       DemoBridge.prototype.request=async function(method,route,params,...rest){
         if(route==='/api/admin/patients'&&params.q==='#70')return {patients:[{PatNum:70,FName:'Exact',LName:'Patient',WirelessPhone:'2815550070',Language:'English',AptDateTime:'2026-10-12 09:30:00'}]};
         if(route==='/api/admin/patients'&&params.q==='#77777')throw Error('Synthetic Bridge search failure');
+        if(method==='GET'&&route==='/api/sms-reminders/patient-history'&&params.patNum===70) {
+          return {history:[{MessageType:"recall",Status:"needs-review",Context:"Synthetic D1110 recall",ErrorMessage:"Synthetic Phone Link focus failure"}]};
+        }
         return original.call(this,method,route,params,...rest);
       };
     });
+    // Direct history must work even when the patient is missing from both tables.
+    for (const [tab, kind] of [["Recall", "recall"], ["Logs", "logs"]]) {
+      await page.getByRole("button", { name: tab, exact: true }).first().click();
+      await page.fill(`#search-${kind}`, "#70");
+      await page.waitForSelector(`#table-${kind} .empty`);
+      if (kind === "recall") await page.press("#search-recall", "Enter");
+      else await page.click("#history-logs");
+      await page.waitForSelector("#modal[open]");
+      const contents = await page.locator("#modal").innerText();
+      assert.match(contents, /Patient #70/);
+      assert.match(contents, /needs-review/);
+      assert.match(contents, /Synthetic D1110 recall/);
+      assert.match(contents, /Synthetic Phone Link focus failure/);
+      await page.click('[data-modal-result="close"]');
+      await page.fill(`#search-${kind}`, "");
+    }
+    await page.getByRole("button", { name: "Patient", exact: true }).first().click();
     await page.fill('#search-patient','#70');
     await page.click('#refresh-patient');
     await page.waitForFunction(()=>document.querySelectorAll('#table-patient tr[data-row]').length===1&&document.getElementById('table-patient').textContent.includes('Exact'));
