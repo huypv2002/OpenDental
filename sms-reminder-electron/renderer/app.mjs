@@ -76,7 +76,9 @@ const categoryFor = (kind) =>
 const today = () =>
   clinicClock(new Date(), S.config.time_zone || "America/Chicago").date;
 const rowID = (row) =>
-  `${row.AptNum || ""}:${row.PatNum || ""}:${row._CustomId || ""}:${phoneFor(row)}`;
+  row._RecallLookup
+    ? `recall-lookup:${row.PatNum}:${row.LastProcDate}`
+    : `${row.AptNum || ""}:${row.PatNum || ""}:${row._CustomId || ""}:${phoneFor(row)}`;
 let toastTimer, modalResolve;
 const modalStack = [];
 async function api(action, payload = {}) {
@@ -380,7 +382,7 @@ function prepared(kind, row) {
 }
 function selected(kind) {
   return visibleRows(kind)
-    .filter((row) => !row._RecallLookup && S.selection[kind].has(rowID(row)))
+    .filter((row) => S.selection[kind].has(rowID(row)))
     .map((row) => prepared(kind, row));
 }
 function cell(kind, row, key) {
@@ -428,15 +430,15 @@ function renderTable(kind) {
     count = Math.ceil((scroll.clientHeight || 500) / 38) + 16,
     end = Math.min(rows.length, start + count);
   const allSelected =
-    !lookupTarget && rows.length > 0 && rows.every((r) => S.selection[kind].has(rowID(r)));
+    rows.length > 0 && rows.every((r) => S.selection[kind].has(rowID(r)));
   const totalWidth =
     42 + cols.reduce((total, c, i) => total + Number(widths[i] || c[2]), 0);
   table.style.minWidth = `${totalWidth}px`;
-  table.innerHTML = `<colgroup><col style="width:42px">${cols.map((c, i) => `<col style="width:${Number(widths[i] || c[2])}px">`).join("")}</colgroup><thead><tr><th><input type="checkbox" data-all ${lookupTarget ? "disabled" : allSelected ? "checked" : ""} aria-label="Select all visible rows"></th>${cols.map((c, i) => `<th>${c[0]}<span class="resize" data-column="${i}"></span></th>`).join("")}</tr></thead><tbody>${start > 0 ? `<tr class="viewport-spacer"><td colspan="${cols.length + 1}" style="height:${start * 38}px"></td></tr>` : ""}${rows
+  table.innerHTML = `<colgroup><col style="width:42px">${cols.map((c, i) => `<col style="width:${Number(widths[i] || c[2])}px">`).join("")}</colgroup><thead><tr><th><input type="checkbox" data-all ${allSelected ? "checked" : ""} aria-label="Select all visible rows"></th>${cols.map((c, i) => `<th>${c[0]}<span class="resize" data-column="${i}"></span></th>`).join("")}</tr></thead><tbody>${start > 0 ? `<tr class="viewport-spacer"><td colspan="${cols.length + 1}" style="height:${start * 38}px"></td></tr>` : ""}${rows
     .slice(start, end)
     .map(
       (row, i) =>
-        `<tr data-row="${start + i}" class="${!row._RecallLookup && S.selection[kind].has(rowID(row)) ? "selected" : ""}"><td><input type="checkbox" data-select ${row._RecallLookup ? "disabled" : S.selection[kind].has(rowID(row)) ? "checked" : ""} aria-label="Select ${escape(patientName(row))}"></td>${cols.map(([, key]) => `<td title="${escape(key === "name" ? patientName(row) : key === "phone" ? phoneFor(row) : row[key] || "")}">${cell(kind, row, key)}</td>`).join("")}</tr>`,
+        `<tr data-row="${start + i}" class="${S.selection[kind].has(rowID(row)) ? "selected" : ""}"><td><input type="checkbox" data-select ${S.selection[kind].has(rowID(row)) ? "checked" : ""} aria-label="Select ${escape(patientName(row))}"></td>${cols.map(([, key]) => `<td title="${escape(key === "name" ? patientName(row) : key === "phone" ? phoneFor(row) : row[key] || "")}">${cell(kind, row, key)}</td>`).join("")}</tr>`,
     )
     .join(
       "",
@@ -450,9 +452,11 @@ function renderTable(kind) {
     table.querySelector("tbody").innerHTML =
       `<tr><td colspan="${cols.length + 1}" class="empty">${lookupTarget ? escape(lookupMessage) : S.loading[kind] ? "Loading…" : S.loadErrors[kind] ? `Search failed: ${escape(S.loadErrors[kind])}` : kind === "patient" ? S.loadedQueries[kind] ? `SERVER returned no patient matching ${escape(S.loadedQueries[kind])}. Check the Patient Number and Bridge connection in Settings.` : "Search for a patient to load results." : emptyMessage}</td></tr>`;
   }
+  const rowCount = `${rows.length} row${rows.length === 1 ? "" : "s"} · ${selected(kind).length} selected`;
   $(`count-${kind}`).textContent =
-    lookupTarget ? `${rows.length} · ${lookupTarget.label} · View only${lookup?.legacy ? " · Limited to follow-up and available recall logs" : ""}`
-      : `${rows.length} row${rows.length === 1 ? "" : "s"} · ${selected(kind).length} selected${S.loading[kind] ? " · Loading…" : ""}`;
+    lookupTarget ? `${rowCount} · ${lookupTarget.label} · Preview only${lookup?.legacy ? " · Limited to follow-up and available recall logs" : ""}`
+      : `${rowCount}${S.loading[kind] ? " · Loading…" : ""}`;
+  if (kind === "recall") updateRecallFillButton(lookupTarget);
   if (kind === "dashboard") {
     const values = [
       rows.length,
@@ -480,7 +484,6 @@ async function tableClick(kind, event) {
       },
     });
   if (action === "history") return history(row);
-  if (row._RecallLookup) return;
   if (event.target.closest("input,select,button")) return;
   const id = rowID(row);
   if (!(event.ctrlKey || event.metaKey || event.shiftKey))
@@ -491,7 +494,6 @@ async function tableClick(kind, event) {
 function tableChange(kind, event) {
   if (event.target.matches("[data-all]")) {
     for (const row of visibleRows(kind)) {
-      if (row._RecallLookup) continue;
       event.target.checked
         ? S.selection[kind].add(rowID(row))
         : S.selection[kind].delete(rowID(row));
@@ -501,7 +503,7 @@ function tableChange(kind, event) {
   }
   const tr = event.target.closest("[data-row]"),
     row = visibleRows(kind)[Number(tr?.dataset.row)];
-  if (!row || row._RecallLookup) return;
+  if (!row) return;
   if (event.target.matches("[data-select]")) {
     event.target.checked
       ? S.selection[kind].add(rowID(row))
@@ -886,8 +888,10 @@ async function customRecipient(edit = false) {
   renderTable("holiday");
 }
 async function draftBatch(kind, all = false) {
+  if (kind === "recall" && recallLookupTarget())
+    throw new Error("Recall lookup results are available for preview only.");
   const rows = all
-    ? visibleRows(kind).filter((row) => !row._RecallLookup).map((row) => prepared(kind, row))
+    ? visibleRows(kind).map((row) => prepared(kind, row))
     : selected(kind);
   if (!rows.length) throw new Error("Select at least one patient.");
   const missingContext = rows.find(r => hasAppointmentFields(r._TemplateText) && !r.AptDateTime);
@@ -1004,6 +1008,11 @@ async function saveSettings() {
     await load("dashboard");
   }
 }
+function updateRecallFillButton(lookupTarget = recallLookupTarget()) {
+  const button = $("compose-recall");
+  button.disabled = !!(lookupTarget || S.status.busy || S.status.pendingDraft || S.status.monitorBusy);
+  button.title = lookupTarget ? "Recall lookup results are available for preview only." : "";
+}
 function updateStatus() {
   $("workstation").textContent =
     `${S.status.machine || ""} · ${S.status.mode === "fd2" ? "FD2 · Drafts" : "R5 · Reminders"}${S.status.demo ? " · DEMO" : ""}`;
@@ -1037,6 +1046,7 @@ function updateStatus() {
   for (const button of document.querySelectorAll("[data-send]"))
     button.disabled =
       S.status.busy || !!S.status.pendingDraft || S.status.monitorBusy;
+  updateRecallFillButton();
   for (const id of ["send-dashboard", "send-all", "test-sms"])
     if (S.status.mode === "fd2") $(id).disabled = true;
   const banner = $("draft-banner");

@@ -447,6 +447,7 @@ test("legacy Bridge Recall lookup shows only documented visits and deduplicates 
     assert.equal(byPatient.rows[0].ProcedureCodes, "D1110");
     assert.equal(byPatient.rows[0].RecallSentCount, 0);
     assert.equal(byPatient.rows[0]._RecallLookup, true);
+    await assert.rejects(f.service.compose(byPatient.rows[0], "recall"), /preview only/);
     f.requests.length = 0;
     const byDate = await f.service.load("recall", { lookup: { serviceDate: "2026-05-07" }, codes: "D1110" });
     assert.deepEqual(byDate.rows.map((row) => row.PatNum), [70, 71]);
