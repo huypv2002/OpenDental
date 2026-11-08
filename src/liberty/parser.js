@@ -37,7 +37,7 @@ export function parseLiberty(extracted) {
   const warnings = [...(extracted.warnings||[])];
 
   const isLiberty =
-    /LIBERTY Dental Plan/i.test(fullText) &&
+    (extracted.folderCarrier==='LIBERTY'||/LIBERTY Dental Plan/i.test(fullText)) &&
     /PAYMENT DETAILS/i.test(fullText) &&
     /CLAIM:\s*\d+/i.test(fullText);
 

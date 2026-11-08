@@ -15,7 +15,7 @@ import {validateLibertyForPosting} from '../liberty/validation.js';
 const worker=fileURLToPath(new URL('./pdfToTextWorker.mjs',import.meta.url));
 const review=message=>Object.assign(new Error(message),{code:'EOB_REVIEW_REQUIRED'});
 
-export async function convertPdfBytesToText(bytes,{timeoutMs=120000,clinicConfirmedPaid=false}={}){
+export async function convertPdfBytesToText(bytes,{timeoutMs=120000,clinicConfirmedPaid=false,folderCarrier}={}){
  if(bytes.length>30*1024*1024)throw review('Tài liệu EOB vượt quá 30 MB.');
  if(!bytes.subarray(0,1024).includes(Buffer.from('%PDF-')))throw review('Nội dung EOB không phải PDF.');
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'luk-eob-text-'));
@@ -32,24 +32,24 @@ export async function convertPdfBytesToText(bytes,{timeoutMs=120000,clinicConfir
    child.once('close',code=>{clearTimeout(timer);if(timedOut)reject(review('Chuyển PDF sang TXT quá thời gian; chưa ghi thanh toán.'));else if(code!==0)reject(review(message||'Thư viện PDF sang TXT bị dừng; chưa ghi thanh toán.'));else resolve();});
   });
   const result=JSON.parse(await fs.readFile(output,'utf8'));
-  try{return selectConvertedText(result,{clinicConfirmedPaid});}
+  try{return selectConvertedText(result,{clinicConfirmedPaid,folderCarrier});}
   catch(error){Object.defineProperty(error,'convertedText',{value:result.candidates.at(-1)?.text});throw error;}
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 }
 
 // Generated TXT lives below TEXT, outside the scanner's flat incoming listing.
 // Retain the original PDF/hash for attachments, archive, history and replay checks.
-export async function readPdfAsText(bytes,filePath,{convert=convertPdfBytesToText,log=console.log,clinicConfirmedPaid=false}={}){
+export async function readPdfAsText(bytes,filePath,{convert=convertPdfBytesToText,log=console.log,clinicConfirmedPaid=false,folderCarrier}={}){
  const hash=createHash('sha256').update(bytes).digest('hex');
  log(`[PDF -> TXT] Đang chuyển ${path.basename(filePath)} bằng Scribe.js...`);
  let text,conversionError;
- try{text=await convert(bytes,{clinicConfirmedPaid});}catch(error){if(typeof error.convertedText!=='string')throw error;text=error.convertedText;conversionError=error;}
+ try{text=await convert(bytes,{clinicConfirmedPaid,folderCarrier});}catch(error){if(typeof error.convertedText!=='string')throw error;text=error.convertedText;conversionError=error;}
  const folder=path.join(path.dirname(filePath),'TEXT');await fs.mkdir(folder,{recursive:true});
  const txtPath=path.join(folder,`${path.basename(filePath)}.${hash.slice(0,16)}.txt`),tmp=`${txtPath}.${randomUUID()}.tmp`;
  try{await fs.writeFile(tmp,text,{mode:0o600});await fs.rename(tmp,txtPath);}finally{await fs.rm(tmp,{force:true});}
  log(`[PDF -> TXT] Đã lưu ${txtPath}; đối chiếu claim từ TXT...`);
  if(conversionError)throw review(`${conversionError.message} TXT đã lưu tại ${txtPath}; chưa ghi thanh toán.`);
- const document=readInsuranceTextDocument(Buffer.from(text));
+ const document=readInsuranceTextDocument(Buffer.from(text),{folderCarrier});
  document.extracted.sha256=hash;
  document.extracted.sourceFormat='pdf-to-text';
  document.extracted.generatedTextPath=txtPath;
@@ -57,11 +57,11 @@ export async function readPdfAsText(bytes,filePath,{convert=convertPdfBytesToTex
  return {...document,pdfBytes:bytes};
 }
 
-export function selectConvertedText({candidates,native=false},{clinicConfirmedPaid=false}={}){
+export function selectConvertedText({candidates,native=false},{clinicConfirmedPaid=false,folderCarrier}={}){
  const good=[],ids=[];let error='Chưa đọc đủ dữ liệu claim từ TXT.';
  for(const {text} of candidates){
   try{
-   const extracted=readInsuranceTextDocument(Buffer.from(text)).extracted;
+   const extracted=readInsuranceTextDocument(Buffer.from(text),{folderCarrier}).extracted;
    const parser={'METLIFE':parseMetlife,'LIBERTY':parseLiberty,'CIGNA':parseCigna,'DELTA DENTAL':parseDelta}[extracted.textCarrier];
    const batch=parser===parseMetlife?parseMetlifeClaims(extracted,{clinicConfirmedPaid}):null;
    const p=batch?{...batch.claims[0],errors:batch.errors}:parser(extracted);

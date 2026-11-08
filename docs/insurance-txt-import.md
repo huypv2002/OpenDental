@@ -13,7 +13,7 @@ Place a TXT in the insurer's usual SERVER folder under `D:\SHARE\INSURANCE CLAIM
 
 Patient identity follows the [28/10/2026 clinic rule](insurance-patient-identity-2026-10-28.md): MetLife/Delta and single-claim CIGNA use filename PatNum. Liberty and, as of 30/10, multiple-claim CIGNA use each claim's Subscriber ID (including the dependent suffix when present). Printed names do not select or reject patients. Missing numbers/unknown patients and missing/ambiguous Liberty subscribers stop before posting.
 
-TXT recognition uses content rather than relying on the folder name. Conflicting insurer signatures or unrecognized formats stop before database queries. This does not expand automatic PDF carrier detection.
+The Auto-Processor selects the insurer from the incoming folder. The selected parser checks the claim fields and amounts. A file that fails those checks is moved to REVIEW before settlement. Standalone inspection outside the scanner can still detect the insurer from TXT content.
 
 CIGNA supports both the previous portal format and the separate Explanation of dental payment statement; see [both templates and validation](cigna-two-templates-2026-10-29.md).
 
@@ -26,7 +26,7 @@ The shared TXT reader reconstructs item positions from character offsets. MetLif
 Validation:
 
 - Synthetic MetLife, Liberty and CIGNA imports preserve amounts, processed date and arch/quadrant/tooth identity.
-- Missing cells, changed totals, lost column layout, invalid encodings and conflicting carrier signatures stop before database queries.
+- Missing cells, changed totals and lost column layout stop before settlement. Valid claims placed in the wrong insurer folder go to REVIEW.
 - Persistent simulated clinic state processes TXT, renamed TXT and the same claim via the PDF posting path without a second payment or extra procedures. Two distinct source attachments may remain, with one payment.
 - Original TXT bytes are retained. Daily workbook generation twice produces one report entry.
 - Five private native-PDF fixtures (MetLife 1307/621/584, Liberty 1041, CIGNA 1275) have matching parser results when their existing text is represented as aligned TXT. This test-only layout serialization is not a production conversion feature. Tests cover continuation pages, files without form-feed, leading indentation and Liberty's multiple patients.

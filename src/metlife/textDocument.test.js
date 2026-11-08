@@ -9,10 +9,10 @@ import {parseLiberty} from '../liberty/parser.js';
 import {parseCigna} from '../cigna/parser.js';
 import {validateLibertyForPosting} from '../liberty/validation.js';
 import {insuranceLedger} from './testSupport/insuranceLedger.js';
-import {processSinglePdf} from './autoProcessor.js';
+import {processSinglePdf,scanIncomingFolder} from './autoProcessor.js';
 import {appendDailyWorkbook} from './dailyExcel.js';
 import ExcelJS from 'exceljs';
-import {row,metlifeText,libertyText,cignaText} from './testSupport/insuranceTextFixtures.js';
+import {row,metlifeText,libertyText,cignaText,delta} from './testSupport/insuranceTextFixtures.js';
 const parse=(carrier,e)=>carrier==='METLIFE'?parseMetlife(e):carrier==='CIGNA'?parseCigna(e):validateLibertyForPosting(parseLiberty(e),e);
 const samples=[['METLIFE',metlifeText,8000],['LIBERTY',libertyText,74300],['CIGNA',cignaText,5680]];
 
@@ -34,6 +34,34 @@ test('all new TXT carriers reuse PDF parsers and preserve benefit, date and anat
   if(carrier==='LIBERTY')assert.equal(p.claims[0].procedures[0].tooth,'Q01');
   if(carrier==='CIGNA')assert.equal(p.claims[0].procedures[0].tooth,'3');
  }
+});
+
+test('Liberty folder does not require the insurer name in the document',()=>{
+ const text=libertyText.replace('LIBERTY Dental Plan\n','');
+ const {extracted}=readInsuranceTextDocument(Buffer.from(text),{folderCarrier:'LIBERTY'});
+ assert.equal(parse('LIBERTY',extracted).check.netPaymentCents,74300);
+});
+
+test('scanner sends valid claims in the wrong insurer folder to REVIEW before settlement',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'wrong-insurer-folder-'));
+ const files=[['METLIFE',delta],['LIBERTY',metlifeText],['CIGNA',libertyText],['DELTA DENTAL',cignaText]];
+ const history=[];
+ const pool={execute:async(sql,args)=>{
+  if(sql.includes('CREATE TABLE IF NOT EXISTS luk_metlife_history'))return [[]];
+  assert.match(sql,/INSERT INTO luk_metlife_history/);
+  history.push(args[1]);return [[]];
+ }};
+ try{
+  for(const [folder,text] of files){
+   const dir=path.join(root,folder),file=path.join(dir,'123.txt');
+   await fs.mkdir(dir);await fs.writeFile(file,text);await fs.utimes(file,new Date(0),new Date(0));
+  }
+  const scan=await scanIncomingFolder(pool,path.join(root,'METLIFE'),{exportReports:async()=>({status:'ok'})});
+  assert.equal(scan.count,files.length);
+  assert.ok(scan.results.every(result=>!result.success));
+  assert.deepEqual(history,files.map(()=> 'REVIEW'));
+  for(const [folder] of files)assert.equal((await fs.readdir(path.join(root,folder,'REVIEW'))).length,1);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
 test('TXT carriers reject missing cells, lost column layout, conflicting identity and changed totals',async()=>{

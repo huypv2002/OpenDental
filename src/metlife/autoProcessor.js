@@ -23,8 +23,14 @@ let autoScanIntervalId = null;
 let lastScanTime = null;
 let lastScanResult = null;
 
+const insuranceCarriers=['METLIFE','LIBERTY','CIGNA','DELTA DENTAL'];
+function carrierFromFolder(folder){
+  const name=path.basename(folder).toUpperCase();
+  return insuranceCarriers.includes(name)?name:undefined;
+}
+
 export function insuranceIncomingDirs(dir){
-  const candidates=[dir,...['LIBERTY','CIGNA','DELTA DENTAL'].map(name=>path.join(path.dirname(dir),name))];
+  const candidates=[dir,...insuranceCarriers.slice(1).map(name=>path.join(path.dirname(dir),name))];
   return candidates.filter((candidate,i)=>candidates.findIndex(other=>other.toLowerCase()===candidate.toLowerCase())===i);
 }
 
@@ -195,10 +201,10 @@ export async function autoPopulateProcedureFees(db, { patNum, eobProcedures, dbP
   return updatedFees;
 }
 
-export async function processSinglePdf(pool, filePath, {extract = extractPdf, hashSplits = nativeSplitHashes, convertPdf} = {}) {
+export async function processSinglePdf(pool, filePath, {extract = extractPdf, hashSplits = nativeSplitHashes, convertPdf, folderCarrier = carrierFromFolder(path.dirname(filePath))} = {}) {
   const fileName = path.basename(filePath);
   console.log(`\n[Auto-Processor] Bắt đầu xử lý: ${fileName}...`);
-  if(path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA'&&isImageFile(fileName))throw Object.assign(new Error('CIGNA hiện cần PDF có chữ theo mẫu đã hỗ trợ; chưa xử lý ảnh CIGNA.'),{code:'EOB_REVIEW_REQUIRED'});
+  if(folderCarrier==='CIGNA'&&isImageFile(fileName))throw reviewError('CIGNA hiện cần PDF có chữ theo mẫu đã hỗ trợ; chưa xử lý ảnh CIGNA.');
 
   if((await fs.stat(filePath)).size>30*1024*1024)throw Object.assign(new Error('Tài liệu EOB vượt quá 30 MB.'),{code:'EOB_REVIEW_REQUIRED'});
   const sourceBytes = await fs.readFile(filePath);
@@ -206,38 +212,43 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   try{
     if(/\.txt$/i.test(fileName)){
       const {readInsuranceTextDocument}=await import('./textDocument.js');
-      document=readInsuranceTextDocument(sourceBytes);
+      document=readInsuranceTextDocument(sourceBytes,{folderCarrier});
     }else if(/\.pdf$/i.test(fileName)&&(convertPdf||extract===extractPdf)){
       const {readPdfAsText}=await import('./pdfToText.js');
       // Files placed in this incoming workflow are confirmed paid by clinic staff.
-      document=await readPdfAsText(sourceBytes,filePath,{clinicConfirmedPaid:true,...(convertPdf?{convert:convertPdf}:{})});
-    }else if(path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL'){
+      document=await readPdfAsText(sourceBytes,filePath,{clinicConfirmedPaid:true,folderCarrier,...(convertPdf?{convert:convertPdf}:{})});
+    }else if(folderCarrier==='DELTA DENTAL'){
       const {readDeltaDocument}=await import('../delta/document.js');
       document=await readDeltaDocument(sourceBytes,fileName,{extract});
     }else document=await readInsuranceDocument(sourceBytes,fileName,{extract});
   }
   catch(e){if(isImageFile(fileName))e.code='EOB_REVIEW_REQUIRED';throw e;}
-  const {extracted,pdfBytes:fileBytes}=document;
-  const fullText = extracted.pages.map((p) => p.lines.map((r) => r.text).join('\n')).join('\n');
+  const fileBytes=document.pdfBytes;
+  const extracted=folderCarrier?{...document.extracted,folderCarrier}:document.extracted;
+  let carrier=folderCarrier??extracted.textCarrier;
+  if(!carrier){
+    const fullText=extracted.pages.map(p=>p.lines.map(r=>r.text).join('\n')).join('\n');
+    if(isCignaStatement(fullText)||(/Claim\/Reference Number:/.test(fullText)&&/Claim Amount Paid:/.test(fullText)&&/Date Processed:/.test(fullText)))carrier='CIGNA';
+    else if(/LIBERTY Dental Plan|PAYMENT DETAILS/i.test(fullText))carrier='LIBERTY';
+    else carrier='METLIFE';
+  }
 
-  if(extracted.textCarrier==='DELTA DENTAL'||(!extracted.textCarrier&&path.basename(path.dirname(filePath)).toUpperCase()==='DELTA DENTAL')){
+  if(carrier==='DELTA DENTAL'){
     const {processDeltaPdf}=await import('../delta/processor.js');
     return processDeltaPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits});
   }
 
-  if(extracted.textCarrier==='CIGNA'||(!extracted.textCarrier&&path.basename(path.dirname(filePath)).toUpperCase()==='CIGNA')||isCignaStatement(fullText)||(/Claim\/Reference Number:/.test(fullText)&&/Claim Amount Paid:/.test(fullText)&&/Date Processed:/.test(fullText))){
+  if(carrier==='CIGNA'){
     const {processCignaPdf}=await import('../cigna/processor.js');
     return processCignaPdf(pool,{filePath,fileName,fileBytes,extracted},{hashSplits});
   }
 
-  // Carrier auto-detection: Liberty vs MetLife
-  const isLiberty = /LIBERTY Dental Plan/i.test(fullText) || /PAYMENT DETAILS/i.test(fullText);
-  if (isLiberty) {
+  if (carrier==='LIBERTY') {
     const { processLibertyPdf } = await import('../liberty/processor.js');
     return await processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted },{hashSplits});
   }
 
-  if(extracted.ocr)throw Object.assign(new Error('Ảnh/PDF scan chưa xác nhận được là EOB Liberty; cần đối chiếu tài liệu gốc.'),{code:'EOB_REVIEW_REQUIRED'});
+  if(extracted.ocr)throw reviewError('Ảnh/PDF scan chưa đọc được theo mẫu MetLife; cần đối chiếu tài liệu gốc.');
   const {parseMetlifeClaims,normalizedMetlifeBatch,resolveMetlifeBatchPatient}=await import('./multiClaim.js');
   const batch=parseMetlifeClaims(extracted,{clinicConfirmedPaid:true});
   if(batch.claims.length>1){
@@ -247,7 +258,7 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   const parsed = parseMetlife(extracted,{clinicConfirmedPaid:true});
 
   if (parsed.errors && parsed.errors.length > 0) {
-    throw new Error(`Lỗi định dạng MetLife: ${parsed.errors.join('; ')}`);
+    throw reviewError(`Lỗi định dạng MetLife: ${parsed.errors.join('; ')}`);
   }
 
   // 1. Resolve Patient
@@ -554,7 +565,7 @@ export async function scanIncomingFolder(pool, incomingDir, {processFile=process
 
     for (const file of allPdfFiles) {
       try {
-        const res = await processFile(pool, file.fullPath);
+        const res = await processFile(pool,file.fullPath,{folderCarrier:carrierFromFolder(file.dir)??'METLIFE'});
         results.push(res);
       } catch (err) {
         console.error(`[Auto-Processor] ✗ Lỗi khi xử lý ${file.fileName}:`, err.message);

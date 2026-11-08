@@ -47,9 +47,10 @@ test('CIGNA statement missing pages, swapped columns, bad rows, dates, amounts a
 async function posting(text,{pdfBytes}={}){
  const p=parse(text);assert.deepEqual(p.errors,[]);const c=p.claims[0],root=await fs.mkdtemp(path.join(os.tmpdir(),'statement-post-'));
  try{
+  const dir=path.join(root,'CIGNA');await fs.mkdir(dir);
   const f=await insuranceLedger(root,[{patNum:140,firstName:'DIFFERENT',lastName:'NAME',claimNumber:c.claimNumber,procedures:c.procedures,serviceDate:'2026-10-20'}]);
   for(const [i,name] of ['140','1793288482937_140','1793288482938_140'].entries()){
-   const file=path.join(root,name+(pdfBytes?'.pdf':'.txt'));await fs.writeFile(file,pdfBytes||text);
+   const file=path.join(dir,name+(pdfBytes?'.pdf':'.txt'));await fs.writeFile(file,pdfBytes||text.replace('Cigna Dental\n',''));
    // Actual private PDF takes the production Scribe conversion path.
    await processSinglePdf(f.pool,file,{hashSplits:f.hashes});
    assert.equal(f.payments[0].PayNote,`Claim number: ${c.documentNumber}`);

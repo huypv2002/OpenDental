@@ -24,7 +24,7 @@ export function parseDelta(extracted){
   const ids=[...text.matchAll(/^Claim\s+(\d{8,20})$/gm)].map(m=>m[1]);
   if(ids.length>1)throw fail('Trang Delta có nhiều claim; cần tách rõ thông tin bệnh nhân.');
   if(ids.length){
-   if(!/DELTA DENTAL/i.test(text)||!/Provider Tools/i.test(text))throw fail('Không nhận diện đúng mẫu Delta Provider Tools.');
+   if(extracted.folderCarrier!=='DELTA DENTAL'&&(!/DELTA DENTAL/i.test(text)||!/Provider Tools/i.test(text)))throw fail('Không nhận diện đúng mẫu Delta Provider Tools.');
    if(claims.some(c=>c.claimNumber===ids[0]))throw fail('Thông tin đầu claim Delta xuất hiện nhiều lần.');
    const nameIndex=lines.findIndex(l=>/^Patient date of birth\b/i.test(l));
    const name=lines[nameIndex-1]||'',parts=name.split(/\s+/);
@@ -92,15 +92,27 @@ export function parseDelta(extracted){
    // the original rows. Preserve those rows/fees for history and reporting.
    const claimText=claimTexts.get(claim.claimNumber)||'';
    const flbExplained=/\bFLB:\s*The combined fees for radiographic images[\s\S]*?equivalent to a complete series\b/i.test(claimText);
-   const bundled=normalized.filter(p=>p.explanationCode==='FLB'&&/^D0(?:220|230|274)$/.test(p.code)&&keys.slice(1).every(k=>p[k]===0)&&normalized.some(s=>s.code==='D0210'&&s.date===p.date&&s.benefitCents>0));
-   const excluded=bundled.reduce((n,p)=>n+p.feeCents,0);
-   const completeSeries=[...new Set(bundled.map(p=>p.date))].every(date=>{
-    const series=normalized.filter(p=>p.code==='D0210'&&p.date===date&&p.benefitCents>0);
-    return series.length===1&&bundled.filter(p=>p.date===date).reduce((n,p)=>n+p.feeCents,0)>=series[0].feeCents;
-   });
-   if(flbExplained&&completeSeries&&excluded>0&&totals[0]-excluded===claim.printedTotals[0]){
+   const flcExplained=/\bFLC:\s*Combined\/modified radiographic image procedures based on processing policy\b/i.test(claimText);
+   const eligible=normalized.filter(p=>/^D0(?:220|230|274)$/.test(p.code)&&keys.slice(1).every(k=>p[k]===0)&&normalized.some(s=>s.code==='D0210'&&s.date===p.date&&s.benefitCents>0));
+   const flb=eligible.filter(p=>p.explanationCode==='FLB');
+   const flbDates=new Set(flb.map(p=>p.date));
+   const flc=flcExplained?eligible.filter(p=>p.explanationCode==='FLC'&&flbDates.has(p.date)):[];
+   const bundles=flc.length?[flb,[...flb,...flc]]:[flb];
+   for(const bundled of flbExplained?bundles:[]){
+    const excluded=bundled.reduce((n,p)=>n+p.feeCents,0);
+    if(excluded<=0||totals[0]-excluded!==claim.printedTotals[0])continue;
+    const completeSeries=[...new Set(bundled.map(p=>p.date))].every(date=>{
+     const series=normalized.filter(p=>p.code==='D0210'&&p.date===date&&p.benefitCents>0);
+     if(series.length!==1)return false;
+     const components=bundled.filter(p=>p.date===date);
+     const componentFees=components.reduce((n,p)=>n+p.feeCents,0);
+     return components.some(p=>p.explanationCode==='FLC')?componentFees===series[0].feeCents:componentFees>=series[0].feeCents;
+    });
+    if(!completeSeries)continue;
     totals[0]-=excluded;
-    warnings.push(`Claim ${claim.claimNumber}: Claim total không cộng phí ${money(excluded)} của ${bundled.length} dòng X-quang FLB đã gộp vào D0210; giữ nguyên các dòng gốc.`);
+    const codes=[...new Set(bundled.map(p=>p.explanationCode))].sort().join('/');
+    warnings.push(`Claim ${claim.claimNumber}: Claim total không tính trùng phí ${money(excluded)} khi gộp ${bundled.length} dòng X-quang ${codes} vào D0210; giữ nguyên các dòng gốc.`);
+    break;
    }
   }
   if(totals.some((n,i)=>n!==claim.printedTotals[i]))throw fail('Tổng từng cột dịch vụ Delta không khớp Claim total; cần đủ trang và đọc rõ số tiền.');

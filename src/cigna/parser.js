@@ -7,7 +7,7 @@ const unique=values=>[...new Set(values)];
 
 export function parseCigna(extracted){
   const fullText=extracted.pages.flatMap(p=>p.lines.map(l=>l.text)).join('\n');
-  if(isCignaStatement(fullText)){
+  if(isCignaStatement(fullText,{requireCarrierName:extracted.folderCarrier!=='CIGNA'})){
     if(/Claim\/Reference Number:/i.test(fullText))return {errors:['File trộn hai mẫu CIGNA; cần tách và đối chiếu.'],claims:[],warnings:[]};
     return parseCignaStatement(extracted);
   }

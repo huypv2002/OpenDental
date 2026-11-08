@@ -242,7 +242,7 @@ export function parseMetlife(extracted, {clinicConfirmedPaid = false} = {}) {
   if (procedures.some((r) => r.bundled))
     warnings.push('Có dịch vụ Allowable/bundled: cần xác định procedure OD tương ứng; không phân bổ theo phí gốc.');
   if (claimRaw !== claimBase) warnings.push('Giữ nguyên claim number đầy đủ, bao gồm phần số sau dấu cách.');
-  if (!/MetLife/i.test(text))
+  if (extracted.folderCarrier!=='METLIFE'&&!/MetLife/i.test(text))
     warnings.push('Logo MetLife là ảnh: nhận diện theo bố cục; phải đối chiếu carrier MetLife trong OD.');
   return {
     parserVersion: 1,

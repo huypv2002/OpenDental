@@ -1,9 +1,9 @@
 import {cents,money} from '../metlife/parser.js';
 
 const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
-export function isCignaStatement(text){
+export function isCignaStatement(text,{requireCarrierName=true}={}){
  const s=clean(text);
- return /Cigna Dental/i.test(s)&&/Explanation of dental payment/i.test(s)&&/DOCUMENT\s*#\s*:/i.test(s)&&/PROCESSED DATE:/i.test(s);
+ return (!requireCarrierName||/Cigna Dental/i.test(s))&&/Explanation of dental payment/i.test(s)&&/DOCUMENT\s*#\s*:/i.test(s)&&/PROCESSED DATE:/i.test(s);
 }
 function date(value){
  const m=/^([A-Za-z]{3})\s+(\d{1,2}),\s*(\d{4})$/.exec(clean(value));

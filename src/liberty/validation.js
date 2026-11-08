@@ -22,7 +22,7 @@ export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\
  }
  if(sum!==parsed.check.netPaymentCents)errors.push('Tổng các claim không khớp NET PAYMENT của check.');
  if(extracted.ocr&&verifyLibertyOcr&&rowCount!==extracted.pages.reduce((n,p)=>n+(p.ocrRows||0),0))errors.push('Có dòng dịch vụ OCR chưa đọc đủ các cột tiền.');
- if(errors.length)throw Object.assign(new Error([...new Set(errors)].join('; ')),extracted.ocr?{code:'EOB_REVIEW_REQUIRED'}:{});
+ if(errors.length)throw Object.assign(new Error([...new Set(errors)].join('; ')),(extracted.ocr||extracted.folderCarrier)?{code:'EOB_REVIEW_REQUIRED'}:{});
  return parsed;
 }
 

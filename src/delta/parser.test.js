@@ -41,6 +41,35 @@ test('Delta FLB bundled radiographs reconcile submitted fees without changing so
  assert.ok(p.warnings.some(s=>s.includes('FLB')));
 });
 
+test('Delta reconciles mixed FLB/FLC radiographs',()=>{
+ const input=bundledRadiographs();
+ const first=input.pages[0],second=input.pages[1];
+ first.lines[15].text=first.lines[15].text.replace('FLB','FLC');
+ first.lines[16].text=first.lines[16].text.replace('FLB','FLC');
+ second.lines.push({text:'FLC: Combined/modified radiographic image procedures based on processing policy.'});
+ const parsed=parseDelta(input);
+ assert.deepEqual(parsed.errors,[]);
+ assert.equal(parsed.claims[0].paymentPayload.amount,'115.00');
+ assert.deepEqual(parsed.claims[0].procedures.slice(1,4).map(p=>[p.explanationCode,p.feeCents]),[['FLC',2500],['FLC',3800],['FLB',8000]]);
+
+ const flbOnly=structuredClone(input);
+ for(const page of flbOnly.pages){
+  const row=page.lines.find(l=>l.text.includes('FLB')&&l.text.includes('D0274'));
+  row.text=row.text.replace('$80.00','$143.00');
+ }
+ flbOnly.pages[1].lines[2].text=flbOnly.pages[1].lines[2].text.replace('$243.00','$306.00');
+ assert.deepEqual(parseDelta(flbOnly).errors,[]);
+
+ for(const mutate of [
+  s=>{s.pages[1].lines.pop();},
+  s=>{s.pages[1].lines[0].text=s.pages[1].lines[0].text.replace('FLB','FLC');s.pages[0].lines[17].text=s.pages[0].lines[17].text.replace('FLB','FLC');},
+  s=>{s.pages[1].lines[1].text=s.pages[1].lines[1].text.replace('$143.00','$142.00');s.pages[1].lines[2].text=s.pages[1].lines[2].text.replace('$243.00','$242.00');},
+  s=>{s.pages[1].lines[2].text=s.pages[1].lines[2].text.replace('$115.00','$116.00');}
+ ]){
+  const changed=structuredClone(input);mutate(changed);assert.ok(parseDelta(changed).errors.length);
+ }
+});
+
 test('Delta split total label tolerates I/l formatting only beside six unchanged explicit totals',()=>{
  for(const label of ['C I a i m tota','Claim tota','C l a i m total']){
   const input=sample(),last=input.pages.at(-1),index=last.lines.findIndex(l=>l.text.startsWith('Claim total'));

@@ -57,14 +57,20 @@ test('invalid conversion stops before DB queries and leaves text available for r
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
-test('automatic PDF conversion posts once across PDF/TXT replay and keeps original PDF attachment (simulated DB)',async()=>{
+test('Delta folder processes headerless PDF/TXT once and keeps original PDF attachment (simulated DB)',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'pdftext-post-'));
  try{
-  const parsed=parseDelta(readInsuranceTextDocument(Buffer.from(delta)).extracted),c=parsed.claims[0];
+  const dir=path.join(root,'delta dental');await fs.mkdir(dir);
+  const text=delta.slice(delta.indexOf('\n')+1);
+  const parsed=parseDelta(readInsuranceTextDocument(Buffer.from(text),{folderCarrier:'DELTA DENTAL'}).extracted),c=parsed.claims[0];
   const f=await insuranceLedger(root,[{patNum:1279,firstName:c.patient.firstName,lastName:c.patient.lastName,memberId:c.patient.memberId,claimNumber:c.claimNumber,procedures:c.procedures,serviceDate:'2026-10-22'}]);
   for(const fileName of ['1279.pdf','1793111377468_1279.txt']){
-   const file=path.join(root,fileName);await fs.writeFile(file,fileName.endsWith('.pdf')?'%PDF-synthetic':delta);
-   await processSinglePdf(f.pool,file,{convertPdf:async()=>delta,hashSplits:f.hashes});
+   const file=path.join(dir,fileName);await fs.writeFile(file,fileName.endsWith('.pdf')?'%PDF-synthetic':text);
+   const convertPdf=async(_bytes,options)=>{
+    assert.equal(options.folderCarrier,'DELTA DENTAL');
+    return selectConvertedText({candidates:[{text},{text}]},options);
+   };
+   await processSinglePdf(f.pool,file,{convertPdf,hashSplits:f.hashes});
   }
   assert.equal(f.payments.length,1);assert.equal(f.splits.length,2);assert.equal(f.addedAudit.length,0);
   assert.ok(f.documents.some(d=>d.FileName.endsWith('.pdf')));
@@ -102,7 +108,6 @@ test('conversion never accepts conflicting valid claims or an uncorroborated sca
  assert.throws(()=>selectConvertedText({candidates:[{text:delta},{text:delta.replace('20262965110923','20262965110924')}]}),/khác nhau/);
  assert.throws(()=>selectConvertedText({candidates:[{text:delta.replace('$232.00','$233.00')}],native:true}),/PDF -> TXT/);
 });
-
 
 test('converted TXT is retained when financial validation rejects an ambiguous scan',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'pdftext-review-'));

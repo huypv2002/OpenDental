@@ -4,6 +4,8 @@ PDF files placed in the four insurer folders now use the pinned `scribe.js-ocr@0
 
 The full workflow is PDF -> Scribe word/text data -> aligned TXT -> existing insurer parser -> patient/procedure matching -> verified settlement -> original PDF in Finished Claims -> PROCESSED and daily Excel. There is no remote document-conversion API and no patient document upload. English recognition assets are loaded from the already-installed `@tesseract.js-data/eng` package, not a model CDN.
 
+The incoming folder selects the insurer for PDF conversion and posting. The selected parser validates the claim layout and financial data even if OCR omits the insurer logo.
+
 Generated text is saved under the incoming insurer folder, for example:
 
 `D:\SHARE\INSURANCE CLAIM\DELTA DENTAL\TEXT\1279.pdf.<source-hash>.txt`

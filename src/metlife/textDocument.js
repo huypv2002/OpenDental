@@ -64,16 +64,20 @@ function layoutPage(raw,page,carrier){
  return {page,width:carrier==='METLIFE'?1000:(Math.max(1,...lines.map(l=>l.length))+20)*(carrier==='CIGNA'?3:1),height:(lines.length+2)*10,lines:output,items:output.flatMap(l=>l.items)};
 }
 
-export function readInsuranceTextDocument(bytes){
- if(bytes.length>30*1024*1024)throw review('Tài liệu EOB vượt quá 30 MB.');
- const text=decodeClaimText(bytes),carriers=[];
+function detectTextCarrier(text){
+ const carriers=[];
  const signature=text.replace(/\s+/g,' ');
  if(/DELTA\s+DENTAL/i.test(signature)&&/Provider Tools/i.test(signature))carriers.push('DELTA DENTAL');
  if(/LIBERTY Dental Plan/i.test(signature)&&/PAYMENT DETAILS/i.test(signature))carriers.push('LIBERTY');
  if((/Claim\/Reference Number:/.test(signature)&&/Date Processed:/.test(signature)&&/Claim Amount Paid:/.test(signature))||isCignaStatement(signature))carriers.push('CIGNA');
  if(/Claim Summary/.test(signature)&&/Relationship to Subscriber:/.test(signature)&&/Claim Detail/.test(signature))carriers.push('METLIFE');
  if(carriers.length!==1)throw review('TXT chưa nhận diện duy nhất mẫu MetLife / Liberty / CIGNA / Delta Dental đã hỗ trợ.');
- const carrier=carriers[0],warnings=[];
+ return carriers[0];
+}
+
+export function readInsuranceTextDocument(bytes,{folderCarrier}={}){
+ if(bytes.length>30*1024*1024)throw review('Tài liệu EOB vượt quá 30 MB.');
+ const text=decodeClaimText(bytes),carrier=folderCarrier??detectTextCarrier(text),warnings=[];
  const normalized=text.replace(/\$(\d[\d,]*)[ \t]+(\d{2})(?=\s|$)/g,(all,whole,cents)=>{
   warnings.push(`TXT: đọc $${whole} ${cents} là $${whole}.${cents}.`);
   return `$${whole}.${cents}`.padEnd(all.length,' ');
@@ -87,5 +91,5 @@ export function readInsuranceTextDocument(bytes){
   if(title){pageText[i]=pageText[i].slice(0,title.index);pageText[i+1]='Payment Detail\n'+pageText[i+1];}
  }
  const pages=pageText.map((s,i)=>layoutPage(s,i+1,carrier));
- return {extracted:{sha256:createHash('sha256').update(bytes).digest('hex'),sourceFormat:'text',textCarrier:carrier,ocr:false,warnings,pages},pdfBytes:bytes};
+ return {extracted:{sha256:createHash('sha256').update(bytes).digest('hex'),sourceFormat:'text',textCarrier:carrier,folderCarrier,ocr:false,warnings,pages},pdfBytes:bytes};
 }
