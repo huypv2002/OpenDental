@@ -28,6 +28,10 @@ test('parseLibertyToothAndDesc extracts tooth and description', () => {
     tooth: 'FM',
     description: 'Full mouth debridement'
   });
+  assert.deepEqual(parseLibertyToothAndDesc('Q10 Periodontal scaling and root planing'), {
+    tooth: 'Q10',
+    description: 'Periodontal scaling and root planing'
+  });
 });
 
 test('parseLiberty parses full Liberty Dental Plan PDF with multi-claim payload', async t => {

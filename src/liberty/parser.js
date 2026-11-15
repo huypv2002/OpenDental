@@ -15,8 +15,9 @@ export function parseShortDos(s) {
 
 export function parseLibertyToothAndDesc(mid) {
   const trimmed = (mid || '').trim();
-  // Tooth/Arch/Quadrant pattern: 1-32, A-T, Q01-Q04, UR, UL, LR, LL, UA, LA, FM
-  const m = trimmed.match(/^([A-T]|3[0-2]|[12][0-9]|[1-9]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)\s+(.*)$/i);
+  // Tooth/Arch/Quadrant pattern. Liberty periodontal rows use Q10/Q20/Q30/Q40
+  // for UR/UL/LL/LR. Q01-Q04 remain the carrier's denture notation.
+  const m = trimmed.match(/^([A-T]|3[0-2]|[12][0-9]|[1-9]|Q(?:0[1-4]|[1-4]0)|UR|UL|LR|LL|UA|LA|FM)\s+(.*)$/i);
   if (m) {
     return {
       tooth: m[1].toUpperCase(),

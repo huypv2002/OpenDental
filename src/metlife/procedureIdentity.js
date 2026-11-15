@@ -1,4 +1,4 @@
-const quads={UR:'UR',UL:'UL',LR:'LR',LL:'LL',Q01:'UR',Q02:'UL',Q03:'LL',Q04:'LR'};
+const quads={UR:'UR',UL:'UL',LR:'LR',LL:'LL',Q01:'UR',Q02:'UL',Q03:'LL',Q04:'LR',Q10:'UR',Q20:'UL',Q30:'LL',Q40:'LR'};
 const text=value=>String(value??'').trim().toUpperCase();
 const archCodes={D5110:'U',D5120:'L',D5214:'L'};
 export const normalizeTooth=value=>/^\d+$/.test(text(value))?String(Number(text(value))):text(value);

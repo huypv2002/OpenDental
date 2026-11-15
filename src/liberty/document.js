@@ -70,7 +70,7 @@ async function recognizePage(worker,image){
    let tooth='';
    if(toothWords.length){
     tooth=toothWords.map(w=>w.text).join('');
-    if(!/^(?:[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(tooth))tooth=await cell(line,toothLeft,surfaceLeft-toothLeft,'Q0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+    if(!/^(?:[1-9]|[12]\d|3[0-2]|[A-T]|Q(?:0[1-4]|[1-4]0)|UR|UL|LR|LL|UA|LA|FM)$/.test(tooth))tooth=await cell(line,toothLeft,surfaceLeft-toothLeft,'Q0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ');
     tooth=tooth.replace(/^QO([1-4])$/,'Q0$1');
     if(!/^(?:[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(tooth))throw new Error('Ô răng trong ảnh chưa rõ; cần đối chiếu ảnh gốc.');
    }

@@ -30,7 +30,7 @@ export function planMissingProcedures(dbProcs,procedures,{allowUniqueCodeDate=fa
   if(byDate.length>=sourceCount&&byDate.length)throw reviewError(`${p.code}: đã có dịch vụ cùng mã/ngày nhưng vùng răng/hàm chưa khớp; không tự thêm trùng.`);
   const date=/^\d{4}-\d{2}-\d{2}$/.test(p.date||'')?new Date(p.date+'T12:00:00Z'):null;
   if(!/^D\d{4}$/.test(p.code)||!date||Number.isNaN(+date)||date.toISOString().slice(0,10)!==p.date||!Number.isSafeInteger(p.benefitCents)||(includeUnpaid?p.benefitCents<0:p.benefitCents<=0))throw reviewError(`${p.code}: thiếu ngày/mã/số tiền để thêm dịch vụ.`);
-  if(p.tooth&&!/^(?:0?[1-9]|[12]\d|3[0-2]|[A-T]|Q0[1-4]|UR|UL|LR|LL|UA|LA|FM)$/.test(p.tooth))throw reviewError(`${p.code}: chưa đọc rõ răng để thêm dịch vụ.`);
+  if(p.tooth&&!/^(?:0?[1-9]|[12]\d|3[0-2]|[A-T]|Q(?:0[1-4]|[1-4]0)|UR|UL|LR|LL|UA|LA|FM)$/.test(p.tooth))throw reviewError(`${p.code}: chưa đọc rõ răng để thêm dịch vụ.`);
   const virtual={ProcNum:-(additions.length+1),ProcCode:p.code,ProcDate:p.date,ToothNum:anatomy(p).ToothNum,Surf:anatomy(p).Surf,ProcFee:(chargeCents/100).toFixed(2),Descript:p.description||p.desc||p.code};
   procs.push(virtual);additions.push({source:p,row:virtual});
  }

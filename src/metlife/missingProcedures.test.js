@@ -85,3 +85,14 @@ test('quadrant and arch go into OD surface fields rather than invalid tooth numb
   assert.deepEqual(f.codes.slice(-2).map(c=>c.TreatArea),[4,6]);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('Liberty Q10/Q20/Q30/Q40 rows map to periodontal quadrants',()=>{
+ const procedures=[
+  {...paid,allowedCents:6800,code:'D4342',tooth:'Q10'},
+  {...paid,allowedCents:6800,code:'D4342',tooth:'Q20'},
+  {...paid,allowedCents:6800,code:'D4342',tooth:'Q30'},
+  {...paid,allowedCents:6800,code:'D4342',tooth:'Q40'}
+ ];
+ const plan=planMissingProcedures([],procedures,{carrier:'LIBERTY Dental Plan'});
+ assert.deepEqual(plan.additions.map(({row})=>row.Surf),['UR','UL','LL','LR']);
+});
