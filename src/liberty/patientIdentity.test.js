@@ -63,3 +63,12 @@ test('Liberty rejects missing, unknown, duplicate exact and shared base subscrib
   }finally{f.db.close();}
  }
 });
+
+test('Liberty accepts spacing and zero-padding differences in a unique Subscriber ID',async()=>{
+ const f=fixture();try{
+  f.add(303,'532W27253-1');
+  assert.equal((await f.resolve('532W27253-01')).PatNum,303);
+  f.add(404,'532 W27253 02');
+  assert.equal((await f.resolve('532W27253-02')).PatNum,404);
+ }finally{f.db.close();}
+});

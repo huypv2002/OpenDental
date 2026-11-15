@@ -196,6 +196,41 @@ function Focus-Compose($Window, [bool]$DailyRecall=$false) {
   }
   throw 'Could not focus the real Phone Link compose input. Capture the UI snapshot.'
 }
+function Find-SendButton($Window) {
+  @(Elements $Window | Where-Object {
+    try {
+      $c=$_.Current
+      -not $c.IsOffscreen -and $c.IsEnabled -and
+        ($c.AutomationId -eq 'SendMessageButton' -or $c.Name -match '(?i)^(Send|Gửi|Enviar)$') -and
+        ($c.ControlType -eq $ButtonType)
+    } catch { $false }
+  } | Select-Object -First 1)
+}
+function MessageMatches($Window,[string]$Expected) {
+  $normalized=[string]$Expected
+  $normalized=$normalized.Replace("`r`n","`n").Trim()
+  foreach($element in @(Elements $Window)) {
+    try {
+      if($element.Current.AutomationId -ne 'MessageBody') {continue}
+      $value=(Value $element).Replace("`r`n","`n").Trim()
+      if($value -ceq $normalized) {return $true}
+    } catch {}
+  }
+  return $false
+}
+function Wait-SentMessage($Window,$Field,[string]$Expected,[int]$Seconds=10) {
+  $until=[DateTime]::UtcNow.AddSeconds($Seconds)
+  do {
+    try {
+      $value=(Value $Field).Replace("`r`n","`n").Trim()
+      if($value -eq '' -or (MessageMatches $Window $Expected)) {return}
+    } catch [System.Windows.Automation.ElementNotAvailableException] {
+      return
+    } catch {}
+    Start-Sleep -Milliseconds 200
+  } while([DateTime]::UtcNow -lt $until)
+  throw 'Phone Link did not confirm the message after Send. Inspect Phone Link before marking the SMS sent.'
+}
 function Is-Recipient($Window,$Element) {
   if ($null -eq $Element) {return $false}
   $c=$Element.Current;$w=$Window.Current.BoundingRectangle;$r=$c.BoundingRectangle
@@ -281,11 +316,13 @@ function Compose-Sms($Request) {
   if (-not $verified) {throw 'Could not verify the complete template in the Phone Link compose field. Draft remains open; no Send pressed.'}
   Trace 'Recipient and complete message verified in Phone Link.'
   if ($Request.mode -eq 'send') {
-    # Do not consider Enter itself a delivery receipt. The app records needs-review.
     $field=Focus-MessageInput $window $field
     if ($null -eq $field) {throw 'Phone Link lost the verified compose input focus. No Send pressed.'}
     if ((Value $field).Replace("`r`n","`n").Trim() -cne ([string]$Request.message).Replace("`r`n","`n").Trim()) {throw 'The draft changed before Send. No Send pressed.'}
-    Keys $window '{ENTER}' 6000
+    $sendButton=Find-SendButton $window
+    if ($sendButton.Count -eq 0) {throw 'Phone Link Send button is unavailable or disabled. No SMS sent.'}
+    Click-Element $sendButton $window
+    Wait-SentMessage $window $field ([string]$Request.message)
     Close-Window $window
     return @{ok=$true;mode='send';status='needs-review'}
   }

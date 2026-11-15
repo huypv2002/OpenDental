@@ -17,13 +17,30 @@ export async function resolveLibertyPatient(pool, { claim }) {
   if(!memberId)throw reviewError(`Liberty Claim #${claim.claimNumber}: thiếu Subscriber ID; chưa lưu thanh toán.`);
   // Prefer the complete member ID. Only fall back to the base ID when OD omits
   // the trailing dependent suffix, and only when that identifies one patient.
-  const ids=[...new Set([memberId,memberId.replace(/-\d+$/, '')])];
+  const baseId=memberId.replace(/-\d+$/,'');
+  const suffixNormalized=memberId.replace(/-(\d+)$/,(_,suffix)=>`-${Number(suffix)}`);
+  const ids=[...new Set([memberId,baseId,suffixNormalized,suffixNormalized.replace(/-\d+$/,'')])];
   for(const id of ids){
     const [matches]=await pool.execute(
       `SELECT DISTINCT p.PatNum,p.FName,p.LName,p.Birthdate,p.ClinicNum,p.PriProv,p.ImageFolder,p.ChartNumber
        FROM patient p JOIN patplan pp ON pp.PatNum=p.PatNum
        JOIN inssub s ON s.InsSubNum=pp.InsSubNum
        WHERE TRIM(s.SubscriberID)=? ORDER BY p.PatNum ASC LIMIT 2`,[id]);
+    if(matches.length===1)return matches[0];
+    if(matches.length>1)throw reviewError(`Liberty Claim #${claim.claimNumber}: Subscriber ID khớp nhiều bệnh nhân; cần đối chiếu, chưa lưu thanh toán.`);
+  }
+
+  // Some Open Dental imports preserve the dependent suffix with different
+  // punctuation or zero padding. Accept a normalized match only when it is
+  // still unique, so an ambiguous subscriber never selects a patient.
+  const normalized=memberId.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(normalized){
+    const [matches]=await pool.execute(
+      `SELECT DISTINCT p.PatNum,p.FName,p.LName,p.Birthdate,p.ClinicNum,p.PriProv,p.ImageFolder,p.ChartNumber
+       FROM patient p JOIN patplan pp ON pp.PatNum=p.PatNum
+       JOIN inssub s ON s.InsSubNum=pp.InsSubNum
+       WHERE UPPER(REPLACE(REPLACE(TRIM(s.SubscriberID),'-',''),' ',''))=?
+       ORDER BY p.PatNum ASC LIMIT 2`,[normalized]);
     if(matches.length===1)return matches[0];
     if(matches.length>1)throw reviewError(`Liberty Claim #${claim.claimNumber}: Subscriber ID khớp nhiều bệnh nhân; cần đối chiếu, chưa lưu thanh toán.`);
   }
