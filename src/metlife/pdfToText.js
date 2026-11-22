@@ -23,17 +23,34 @@ export async function convertPdfBytesToText(bytes,{timeoutMs=120000,clinicConfir
  try{
   const input=path.join(dir,'input.pdf'),output=path.join(dir,'output.txt');
   await fs.writeFile(input,bytes,{mode:0o600});
-  await new Promise((resolve,reject)=>{
-   let message,timedOut=false;
-   const child=fork(worker,[input,output],{cwd:dir,execArgv:[],stdio:['ignore','ignore','ignore','ipc'],windowsHide:true});
-   const timer=setTimeout(()=>{timedOut=true;child.kill();},timeoutMs);
-   child.on('message',data=>{if(data?.error)message=String(data.error);});
-   child.once('error',()=>{clearTimeout(timer);reject(review('Không khởi chạy được thư viện PDF sang TXT.'));});
-   child.once('close',code=>{clearTimeout(timer);if(timedOut)reject(review('Chuyển PDF sang TXT quá thời gian; chưa ghi thanh toán.'));else if(code!==0)reject(review(message||'Thư viện PDF sang TXT bị dừng; chưa ghi thanh toán.'));else resolve();});
-  });
-  const result=JSON.parse(await fs.readFile(output,'utf8'));
-  try{return selectConvertedText(result,{clinicConfirmedPaid,folderCarrier});}
-  catch(error){Object.defineProperty(error,'convertedText',{value:result.candidates.at(-1)?.text});throw error;}
+  const runWorker=async(mode)=>{
+   await new Promise((resolve,reject)=>{
+    let message,timedOut=false;
+    const child=fork(worker,[input,output,mode],{cwd:dir,execArgv:[],stdio:['ignore','ignore','ignore','ipc'],windowsHide:true});
+    const timer=setTimeout(()=>{timedOut=true;child.kill();},timeoutMs);
+    child.on('message',data=>{if(data?.error)message=String(data.error);});
+    child.once('error',()=>{clearTimeout(timer);reject(review('Không khởi chạy được thư viện PDF sang TXT.'));});
+    child.once('close',code=>{clearTimeout(timer);if(timedOut)reject(review('Chuyển PDF sang TXT quá thời gian; chưa ghi thanh toán.'));else if(code!==0)reject(review(message||'Thư viện PDF sang TXT bị dừng; chưa ghi thanh toán.'));else resolve();});
+   });
+   return JSON.parse(await fs.readFile(output,'utf8'));
+  };
+  const result=await runWorker('scribe');
+  const options={clinicConfirmedPaid,folderCarrier};
+  try{return selectConvertedText(result,options);}
+  catch(error){
+   if(folderCarrier==='DELTA DENTAL'&&!result.native&&error.noValidCandidate){
+    // Use the original PDF for a second reading. Keep the Scribe candidates
+    // so the claim number still needs confirmation from another reading.
+    try{
+     const {text}=await runWorker('delta-table');
+     return selectConvertedText({...result,candidates:[...result.candidates,{text}]},options);
+    }catch(retryError){
+     if(retryError.message.startsWith('PDF -> TXT:'))error=retryError;
+    }
+   }
+   Object.defineProperty(error,'convertedText',{value:result.candidates.at(-1)?.text});
+   throw error;
+  }
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 }
 
@@ -77,7 +94,7 @@ export function selectConvertedText({candidates,native=false},{clinicConfirmedPa
    good.push({text,signature,names,ids:JSON.stringify(claimIds)});
   }catch(e){error=e.message;}
  }
- if(!good.length)throw review('PDF -> TXT: '+error);
+ if(!good.length)throw Object.assign(review('PDF -> TXT: '+error),{noValidCandidate:true});
  if(new Set(good.map(r=>r.signature)).size!==1)throw review('Các kết quả chuyển PDF sang TXT khác nhau về bệnh nhân, claim hoặc thanh toán; cần đối chiếu.');
  if(!native&&ids.filter(id=>id===good[0].ids).length<2)throw review('Chưa xác nhận số claim qua hai kết quả của thư viện PDF sang TXT; cần đối chiếu.');
  if(native||good.length===1)return good[0].text;

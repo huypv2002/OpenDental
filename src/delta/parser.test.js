@@ -70,8 +70,26 @@ test('Delta reconciles mixed FLB/FLC radiographs',()=>{
  }
 });
 
+test('Delta reconciles bundled radiographs when 7W2 assigns the series fee to the patient',()=>{
+ const input=bundledRadiographs();
+ const [first,second]=input.pages;
+ first.lines[15].text=first.lines[15].text.replace('FLB','FLC');
+ first.lines[16].text=first.lines[16].text.replace('FLB','FLC');
+ second.lines[1].text='7W2 04/26/2026 D0210 - $143.00 $73.00 $73.00 $0.00 100% $0.00 $73.00';
+ second.lines[2].text='Claim total $243.00 $115.00 $115.00 $0.00 $42.00 $73.00';
+ second.lines.push(
+  {text:'FLC: Combined/modified radiographic image procedures based on processing policy.'},
+  {text:'7W2: Panoramic x-rays and a comprehensive series of radiographic images are covered. The enrollee has already received a benefit.'}
+ );
+ const parsed=parseDelta(input);
+ assert.deepEqual(parsed.errors,[]);
+ assert.deepEqual(parsed.claims[0].paymentPayload.splits.map(({code,amount})=>[code,amount]),[['D0150','42.00']]);
+ second.lines.pop();
+ assert.match(parseDelta(input).errors[0],/không khớp Claim total/);
+});
+
 test('Delta split total label tolerates I/l formatting only beside six unchanged explicit totals',()=>{
- for(const label of ['C I a i m tota','Claim tota','C l a i m total']){
+ for(const label of ['C I a i m tota','Claim tota','C l a i m total','Claim C 1 l m total']){
   const input=sample(),last=input.pages.at(-1),index=last.lines.findIndex(l=>l.text.startsWith('Claim total'));
   const values=last.lines[index].text.replace('Claim total','').trim();
   last.lines.splice(index,1,{text:label},{text:values});

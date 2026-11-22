@@ -5,6 +5,10 @@ const amounts=text=>[...text.matchAll(/\$([\d,]+\.\d{2})/g)].map(m=>cents(m[1]))
 const signature=p=>JSON.stringify([p.date,p.code,p.tooth,p.feeCents,p.allowedCents,p.maximumCents,p.deductibleCents,p.percent,p.benefitCents,p.patientDueCents,p.explanationCode]);
 const fail=(message)=>Object.assign(new Error(message),{code:'EOB_REVIEW_REQUIRED'});
 
+export function isDeltaTotalLabel(text){
+ return /^(?:claim)?c[li1]a?[li1]mtota[li1]?$/i.test(text.replace(/\s/g,''));
+}
+
 export function parseDelta(extracted){
  const errors=[],warnings=[...(extracted.warnings||[])],claims=[],claimTexts=new Map();let current;
  try{
@@ -13,7 +17,7 @@ export function parseDelta(extracted){
   // A large-font total label may contain I/l confusion or lose its final l.
   // Normalize the label only when immediately followed by all six explicit
   // currency cells. Never repair a service code, claim ID or monetary digit.
-  for(let i=0;i<lines.length-1;i++)if(/^c[li]a[li]mtota[li]?$/i.test(lines[i].replace(/\s/g,''))&&amounts(lines[i+1]).length===6&&/^[-$\d,.\s]+$/.test(lines[i+1])){
+  for(let i=0;i<lines.length-1;i++)if(isDeltaTotalLabel(lines[i])&&amounts(lines[i+1]).length===6&&/^[-$\d,.\s]+$/.test(lines[i+1])){
    if(lines[i]!=='Claim total')warnings.push('Delta: chuẩn hóa nhãn Claim total; giữ nguyên sáu số tiền để đối chiếu.');
    lines[i]='Claim total';
   }
@@ -57,8 +61,10 @@ export function parseDelta(extracted){
      if(benefitCents>calculatedBenefit||benefitCents+patientDueCents!==allowedCents)throw fail('Tiền Delta trả không khớp mức hưởng và tỷ lệ trên dòng dịch vụ.');
      warnings.push(`Claim ${current.claimNumber}, ${match[2]} ngày ${date}: dùng Delta Dental pays ${money(benefitCents)} thấp hơn mức tính theo tỷ lệ ${money(calculatedBenefit)}; đã khớp phần bệnh nhân trả với Accepted fee.`);
     }
-    const explanationCode=/^([A-Z]+)\s+\d{2}\//.exec(line)?.[1]||'';
+    const explanationCode=/^([A-Z0-9]+)\s+\d{2}\//.exec(line)?.[1]||'';
     rows.push({date,code:match[2],tooth,feeCents,allowedCents,maximumCents,deductibleCents,benefitCents,patientDueCents,percent,explanationCode});
+   }else if(/^(?:\S+\s+)?\d{2}\/\d{2}\/\d{4}\s+\S+/.test(line)&&amounts(line).length>=4&&/\d+%/.test(line)){
+    throw fail('Chưa đọc rõ mã dịch vụ Delta trong bảng; cần đối chiếu PDF gốc.');
    }else if(/\bD\d{4}\b/.test(line)&&line.includes('$'))throw fail('Có dòng dịch vụ Delta chưa đọc đầy đủ.');
    if(/^Claim total\b/i.test(line)){
     if(!current||current.printedTotals)throw fail('Tổng claim Delta bị thiếu hoặc lặp.');
@@ -93,7 +99,12 @@ export function parseDelta(extracted){
    const claimText=claimTexts.get(claim.claimNumber)||'';
    const flbExplained=/\bFLB:\s*The combined fees for radiographic images[\s\S]*?equivalent to a complete series\b/i.test(claimText);
    const flcExplained=/\bFLC:\s*Combined\/modified radiographic image procedures based on processing policy\b/i.test(claimText);
-   const eligible=normalized.filter(p=>/^D0(?:220|230|274)$/.test(p.code)&&keys.slice(1).every(k=>p[k]===0)&&normalized.some(s=>s.code==='D0210'&&s.date===p.date&&s.benefitCents>0));
+   const frequencyDenialExplained=/\b7W2:\s*Panoramic x-rays[\s\S]*?(?:complete intraoral radiographic series|comprehensive series of radiographic images)[\s\S]*?already received a benefit\b/i.test(claimText);
+   const completeSeriesRows=normalized.filter(p=>p.code==='D0210'&&(
+    p.benefitCents>0||(frequencyDenialExplained&&p.explanationCode==='7W2'&&
+      p.benefitCents===0&&p.allowedCents>0&&p.patientDueCents===p.allowedCents)
+   ));
+   const eligible=normalized.filter(p=>/^D0(?:220|230|274)$/.test(p.code)&&keys.slice(1).every(k=>p[k]===0)&&completeSeriesRows.some(s=>s.date===p.date));
    const flb=eligible.filter(p=>p.explanationCode==='FLB');
    const flbDates=new Set(flb.map(p=>p.date));
    const flc=flcExplained?eligible.filter(p=>p.explanationCode==='FLC'&&flbDates.has(p.date)):[];
@@ -102,11 +113,12 @@ export function parseDelta(extracted){
     const excluded=bundled.reduce((n,p)=>n+p.feeCents,0);
     if(excluded<=0||totals[0]-excluded!==claim.printedTotals[0])continue;
     const completeSeries=[...new Set(bundled.map(p=>p.date))].every(date=>{
-     const series=normalized.filter(p=>p.code==='D0210'&&p.date===date&&p.benefitCents>0);
+     const series=completeSeriesRows.filter(p=>p.date===date);
      if(series.length!==1)return false;
      const components=bundled.filter(p=>p.date===date);
      const componentFees=components.reduce((n,p)=>n+p.feeCents,0);
-     return components.some(p=>p.explanationCode==='FLC')?componentFees===series[0].feeCents:componentFees>=series[0].feeCents;
+     return components.some(p=>p.explanationCode==='FLC')||series[0].benefitCents===0
+      ?componentFees===series[0].feeCents:componentFees>=series[0].feeCents;
     });
     if(!completeSeries)continue;
     totals[0]-=excluded;

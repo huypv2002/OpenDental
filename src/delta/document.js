@@ -1,4 +1,5 @@
 import {readInsuranceDocument,tsvLines,isImageFile} from '../liberty/document.js';
+import {isDeltaTotalLabel} from './parser.js';
 
 // A complete high-confidence whole-page word is a second reading, independent
 // of the cell crops. Never reconstruct digits or outvote a conflicting valid crop.
@@ -21,11 +22,11 @@ export function alignDeltaTotalRows(lines,width){
   // The large Claim total label can sit higher than its monetary baseline.
   // Use the actual six numeric boxes for crop alignment; do not invent digits
   // from the label's vertical position or merge neighboring service rows.
-  if(/^Claim total\b/i.test(row.text)&&next&&row.words.filter(money).length<6&&next.words.every(w=>money(w)||w.text==='-')){
+  if(isDeltaTotalLabel(row.text)&&next&&row.words.filter(money).length<6&&next.words.every(w=>money(w)||w.text==='-')){
    const words=[...row.words,...next.words],values=words.filter(money);
    if(values.length===6&&columns.every(([a,b])=>values.filter(w=>(w.x+w.width/2)/width>=a&&(w.x+w.width/2)/width<b).length===1)){
     const centers=values.map(w=>w.y+w.height/2).sort((a,b)=>a-b);
-    out.push({cy:(centers[2]+centers[3])/2,words,text:words.map(w=>w.text).join(' ')});i++;continue;
+    out.push({cy:(centers[2]+centers[3])/2,words,text:'Claim total '+next.text});i++;continue;
    }
   }
   out.push(row);
@@ -90,7 +91,7 @@ export async function recognizeDeltaPage(worker,image,{imageLayout=false}={}){
   throw Object.assign(new Error('Các lần đọc ô bảng Delta không khớp; cần đối chiếu tài liệu gốc.'),{ocrCell:{left,right,reads,row:l.text}});
  }
  const result=[];
- for(const l of imageLayout?alignDeltaTotalRows(lines,c.width):lines){
+ for(const l of alignDeltaTotalRows(lines,c.width)){
   const date=l.words.find(w=>w.x/c.width>(imageLayout?.095:.115)&&w.x/c.width<.18&&/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(w.text));
   if(date){
    const serviceDate=await cell(l,imageLayout?Math.max(.09,date.x/c.width-.005):.12,imageLayout?Math.min(.207,(date.x+date.width)/c.width+.005):.207,'0123456789/');
@@ -107,7 +108,7 @@ export async function recognizeDeltaPage(worker,image,{imageLayout=false}={}){
    const percent=l.words.find(w=>w.x/c.width>=.736&&w.x/c.width<.813&&/^\d+(?:\.\d+)?%$/.test(w.text))?.text;
    if(!percent)throw new Error('Thiếu tỷ lệ hưởng dịch vụ Delta Dental.');
    const explanation=l.words.filter(w=>w.x/c.width<.115).map(w=>w.text).join('');
-   result.push({text:`${/^[A-Z]+$/.test(explanation)?explanation+' ':''}${serviceDate} ${code} ${tooth||'-'} ${money.slice(0,4).join(' ')} ${percent} ${money.slice(4).join(' ')}`});
+   result.push({text:`${/^[A-Z0-9]+$/.test(explanation)?explanation+' ':''}${serviceDate} ${code} ${tooth||'-'} ${money.slice(0,4).join(' ')} ${percent} ${money.slice(4).join(' ')}`});
   }else if(/^Claim total\b/i.test(l.text)){
    const money=[];for(const [a,b] of [[.38,.466],[.466,.542],[.542,.637],[.637,.73],[.807,.902],[.902,.99]]){
     const s=await cell(l,a,!imageLayout&&b===.99?.975:b,'$0123456789,.-');if(!/^\$?\d[\d,]*\.\d{2}$/.test(s))throw new Error('Chưa đọc rõ tổng claim Delta Dental.');money.push(s.startsWith('$')?s:'$'+s);

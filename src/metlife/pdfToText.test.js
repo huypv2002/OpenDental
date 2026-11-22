@@ -79,6 +79,22 @@ test('Delta folder processes headerless PDF/TXT once and keeps original PDF atta
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 
+test('Delta accepts a reconciled reread after damaged OCR, missing totals or ambiguous rows',()=>{
+ const options={folderCarrier:'DELTA DENTAL'};
+ const serviceRow=delta.split('\n').find(line=>line.includes('D2393'));
+ const invalidReads=[
+  delta.replace('D2393','DINO'),
+  delta.split('Claim total')[0],
+  delta.replace(serviceRow,serviceRow+'\n'+serviceRow)
+ ];
+ for(const text of invalidReads){
+  assert.throws(()=>selectConvertedText({candidates:[{text}]},options),error=>error.noValidCandidate);
+  assert.equal(selectConvertedText({candidates:[{text},{text:delta}]},options),delta);
+ }
+ const differentClaim=delta.replace('20262965110923','20262965110924');
+ assert.throws(()=>selectConvertedText({candidates:[{text:invalidReads[0]},{text:differentClaim}]},options),/Chưa xác nhận số claim/);
+});
+
 test('word coordinates rebuild visual rows and page boundaries rather than column reading order',()=>{
  const word=(text,x,y)=>({text,bbox:{left:x,right:x+20,top:y,bottom:y+10}});
  const text=scribePagesToText([{lines:[{words:[word('right',200,10)]},{words:[word('left',20,10)]}]}],[{dims:{width:400}}]);
