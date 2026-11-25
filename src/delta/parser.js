@@ -8,7 +8,10 @@ const fail=(message)=>Object.assign(new Error(message),{code:'EOB_REVIEW_REQUIRE
 function reconcileSplitRadiograph(rows,claimText,moneyKeys){
  const [original,split,paid,denied]=rows;
  if(rows.length!==4||!/^D0(?:220|230|274)$/.test(original.code))return;
- if(original.explanationCode!=='FLC'||split.explanationCode!=='7B2'||paid.explanationCode||denied.explanationCode!=='7F1')return;
+ // A scan can read the split marker as 782 and drop the narrow 1 in
+ // 7F1. Accept those spellings only with the printed explanations below.
+ if(original.explanationCode!=='FLC'||!['7B2','782'].includes(split.explanationCode)||
+    paid.explanationCode||!['7F1','7F'].includes(denied.explanationCode))return;
  if(!/\bFLC:\s*Combined\/modified radiographic image procedures based on processing policy\b/i.test(claimText)||
     !/\b7B2:\s*Maximum allowable units were exceeded and have been adjusted\/split for accurate processing\b/i.test(claimText)||
     !/\b7F1:[\s\S]*?specific frequency[\s\S]*?responsible for the amount indicated as[\s“"]*Patient Pays\b/i.test(claimText))return;

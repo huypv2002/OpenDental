@@ -69,7 +69,7 @@ export async function recognizeDeltaPage(worker,image,{imageLayout=false}={}){
   if(whitelist.startsWith('D')){
    // Thin printed 1s are merged as M/I by whole-word OCR. Segment the five
    // separated glyphs, keeping the financial cells on the strict money path.
-   const inkThreshold=imageLayout?160:130;
+   const inkThreshold=imageLayout?160:190;
    const ctx=lastCrop.getContext('2d'),pixels=ctx.getImageData(0,0,lastCrop.width,lastCrop.height).data,spans=[];let start;
    for(let x=0;x<lastCrop.width;x++){
     let dark=0;for(let y=0;y<lastCrop.height;y++){const i=(y*lastCrop.width+x)*4;if(pixels[i]<inkThreshold&&pixels[i+1]<inkThreshold&&pixels[i+2]<inkThreshold)dark++;}
@@ -77,11 +77,18 @@ export async function recognizeDeltaPage(worker,image,{imageLayout=false}={}){
    }
    for(let i=spans.length-1;i>0;i--)if(spans[i][0]-spans[i-1][1]<=(imageLayout?3:2)){spans[i-1][1]=spans[i][1];spans.splice(i,1);}
    if(spans.length===5){
+    const codeWordHeight=Math.max(1,...l.words.filter(w=>w.x/c.width>left&&w.x/c.width<right).map(w=>w.height));
     let code='';
     for(let n=0;n<5;n++){
      const [left,right]=spans[n];let top=lastCrop.height,bottom=0;
      for(let y=0;y<lastCrop.height;y++)for(let x=left;x<right;x++){const i=(y*lastCrop.width+x)*4;if(pixels[i]<inkThreshold){top=Math.min(top,y);bottom=Math.max(bottom,y);}}
-     if(n&&right-left<(bottom-top)*.24){code+='1';continue;}
+     const glyphHeight=bottom-top+1;
+     // Delta's narrow printed 1 has no foot. Allow JPEG bleed around
+     // that stroke, but exclude short marks and normally wide digits.
+     const narrowStroke=imageLayout
+      ?right-left<(glyphHeight-1)*.24
+      :right-left<=glyphHeight*.38&&glyphHeight>=codeWordHeight*1.5;
+     if(n&&narrowStroke){code+='1';continue;}
      const glyph=createCanvas((right-left)+40,bottom-top+41),gc=glyph.getContext('2d');gc.fillStyle='white';gc.fillRect(0,0,glyph.width,glyph.height);gc.drawImage(lastCrop,left,top,right-left,bottom-top+1,20,20,right-left,bottom-top+1);
      await worker.setParameters({tessedit_pageseg_mode:'10',tessedit_char_whitelist:n?'0123456789':'D'});const s=(await worker.recognize(glyph.toBuffer('image/png'))).data.text.trim();code+=(!n&&!s&&reads.filter(s=>s.startsWith('D')).length>=2)?'D':s;
     }
