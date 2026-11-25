@@ -22,6 +22,7 @@ let isScanning = false;
 let autoScanIntervalId = null;
 let lastScanTime = null;
 let lastScanResult = null;
+const folderReadErrors = new Map();
 
 const insuranceCarriers=['METLIFE','LIBERTY','CIGNA','DELTA DENTAL'];
 function carrierFromFolder(folder){
@@ -511,40 +512,50 @@ export async function processSinglePdf(pool, filePath, {extract = extractPdf, ha
   };
 }
 
-export async function scanIncomingFolder(pool, incomingDir, {processFile=processSinglePdf,exportReports=exportDailyReports}={}) {
+export async function scanIncomingFolder(pool, incomingDir, {processFile=processSinglePdf,exportReports=exportDailyReports,reportEmpty=false}={}) {
   if (isScanning) {
     return { status: 'busy', message: 'Quá trình quét đang diễn ra.' };
   }
 
   isScanning = true;
   lastScanTime = new Date().toISOString();
-  await ensureMetlifeHistoryTable(pool);
-
   try {
     const candidateDirs = insuranceIncomingDirs(incomingDir);
 
     const allPdfFiles = [];
 
     for (const cDir of candidateDirs) {
+      let entries;
       try {
-        await fs.access(cDir);
-      } catch {
         try {
+          entries = await fs.readdir(cDir, { withFileTypes: true });
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
           await fs.mkdir(cDir, { recursive: true });
-        } catch {}
+          entries = await fs.readdir(cDir, { withFileTypes: true });
+        }
+        folderReadErrors.delete(cDir);
+      } catch (error) {
+        const message = error.code || error.message;
+        if (folderReadErrors.get(cDir) !== message) {
+          console.warn(`[Auto-Processor] Không đọc được thư mục ${cDir} (${message}).`);
+          folderReadErrors.set(cDir, message);
+        }
+        continue;
       }
 
-      let entries = [];
-      try {
-        entries = await fs.readdir(cDir, { withFileTypes: true });
-      } catch {}
-
-      let pdfs = entries.filter((e) => e.isFile() && isInsuranceFile(e.name));
+      const pdfs = entries.filter(e => e.isFile() && isInsuranceFile(e.name));
 
       // ERRORS/REVIEW require an explicit retry. Replaying automatically can
       // repeatedly revisit the first successful claim in a multi-patient file.
       for (const p of pdfs) {
-        const stat=await fs.stat(path.join(cDir,p.name));
+        let stat;
+        try {
+          stat = await fs.stat(path.join(cDir, p.name));
+        } catch (error) {
+          if (error.code !== 'ENOENT') console.warn(`[Auto-Processor] Không kiểm tra được file ${path.join(cDir, p.name)} (${error.code || error.message}).`);
+          continue;
+        }
         if(Date.now()-stat.mtimeMs<3000)continue;
         allPdfFiles.push({
           fullPath: path.join(cDir, p.name),
@@ -555,12 +566,15 @@ export async function scanIncomingFolder(pool, incomingDir, {processFile=process
     }
 
     if (allPdfFiles.length === 0) {
-      const emptyRes = { status: 'idle', count: 0, results: [] };
+      const unreadable = candidateDirs.filter(dir => folderReadErrors.has(dir)).length;
+      if (reportEmpty) console.log(`[Auto-Processor] Quét lần đầu: không có EOB sẵn sàng xử lý (${candidateDirs.length - unreadable}/${candidateDirs.length} thư mục đọc được).`);
+      const emptyRes = { status: unreadable ? 'incomplete' : 'idle', count: 0, results: [] };
       lastScanResult = emptyRes;
       return emptyRes;
     }
 
     console.log(`[Auto-Processor] Phát hiện ${allPdfFiles.length} file EOB mới cần xử lý (MetLife / Liberty / CIGNA / Delta Dental)...`);
+    await ensureMetlifeHistoryTable(pool);
     const results = [];
 
     for (const file of allPdfFiles) {
@@ -782,17 +796,25 @@ export function startAutoProcessor({ pool, incomingDir, intervalMs = 30000 }) {
 
   // Initial scan after 3s
   setTimeout(() => {
-    scanIncomingFolder(pool, dir).catch((e) => {
+    console.log('[Auto-Processor] Bắt đầu quét lần đầu...');
+    scanIncomingFolder(pool, dir, {reportEmpty:true}).catch((e) => {
       console.warn('[Auto-Processor] Initial scan warning:', e.message);
     });
   }, 3000);
 
   // Recurring interval
+  let warnedBusyScan = null;
   if (autoScanIntervalId) clearInterval(autoScanIntervalId);
-  autoScanIntervalId = setInterval(() => {
-    scanIncomingFolder(pool, dir).catch((e) => {
-      console.warn('[Auto-Processor] Periodic scan warning:', e.message);
-    });
+  autoScanIntervalId = setInterval(async () => {
+    try {
+      const result = await scanIncomingFolder(pool, dir);
+      if (result.status === 'busy' && warnedBusyScan !== lastScanTime) {
+        warnedBusyScan = lastScanTime;
+        console.warn('[Auto-Processor] Lượt quét trước vẫn đang chạy; đang chờ trước khi quét tiếp.');
+      }
+    } catch (error) {
+      console.warn('[Auto-Processor] Periodic scan warning:', error.message);
+    }
   }, intervalMs);
 
   return {
