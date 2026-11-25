@@ -5,6 +5,21 @@ const amounts=text=>[...text.matchAll(/\$([\d,]+\.\d{2})/g)].map(m=>cents(m[1]))
 const signature=p=>JSON.stringify([p.date,p.code,p.tooth,p.feeCents,p.allowedCents,p.maximumCents,p.deductibleCents,p.percent,p.benefitCents,p.patientDueCents,p.explanationCode]);
 const fail=(message)=>Object.assign(new Error(message),{code:'EOB_REVIEW_REQUIRED'});
 
+function reconcileSplitRadiograph(rows,claimText,moneyKeys){
+ const [original,split,paid,denied]=rows;
+ if(rows.length!==4||!/^D0(?:220|230|274)$/.test(original.code))return;
+ if(original.explanationCode!=='FLC'||split.explanationCode!=='7B2'||paid.explanationCode||denied.explanationCode!=='7F1')return;
+ if(!/\bFLC:\s*Combined\/modified radiographic image procedures based on processing policy\b/i.test(claimText)||
+    !/\b7B2:\s*Maximum allowable units were exceeded and have been adjusted\/split for accurate processing\b/i.test(claimText)||
+    !/\b7F1:[\s\S]*?specific frequency[\s\S]*?responsible for the amount indicated as[\s“"]*Patient Pays\b/i.test(claimText))return;
+ if(original.feeCents<=0||split.feeCents<=0||moneyKeys.slice(1).some(key=>original[key]!==0||split[key]!==0))return;
+ if(paid.benefitCents<=0||denied.benefitCents!==0||denied.patientDueCents!==denied.allowedCents||
+    paid.feeCents<=0||denied.feeCents<=0||paid.feeCents+denied.feeCents!==split.feeCents)return;
+ const combined={...paid,feeCents:original.feeCents};
+ for(const key of moneyKeys.slice(1))combined[key]=paid[key]+denied[key];
+ return combined;
+}
+
 export function isDeltaTotalLabel(text){
  return /^(?:claim)?c[li1]a?[li1]mtota[li1]?$/i.test(text.replace(/\s/g,''));
 }
@@ -83,20 +98,22 @@ export function parseDelta(extracted){
  for(const claim of claims){
   if(!claim.printedTotals||!claim.rawProcedures.length)throw fail('Thiếu trang tiếp theo hoặc tổng claim Delta.');
   const groups=new Map();for(const p of claim.rawProcedures){const key=JSON.stringify([p.date,p.code,p.tooth]);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(p);}
+  const keys=['feeCents','allowedCents','maximumCents','deductibleCents','benefitCents','patientDueCents'];
+  const claimText=claimTexts.get(claim.claimNumber)||'';
   const normalized=[];
   for(const rows of groups.values()){
    if(rows.length===1){normalized.push({...rows[0]});continue;}
+   const split=reconcileSplitRadiograph(rows,claimText,keys);
+   if(split){normalized.push(split);continue;}
    const paid=rows.filter(p=>p.benefitCents>0),denied=rows.filter(p=>p.benefitCents===0);
    if(rows.length!==2||paid.length!==1||denied.length!==1||!denied[0].feeCents)throw fail('Các dòng cùng mã/ngày/răng Delta chưa xác định duy nhất; cần đối chiếu.');
    normalized.push({...paid[0],feeCents:denied[0].feeCents});
   }
-  const keys=['feeCents','allowedCents','maximumCents','deductibleCents','benefitCents','patientDueCents'];
   const totals=keys.map(k=>normalized.reduce((n,p)=>n+p[k],0));
   if(totals[0]!==claim.printedTotals[0]){
    // FLB replaces separate radiographs with a complete series. The portal
    // excludes their submitted fees from Claim total, while still printing
    // the original rows. Preserve those rows/fees for history and reporting.
-   const claimText=claimTexts.get(claim.claimNumber)||'';
    const flbExplained=/\bFLB:\s*The combined fees for radiographic images[\s\S]*?equivalent to a complete series\b/i.test(claimText);
    const flcExplained=/\bFLC:\s*Combined\/modified radiographic image procedures based on processing policy\b/i.test(claimText);
    const frequencyDenialExplained=/\b7W2:\s*Panoramic x-rays[\s\S]*?(?:complete intraoral radiographic series|comprehensive series of radiographic images)[\s\S]*?already received a benefit\b/i.test(claimText);

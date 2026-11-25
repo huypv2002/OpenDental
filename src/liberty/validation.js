@@ -1,6 +1,6 @@
 import {procedureDay,reviewError} from '../metlife/insuranceSettlement.js';
 import {procedureAreaMatches,procedureCandidates} from '../metlife/procedureIdentity.js';
-export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\d+$/,requireMember=true,verifyLibertyOcr=true}={}){
+export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\d+$/,requireMember=true,verifyLibertyOcr=true,allowZeroClaims=verifyLibertyOcr}={}){
  const errors=[...parsed.errors];
  const safe=n=>Number.isSafeInteger(n)&&n>=0;
  if(!parsed.claims.length||!safe(parsed.check.netPaymentCents)||parsed.check.netPaymentCents<=0)errors.push('Thiếu tổng NET PAYMENT hợp lệ.');
@@ -11,9 +11,10 @@ export function validateLibertyForPosting(parsed,extracted={}, {claimPattern=/^\
   claimIds.add(claim.claimNumber);
   if(!claimPattern.test(claim.claimNumber)||!claim.patient.firstName||!claim.patient.lastName||(requireMember&&!claim.patient.memberId))errors.push('Thiếu số claim hoặc thông tin bệnh nhân để đối chiếu.');
   const amount=claim.totals.planPaidCents,rows=claim.procedures;
-  if(!safe(amount)||amount<=0||rows.reduce((n,p)=>n+p.benefitCents,0)!==amount)errors.push(`Claim ${claim.claimNumber}: tổng dịch vụ không khớp tổng claim.`);
+  const validZeroClaim=allowZeroClaims&&amount===0&&claim.hasPrintedTotals&&rows.length>0;
+  if(!safe(amount)||(amount===0&&!validZeroClaim)||rows.reduce((n,p)=>n+p.benefitCents,0)!==amount)errors.push(`Claim ${claim.claimNumber}: tổng dịch vụ không khớp tổng claim.`);
   if(rows.some((p,i)=>p.line!==i+1||!p.date||!/^D\d{4}$/.test(p.code)||!['benefitCents','feeCents','allowedCents','copayCents','deductibleCents','coinsuranceCents','patientDueCents'].every(k=>safe(p[k]))))errors.push(`Claim ${claim.claimNumber}: dòng dịch vụ thiếu hoặc không hợp lệ.`);
-  if((extracted.ocr||!!extracted.textCarrier)&&verifyLibertyOcr){
+  if(validZeroClaim||((extracted.ocr||!!extracted.textCarrier)&&verifyLibertyOcr)){
    for(const key of ['submittedCents','allowedCents','copayCents','deductibleCents','coinsuranceCents','patientDueCents']){
     if(rows.reduce((n,p)=>n+p[key],0)!==claim.totals[key])errors.push(`Claim ${claim.claimNumber}: tổng cột ${key} không khớp.`);
    }

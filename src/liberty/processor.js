@@ -148,10 +148,11 @@ export async function prepareLibertyClaimPayload(pool, { claim, check, patient, 
 export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, extracted }, { preparePayload = prepareLibertyClaimPayload, hashSplits=nativeSplitHashes, log = console.log, normalized=null, carrier='LIBERTY Dental Plan', patientResolver=resolveLibertyPatient } = {}) {
   const label=carrier==='DELTA DENTAL'?'Delta Dental':carrier==='CIGNA'?'Cigna':carrier==='MetLife'?'MetLife':'Liberty';
   const parsed = validateLibertyForPosting(normalized||parseLiberty(extracted),extracted,carrier==='DELTA DENTAL'?{verifyLibertyOcr:false}:carrier==='MetLife'?{claimPattern:/^\d+(?: \d+)*$/,requireMember:false,verifyLibertyOcr:false}:carrier==='CIGNA'?{claimPattern:/^[A-Z0-9-]{1,64}$/,requireMember:false,verifyLibertyOcr:false}:{});
+  const payableClaims=parsed.claims.filter(claim=>claim.totals.planPaidCents>0);
   const preflight=new Map();
   {
     // Resolve every patient/procedure before importing or changing fees for the first claim.
-    try{for(const claim of parsed.claims){
+    try{for(const claim of payableClaims){
       const patient=await patientResolver(pool,{claim,strictMember:!!extracted.ocr||!!extracted.textCarrier,fileName,claimsCount:parsed.claimsCount});
       if(carrier==='MetLife')await assertNoLegacyMetlifePayment(pool,{patNum:patient.PatNum,claimRaw:claim.claimNumber,claimBase:claim.claimBase});
       const missingPlan=planMissingProcedures(await libertyProcedures(pool,patient.PatNum),claim.procedures,{allowUniqueCodeDate:['LIBERTY Dental Plan','MetLife'].includes(carrier),carrier,includeUnpaid:true});
@@ -166,7 +167,7 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
 
   // All patients, allocations and existing payments passed read-only preflight.
   // Missing services are now created once, before PDF/fee/payment writes.
-  for(const claim of parsed.claims){
+  for(const claim of payableClaims){
     const checked=preflight.get(claim.claimNumber);
     checked.addedProcedures=await createMissingProcedures(pool,{plan:checked.missingPlan,patient:checked.patient,claimNumber:claim.claimNumber,carrier});
     for(const p of checked.addedProcedures)log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claim.claimNumber}: ${p.reused?'dùng lại':'đã thêm'} dịch vụ ${p.code}, ProcNum: ${p.procNum}${p.newCode?' (đã thêm mã vào danh mục)':''}.`);
@@ -181,12 +182,16 @@ export async function processLibertyPdf(pool, { filePath, fileName, fileBytes, e
 
   log(`[${label} Auto-Processor] Phát hiện ${parsed.claimsCount} claim${parsed.check.number?` trong check #${parsed.check.number}`:''}`);
 
+  for(const claim of parsed.claims){
+    if(claim.totals.planPaidCents===0)log(`[${label} Auto-Processor] Claim #${claim.claimNumber}: đối chiếu xong, hãng trả $0.00.`);
+  }
+
   const processedClaims = [];
   const incomingDir = path.dirname(filePath);
   const processedDir = path.join(incomingDir, 'PROCESSED');
   const archivePath = path.join(processedDir, `${Date.now()}_${fileName}`);
 
-  for (const claim of parsed.claims) {
+  for (const claim of payableClaims) {
     log(`[${label} Auto-Processor] Đang xử lý claim #${claim.documentNumber||claim.claimNumber} cho bệnh nhân ${claim.patient.lastName}, ${claim.patient.firstName}...`);
 
     log(`[${label} Auto-Processor] Claim #${claim.documentNumber||claim.claimNumber}: đối chiếu bệnh nhân...`);

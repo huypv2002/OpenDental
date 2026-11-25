@@ -70,7 +70,10 @@ export function parseLiberty(extracted) {
   if (!checkDate) errors.push('Không tìm thấy Check Date trong tài liệu Liberty.');
 
   // 2. Parse Claims (Document may contain 1 or multiple patients/claims)
-  const patientSections = fullText.split(/(?=Patient:\s*)/).slice(1);
+  const patientSections = fullText.split(/(?=^[ \t]*Patient:\s*)/m).slice(1).flatMap(section => {
+    const [patientHeader, ...claimBlocks] = section.split(/(?=^[ \t]*CLAIM:\s*\d+\b)/im);
+    return claimBlocks.length ? claimBlocks.map(claimBlock => patientHeader + claimBlock) : [section];
+  });
   if (!patientSections.length) {
     errors.push('Không tìm thấy khối bệnh nhân (Patient:) nào trong tài liệu Liberty.');
   }
@@ -241,6 +244,7 @@ export function parseLiberty(extracted) {
         date: checkDate
       },
       totals,
+      hasPrintedTotals: Boolean(claimTotalsMatch),
       procedures,
       paymentPayload
     });
